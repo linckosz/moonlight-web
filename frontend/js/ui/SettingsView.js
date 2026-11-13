@@ -2678,20 +2678,6 @@ export class SettingsView {
         const pad = this._touchPad;
         const option = (value, current, key) =>
             `<option value="${value}" ${value === current ? 'selected' : ''}>${t(key)}</option>`;
-        const slider = (name, label, value, min, max) => `
-                    <div class="settings-field">
-                        <label class="settings-label" for="settings-touch-pad-${name}">
-                            ${t(label)} <strong id="settings-touch-pad-${name}-value">${value}</strong>%
-                        </label>
-                        <input type="range" id="settings-touch-pad-${name}"
-                               class="settings-slider"
-                               min="${min}" max="${max}" step="5"
-                               value="${value}" />
-                        <div class="settings-slider-labels">
-                            <span>${min}%</span>
-                            <span>${max}%</span>
-                        </div>
-                    </div>`;
         return `
                 <div class="settings-section settings-section-touch-pad">
                     <h3 class="settings-section-title">${t('settings.touchPad')}</h3>
@@ -2703,19 +2689,17 @@ export class SettingsView {
                             ${option('never', pad.mode, 'settings.touchPadNever')}
                         </select>
                     </div>
-                    ${slider('scale', 'settings.touchPadSize', Math.round(pad.scale * 100), 80, 140)}
-                    ${slider('opacity', 'settings.touchPadOpacity', Math.round(pad.opacity * 100), 20, 100)}
-                    <div class="settings-field">
-                        <label class="settings-label" for="settings-touch-pad-layout">${t('settings.touchPadLayout')}</label>
-                        <select id="settings-touch-pad-layout" class="settings-select">
-                            ${option('default', pad.layout.preset, 'settings.touchPadLayoutDefault')}
-                            ${option('left', pad.layout.preset, 'settings.touchPadLayoutLeft')}
-                            ${option('compact', pad.layout.preset, 'settings.touchPadLayoutCompact')}
-                        </select>
-                        <button type="button" id="settings-touch-pad-edit" class="btn btn-secondary">
-                            ${t('settings.touchPadEdit')}
-                        </button>
-                        <span class="setting-desc">${t('settings.touchPadLayoutDesc')}</span>
+                    <div class="settings-field settings-touch-pad-customize">
+                        <div class="settings-touch-pad-customize-row">
+                            <div class="settings-touch-pad-customize-text">
+                                <span class="settings-label">${t('settings.touchPadCustomize')}</span>
+                                <span id="settings-touch-pad-summary" class="setting-desc">${this._touchPadSummary()}</span>
+                            </div>
+                            <button type="button" id="settings-touch-pad-edit" class="btn btn-primary">
+                                ${t('settings.touchPadCustomizeButton')}
+                            </button>
+                        </div>
+                        <span class="setting-desc">${t('settings.touchPadCustomizeDesc')}</span>
                     </div>
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
@@ -2740,17 +2724,34 @@ export class SettingsView {
     _readTouchPadSection() {
         const field = (name) => this.container.querySelector('#settings-touch-pad-' + name);
         if (!field('mode')) return this._touchPad;
+        // Size, opacity and layout are the editor's: what it last handed back.
         return touchPadSettings({
             touch_pad_mode: field('mode').value,
-            touch_pad_scale: Number(field('scale').value) / 100,
-            touch_pad_opacity: Number(field('opacity').value) / 100,
+            touch_pad_scale: this._touchPad.scale,
+            touch_pad_opacity: this._touchPad.opacity,
             touch_pad_vibrate: field('vibrate').checked,
             touch_pad_outside: field('outside').value,
-            touch_pad_layout: {
-                ...this._touchPad.layout,
-                ...(field('layout') ? { preset: field('layout').value } : {}),
-            },
+            touch_pad_layout: this._touchPad.layout,
         });
+    }
+
+    /** One line for what the editor holds: preset, size, opacity, moved controls. */
+    _touchPadSummary() {
+        const pad = this._touchPad;
+        const preset =
+            {
+                left: 'settings.touchPadLayoutLeft',
+                compact: 'settings.touchPadLayoutCompact',
+            }[pad.layout.preset] || 'settings.touchPadLayoutDefault';
+        const moved = ['landscape', 'portrait'].some(
+            (o) => Object.keys((pad.layout && pad.layout[o]) || {}).length > 0,
+        );
+        return [
+            t(preset),
+            t('settings.touchPadSummarySize', { size: Math.round(pad.scale * 100) }),
+            t('settings.touchPadSummaryOpacity', { opacity: Math.round(pad.opacity * 100) }),
+            ...(moved ? [t('settings.touchPadSummaryMoved')] : []),
+        ].join(' · ');
     }
 
     _bindTouchPadSection() {
@@ -2762,44 +2763,25 @@ export class SettingsView {
             this._touchPad = { ...this._touchPad, mode: field('mode').value };
             this._refreshShortcutsSection();
         });
-        field('layout').addEventListener('change', () => {
-            // A preset is a starting point, not a nudge: the places the viewer
-            // moved were their own, and the preset arranges the rest afresh.
-            this._touchPad = {
-                ...this._touchPad,
-                layout: {
-                    ...this._touchPad.layout,
-                    preset: field('layout').value,
-                    landscape: {},
-                    portrait: {},
-                },
-            };
-            this._autoSave();
-        });
-        this.container
-            .querySelector('#settings-touch-pad-edit')
-            .addEventListener('click', () => this._openTouchPadLayoutEditor());
+        field('edit').addEventListener('click', () => this._openTouchPadLayoutEditor());
         for (const name of ['vibrate', 'outside']) {
-            field(name).addEventListener('change', () => this._autoSave());
-        }
-        for (const name of ['scale', 'opacity']) {
-            const value = field(name + '-value');
-            field(name).addEventListener('input', () => {
-                value.textContent = field(name).value;
-            });
             field(name).addEventListener('change', () => this._autoSave());
         }
     }
 
-    /** Where the viewer puts the controls: the editor draws them as a stream does. */
+    /**
+     * Preset, size, opacity and places, in one editor that draws the controller
+     * as a stream does.
+     */
     _openTouchPadLayoutEditor() {
         this._touchPadEditor = new TouchPadLayoutEditor(document.body, {
             layout: this._touchPad.layout,
-            onChange: (layout) => {
-                this._touchPad = { ...this._touchPad, layout };
-                // The page's own select follows: it is what a later save reads.
-                const select = this.container.querySelector('#settings-touch-pad-layout');
-                if (select) select.value = layout.preset;
+            scale: this._touchPad.scale,
+            opacity: this._touchPad.opacity,
+            onChange: (layout, look) => {
+                this._touchPad = { ...this._touchPad, ...look, layout };
+                const summary = this.container.querySelector('#settings-touch-pad-summary');
+                if (summary) summary.textContent = this._touchPadSummary();
                 this._autoSave();
             },
             onClosed: () => {

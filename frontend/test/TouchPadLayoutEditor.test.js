@@ -77,9 +77,10 @@ describe('TouchPadLayoutEditor', () => {
         editor._drop();
     };
 
-    const build = (layout = touchPadLayouts(), width = 1180, height = 820) => {
+    const build = (layout = touchPadLayouts(), width = 1180, height = 820, look = {}) => {
         editor = new TouchPadLayoutEditor(container, {
             layout,
+            ...look,
             onChange,
             onClosed: () => {},
         });
@@ -247,5 +248,112 @@ describe('TouchPadLayoutEditor', () => {
         editor.close();
         expect(container.querySelector('.tp-layout-editor')).toBeNull();
         expect(editor.isOpen()).toBe(false);
+    });
+
+    describe('its floating bar', () => {
+        const bar = () => container.querySelector('.tp-layout-editor-bar');
+        const input = (cls) => container.querySelector(`.${cls} input`);
+        const slide = (cls, value) => {
+            input(cls).value = String(value);
+            input(cls).dispatchEvent(new Event('input'));
+        };
+        const centreX = (id) =>
+            parseFloat(handle(id).style.left) + parseFloat(handle(id).style.width) / 2;
+
+        it('opens unfolded, folds to a pill and unfolds again', () => {
+            build();
+            expect(bar().classList.contains('is-folded')).toBe(false);
+            container.querySelector('[data-act="fold"]').click();
+            expect(bar().classList.contains('is-folded')).toBe(true);
+            container.querySelector('[data-act="unfold"]').click();
+            expect(bar().classList.contains('is-folded')).toBe(false);
+        });
+
+        it('keeps Done at hand while folded', () => {
+            build();
+            container.querySelector('[data-act="fold"]').click();
+            container.querySelector('.tp-bar-done-folded').click();
+            expect(onChange).toHaveBeenCalledTimes(1);
+        });
+
+        it('tries a preset at once, dropping the places it replaces, and keeps it only on Done', () => {
+            build(touchPadLayouts({ landscape: { a: { x: 0.9, y: 0.5, s: 1 } } }));
+            container.querySelector('[data-preset="left"]').click();
+            expect(editor._draft).toEqual({ preset: 'left', landscape: {}, portrait: {} });
+            expect(centreX('a')).toBeLessThan(1180 / 2);
+            expect(
+                container.querySelector('[data-preset="left"]').getAttribute('aria-pressed'),
+            ).toBe('true');
+            container.querySelector('[data-act="cancel"]').click();
+            expect(onChange).not.toHaveBeenCalled();
+        });
+
+        it('starts from the size and opacity saved, and hands back what was tried', () => {
+            build(touchPadLayouts(), 1180, 820, { scale: 0.9, opacity: 0.6 });
+            expect(input('tp-layout-editor-scale').value).toBe('90');
+            expect(input('tp-layout-editor-opacity').value).toBe('60');
+            const before = parseFloat(handle('a').style.width);
+            slide('tp-layout-editor-scale', 120);
+            expect(parseFloat(handle('a').style.width)).toBeGreaterThan(before);
+            slide('tp-layout-editor-opacity', 40);
+            const layer = container.querySelector('.touch-pad');
+            expect(layer.style.getPropertyValue('--touch-pad-opacity')).toBe('0.4');
+            container.querySelector('[data-act="done"]').click();
+            expect(onChange.mock.calls[0][1]).toEqual({ scale: 1.2, opacity: 0.4 });
+        });
+
+        it('shows three backgrounds, a preview that is never handed over', () => {
+            build();
+            const stageEl = container.querySelector('.tp-layout-editor-stage');
+            expect(stageEl.classList.contains('tp-bg-default')).toBe(true);
+            expect(container.querySelectorAll('[data-bg]').length).toBe(3);
+            container.querySelector('[data-bg="light"]').click();
+            expect(stageEl.classList.contains('tp-bg-light')).toBe(true);
+            expect(stageEl.classList.contains('tp-bg-default')).toBe(false);
+            container.querySelector('[data-act="done"]').click();
+            expect(Object.keys(onChange.mock.calls[0][1]).sort()).toEqual(['opacity', 'scale']);
+            expect(onChange.mock.calls[0][0]).not.toHaveProperty('background');
+        });
+
+        it('says how it is used until a control is touched, then which one', () => {
+            build();
+            const text = () => container.querySelector('.tp-layout-editor-size-text').textContent;
+            expect(text()).toBe('text:settings.touchPadEditorHint');
+            const el = handle('a');
+            const [cx, cy] = centreOf(el);
+            editor._grab(pointer(cx, cy), el, 'a');
+            editor._drop();
+            expect(text()).toBe('text:settings.touchPadEditorControlSize');
+        });
+
+        it('goes where its grip takes it, never off the screen', () => {
+            build();
+            const room = { left: 0, top: 0, width: 1180, height: 820, right: 1180, bottom: 820 };
+            editor._el.getBoundingClientRect = () => room;
+            bar().getBoundingClientRect = () => {
+                const x = parseFloat(bar().style.left) || 0;
+                const y = parseFloat(bar().style.top) || 0;
+                return {
+                    left: x,
+                    top: y,
+                    width: 380,
+                    height: 200,
+                    right: x + 380,
+                    bottom: y + 200,
+                };
+            };
+            editor._placeBar();
+            // In the middle the first time.
+            expect(parseFloat(bar().style.left)).toBe(400);
+            expect(parseFloat(bar().style.top)).toBe(310);
+            const grip = container.querySelector('.tp-bar-grip');
+            editor._grabBar({ ...pointer(410, 320), currentTarget: grip });
+            editor._barDrag.onMove(pointer(60, 70));
+            expect(parseFloat(bar().style.left)).toBe(50);
+            expect(parseFloat(bar().style.top)).toBe(60);
+            editor._barDrag.onMove(pointer(5000, 5000));
+            expect(parseFloat(bar().style.left)).toBe(1180 - 380);
+            expect(parseFloat(bar().style.top)).toBe(820 - 200);
+        });
     });
 });

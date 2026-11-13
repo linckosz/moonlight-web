@@ -1535,9 +1535,10 @@ body.streaming-active::after {
     color: var(--kbd-on-edge);
     border-color: var(--kbd-on-edge);
 }
-/* The layout editor (Settings → On-screen controller → Edit layout). The pad is
-   drawn by TouchPadView, exactly as a stream draws it; the handles laid over it
-   take the fingers, so the layer itself is deaf while the editor is up. */
+/* The controller's editor (Settings → On-screen controller → Customize). The
+   pad is drawn by TouchPadView, exactly as a stream draws it, on the whole
+   screen; the handles laid over it take the fingers, so the layer itself is
+   deaf while the editor is up. Everything else is one bar floating over it. */
 .touch-pad.is-editing,
 .touch-pad.is-editing * {
     pointer-events: none !important;
@@ -1546,60 +1547,195 @@ body.streaming-active::after {
     position: fixed;
     inset: 0;
     z-index: 4000;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
-        max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-    background: rgba(8, 10, 14, 0.97);
+    overflow: hidden;
     color: #fff;
-    box-sizing: border-box;
-}
-.tp-layout-editor-bar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-}
-.tp-layout-editor-title {
-    font-size: 15px;
-}
-.tp-layout-editor-orientation {
-    font-size: 13px;
-    opacity: 0.7;
-}
-.tp-layout-editor-size {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 13px;
-}
-.tp-layout-editor-size input {
-    width: 120px;
-}
-.tp-layout-editor-actions {
-    display: inline-flex;
-    gap: 8px;
-    margin-left: auto;
-}
-.tp-layout-editor-hint {
-    margin: 0;
-    font-size: 12px;
-    opacity: 0.7;
+    background: #0d1014;
 }
 .tp-layout-editor-stage {
-    position: relative;
-    flex: 1;
-    min-height: 0;
+    position: absolute;
+    inset: 0;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 12px;
-    background-color: #101419;
+    touch-action: none;
+}
+/* The pictures the controller is tried over, drawn here rather than taken from
+   a game: the app's own grid, a night and a day. A preview only. The swatches
+   in the bar wear the same backgrounds. */
+.tp-bg-default {
+    background-color: #0d1014;
     background-image:
         linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
         linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
-    background-size: 48px 48px;
+    background-size: 32px 32px;
+}
+.tp-bg-dark {
+    background:
+        radial-gradient(circle at 82% 16%, #d9dde8 0 22px, transparent 23px),
+        radial-gradient(ellipse 60% 45% at 18% 108%, #18243a 0 99%, transparent 100%),
+        radial-gradient(ellipse 70% 50% at 85% 112%, #121c2e 0 99%, transparent 100%),
+        linear-gradient(#0b1430, #1b2846);
+}
+.tp-bg-light {
+    background:
+        radial-gradient(circle at 82% 16%, #fff4c2 0 34px, transparent 35px),
+        linear-gradient(transparent 82%, #e9dcae 82%),
+        radial-gradient(ellipse 60% 45% at 18% 108%, #9fcb8e 0 99%, transparent 100%),
+        radial-gradient(ellipse 70% 50% at 85% 112%, #b9d99a 0 99%, transparent 100%),
+        linear-gradient(#bfe3f5, #e6f3f8);
+}
+.tp-layout-editor-bar {
+    position: absolute;
+    z-index: 300;
+    box-sizing: border-box;
+    width: min(380px, calc(100% - 16px));
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 10px 12px 12px;
+    background: rgba(8, 16, 19, 0.95);
+    border: 1px solid rgba(44, 133, 146, 0.6);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    font-size: 13px;
+}
+.tp-bar-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.tp-bar-grip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 32px;
+    color: rgba(255, 255, 255, 0.55);
+    cursor: grab;
     touch-action: none;
+}
+.tp-layout-editor-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.tp-layout-editor-orientation {
+    font-size: 12px;
+    opacity: 0.7;
+}
+.tp-bar-fold,
+.tp-bar-unfold {
+    min-height: 36px;
+    min-width: 40px;
+    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    border: 1px solid rgba(44, 133, 146, 0.6);
+    border-radius: 6px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.tp-bar-unfold,
+.tp-bar-done-folded {
+    display: none;
+}
+.tp-bar-body {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+.tp-bar-presets {
+    display: flex;
+    gap: 4px;
+}
+.tp-bar-preset {
+    flex: 1;
+    min-height: 36px;
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.85);
+    border: 1px solid rgba(44, 133, 146, 0.6);
+    border-radius: 6px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+.tp-bar-preset[aria-pressed='true'] {
+    background: rgba(44, 133, 146, 0.45);
+    color: #fff;
+    border-color: #2c8592;
+}
+.tp-bar-look {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+.tp-bar-look label,
+.tp-layout-editor-size {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-weight: 600;
+}
+.tp-layout-editor-size {
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+}
+.tp-layout-editor-size-text {
+    font-weight: 500;
+    line-height: 1.35;
+}
+.tp-layout-editor-bar input[type='range'] {
+    width: 100%;
+    margin: 0;
+}
+.tp-bar-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.tp-bar-bg-label {
+    opacity: 0.75;
+    font-weight: 600;
+}
+.tp-bar-bg {
+    width: 40px;
+    height: 32px;
+    padding: 0;
+    border: 2px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.tp-bar-bg[aria-pressed='true'] {
+    border-color: #ffe600;
+}
+.tp-layout-editor-actions {
+    display: inline-flex;
+    gap: 6px;
+    margin-left: auto;
+}
+/* Folded: a pill with its grip, the way back, and Done. */
+.tp-layout-editor-bar.is-folded {
+    width: auto;
+    padding: 6px;
+    border-radius: 26px;
+}
+.is-folded .tp-bar-body,
+.is-folded .tp-layout-editor-title,
+.is-folded .tp-layout-editor-orientation,
+.is-folded .tp-bar-fold {
+    display: none;
+}
+.is-folded .tp-bar-unfold,
+.is-folded .tp-bar-done-folded {
+    display: inline-flex;
+    border-radius: 20px;
 }
 .tp-layout-editor-handle {
     position: absolute;

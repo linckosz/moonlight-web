@@ -190,6 +190,23 @@ export class TouchPadView {
         this.relayout();
     }
 
+    /**
+     * The size and the opacity the viewer is trying, in the layout editor:
+     * fractions as in the options, 1 = 100%. Either may be left out.
+     * @param {{ scale?: number, opacity?: number }} look
+     */
+    setLook({ scale, opacity } = {}) {
+        if (opacity !== undefined) {
+            this._opacity = opacity;
+            if (this._el) this._el.style.setProperty('--touch-pad-opacity', String(opacity));
+        }
+        if (scale !== undefined && scale !== this._scale) {
+            this._scale = scale;
+            this._laidOutFor = '';
+            this.relayout();
+        }
+    }
+
     /** Let go of every control: its fingers are forgotten until they come down again. */
     releaseAll() {
         const held = this._fingers.size > 0;

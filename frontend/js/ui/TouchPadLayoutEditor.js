@@ -16,8 +16,9 @@
  */
 
 /**
- * TouchPadLayoutEditor — where a viewer puts the on-screen controller's
- * controls, from the Settings page, on the screen they are holding.
+ * TouchPadLayoutEditor — the on-screen controller as a viewer wants it, set
+ * from the Settings page on the screen they are holding: its preset, its size,
+ * how see-through it is, and where each control sits.
  *
  * The controller itself is drawn by TouchPadView, so what is arranged is
  * exactly what a stream shows; the editor lays transparent handles over the
@@ -26,6 +27,12 @@
  * makes the same arrangement survive a rotation, a resolution change or a
  * different tablet. Portrait and landscape are two separate saves, chosen by
  * the shape of the stage.
+ *
+ * The stage fills the screen. Everything else is in one bar that floats over
+ * the controller: it opens unfolded, folds to a pill, and moves by its grip,
+ * so no control is ever out of reach under it. Its three backgrounds are a
+ * preview only: they show the controller over a dark and a bright picture,
+ * and are not kept.
  */
 import { t } from '../i18n/i18n.js';
 import { TouchPadState, layoutOrientation } from '../stream/TouchPadState.js';
@@ -35,6 +42,25 @@ import { TouchPadView } from './TouchPadView.js';
 const SIZE_MIN = 0.8;
 const SIZE_MAX = 1.3;
 const SIZE_STEP = 0.05;
+
+/** The whole controller's size and opacity, in percent, as Settings kept them. */
+const SCALE_MIN = 80;
+const SCALE_MAX = 140;
+const OPACITY_MIN = 20;
+const OPACITY_MAX = 100;
+
+const PRESETS = [
+    ['default', 'settings.touchPadLayoutDefault'],
+    ['left', 'settings.touchPadLayoutLeft'],
+    ['compact', 'settings.touchPadLayoutCompact'],
+];
+
+/** The pictures the controller can be tried over: a preview, never kept. */
+const BACKGROUNDS = [
+    ['default', 'settings.touchPadEditorBgDefault'],
+    ['dark', 'settings.touchPadEditorBgDark'],
+    ['light', 'settings.touchPadEditorBgLight'],
+];
 
 /** What each drawn control is called in a screen reader. */
 const NAMES = {
@@ -55,30 +81,49 @@ const NAMES = {
     'stick-right': 'Right stick',
 };
 
+const GRIP = `<svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor" aria-hidden="true">
+    <circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/>
+    <circle cx="3" cy="9" r="1.6"/><circle cx="9" cy="9" r="1.6"/>
+    <circle cx="3" cy="15" r="1.6"/><circle cx="9" cy="15" r="1.6"/></svg>`;
+const CHEVRON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="m6 9 6 6 6-6"/></svg>`;
+
 const clone = (layout) => JSON.parse(JSON.stringify(layout));
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const percent = (v, lo, hi) => clamp(Math.round(Number(v) * 100), lo, hi);
 
 export class TouchPadLayoutEditor {
     /**
      * @param {HTMLElement} container the element the overlay is added to.
      * @param {{ layout: ReturnType<import('../stream/TouchPadState.js').touchPadLayouts>,
-     *           onChange?: (layout: any) => void,
+     *           scale?: number, opacity?: number,
+     *           onChange?: (layout: any, look: {scale: number, opacity: number}) => void,
      *           onClosed?: () => void }} options
-     *   `layout` is what the viewer had; `onChange` is told of every saved
-     *   arrangement, once they press Done; `onClosed` when the overlay is gone.
+     *   `layout`, `scale` and `opacity` are what the viewer had (scale and
+     *   opacity as fractions, 1 = 100%); `onChange` is told of all three once
+     *   they press Done; `onClosed` when the overlay is gone.
      */
-    constructor(container, { layout, onChange, onClosed } = {}) {
+    constructor(container, { layout, scale, opacity, onChange, onClosed } = {}) {
         this._container = container;
         this._onChange = onChange || null;
         this._onClosed = onClosed || null;
         this._before = clone(layout);
         this._draft = clone(layout);
+        this._scale = percent(scale === undefined ? 1 : scale, SCALE_MIN, SCALE_MAX);
+        this._opacity = percent(opacity === undefined ? 1 : opacity, OPACITY_MIN, OPACITY_MAX);
+        this._background = 'default';
+        this._folded = false;
+        this._barAt = null;
         this._el = null;
         this._stage = null;
+        this._bar = null;
         this._view = null;
         this._state = null;
         this._handles = [];
         this._selected = null;
         this._drag = null;
+        this._barDrag = null;
         this._resizeObserver = null;
         this._keydown = null;
     }
@@ -92,9 +137,13 @@ export class TouchPadLayoutEditor {
         this._container.appendChild(el);
         this._el = el;
         this._stage = el.querySelector('.tp-layout-editor-stage');
+        this._bar = el.querySelector('.tp-layout-editor-bar');
         this._buildLayer();
         this._bind();
+        this._showBackground();
+        this._showLook();
         this._refresh();
+        this._placeBar();
     }
 
     /** Take it away, saving nothing: Cancel and Done both come through here. */
@@ -110,6 +159,7 @@ export class TouchPadLayoutEditor {
         this._handles = [];
         this._el.remove();
         this._el = null;
+        this._bar = null;
         if (this._onClosed) this._onClosed();
     }
 
@@ -119,59 +169,123 @@ export class TouchPadLayoutEditor {
     }
 
     _html() {
+        const presets = PRESETS.map(
+            ([id, key]) =>
+                `<button type="button" class="tp-bar-preset" data-preset="${id}">${t(key)}</button>`,
+        ).join('');
+        const backgrounds = BACKGROUNDS.map(
+            ([id, key]) =>
+                `<button type="button" class="tp-bar-bg tp-bg-${id}" data-bg="${id}"
+                         aria-label="${t(key)}" title="${t(key)}"></button>`,
+        ).join('');
+        const range = (cls, label, min, max, step) => `
+                    <label class="${cls}">
+                        <span>${t(label)} <strong></strong>%</span>
+                        <input type="range" min="${min}" max="${max}" step="${step}" />
+                    </label>`;
         return `
-            <div class="tp-layout-editor-bar">
-                <strong class="tp-layout-editor-title">${t('settings.touchPadEditorTitle')}</strong>
-                <span class="tp-layout-editor-orientation"></span>
-                <label class="tp-layout-editor-size">
-                    ${t('settings.touchPadEditorSize')}
-                    <input type="range" min="${SIZE_MIN}" max="${SIZE_MAX}" step="${SIZE_STEP}"
-                           value="1" disabled />
-                </label>
-                <span class="tp-layout-editor-actions">
-                    <button type="button" class="btn btn-secondary" data-act="reset">
-                        ${t('settings.touchPadEditorReset')}
+            <div class="tp-layout-editor-stage"></div>
+            <div class="tp-layout-editor-bar" role="group"
+                 aria-label="${t('settings.touchPadEditorTitle')}">
+                <div class="tp-bar-head">
+                    <span class="tp-bar-grip">${GRIP}</span>
+                    <strong class="tp-layout-editor-title">${t('settings.touchPadEditorTitle')}</strong>
+                    <span class="tp-layout-editor-orientation"></span>
+                    <button type="button" class="tp-bar-unfold" data-act="unfold">
+                        ${t('settings.touchPadEditorUnfold')}
                     </button>
-                    <button type="button" class="btn btn-secondary" data-act="cancel">
-                        ${t('settings.touchPadEditorCancel')}
-                    </button>
-                    <button type="button" class="btn btn-primary" data-act="done">
+                    <button type="button" class="tp-bar-fold" data-act="fold"
+                            aria-label="${t('settings.touchPadEditorFold')}"
+                            title="${t('settings.touchPadEditorFold')}">${CHEVRON}</button>
+                    <button type="button" class="btn btn-primary tp-bar-done-folded" data-act="done">
                         ${t('settings.touchPadEditorDone')}
                     </button>
-                </span>
-            </div>
-            <p class="tp-layout-editor-hint">${t('settings.touchPadEditorHint')}</p>
-            <div class="tp-layout-editor-stage"></div>`;
+                </div>
+                <div class="tp-bar-body">
+                    <div class="tp-bar-presets" role="group"
+                         aria-label="${t('settings.touchPadEditorPreset')}">${presets}</div>
+                    <div class="tp-bar-look">
+                        ${range('tp-layout-editor-scale', 'settings.touchPadSize', SCALE_MIN, SCALE_MAX, 5)}
+                        ${range('tp-layout-editor-opacity', 'settings.touchPadOpacity', OPACITY_MIN, OPACITY_MAX, 5)}
+                    </div>
+                    <label class="tp-layout-editor-size">
+                        <span class="tp-layout-editor-size-text"></span>
+                        <input type="range" min="${SIZE_MIN}" max="${SIZE_MAX}" step="${SIZE_STEP}"
+                               value="1" disabled />
+                    </label>
+                    <div class="tp-bar-foot">
+                        <span class="tp-bar-bg-label">${t('settings.touchPadEditorBackground')}</span>
+                        ${backgrounds}
+                        <span class="tp-layout-editor-actions">
+                            <button type="button" class="btn btn-secondary" data-act="reset">
+                                ${t('settings.touchPadEditorReset')}
+                            </button>
+                            <button type="button" class="btn btn-secondary" data-act="cancel">
+                                ${t('settings.touchPadEditorCancel')}
+                            </button>
+                            <button type="button" class="btn btn-primary" data-act="done">
+                                ${t('settings.touchPadEditorDone')}
+                            </button>
+                        </span>
+                    </div>
+                </div>
+            </div>`;
     }
 
     /** The controller, drawn but deaf: the handles take the fingers. */
     _buildLayer() {
         this._state = new TouchPadState();
-        this._view = new TouchPadView(this._stage, this._state, { layout: this._draft });
+        this._view = new TouchPadView(this._stage, this._state, {
+            layout: this._draft,
+            scale: this._scale / 100,
+            opacity: this._opacity / 100,
+        });
         this._view.mount();
         const layer = this._stage.querySelector('.touch-pad');
         if (layer) layer.classList.add('is-editing');
         this._view.setVisible(true);
         if (typeof ResizeObserver === 'function') {
-            this._resizeObserver = new ResizeObserver(() => this._refresh());
+            this._resizeObserver = new ResizeObserver(() => {
+                this._refresh();
+                this._placeBar();
+            });
             this._resizeObserver.observe(this._stage);
         }
     }
 
     _bind() {
-        this._el.querySelector('[data-act="done"]').addEventListener('click', () => {
-            if (this._onChange) this._onChange(clone(this._draft));
+        const act = (name, fn) => {
+            for (const b of this._el.querySelectorAll(`[data-act="${name}"]`)) {
+                b.addEventListener('click', fn);
+            }
+        };
+        act('done', () => {
+            if (this._onChange) {
+                this._onChange(clone(this._draft), {
+                    scale: this._scale / 100,
+                    opacity: this._opacity / 100,
+                });
+            }
             this.close();
         });
-        this._el.querySelector('[data-act="cancel"]').addEventListener('click', () => {
-            this.close();
-        });
-        this._el.querySelector('[data-act="reset"]').addEventListener('click', () => {
+        act('cancel', () => this.close());
+        act('reset', () => {
             this._draft[this._orientation()] = {};
             this._selected = null;
             this._view.setLayout(this._draft);
             this._refresh();
         });
+        act('fold', () => this._fold(true));
+        act('unfold', () => this._fold(false));
+        for (const b of this._el.querySelectorAll('[data-preset]')) {
+            b.addEventListener('click', () => this._pickPreset(b.dataset.preset));
+        }
+        for (const b of this._el.querySelectorAll('[data-bg]')) {
+            b.addEventListener('click', () => {
+                this._background = b.dataset.bg;
+                this._showBackground();
+            });
+        }
         this._el.querySelector('.tp-layout-editor-size input').addEventListener('input', (e) => {
             const id = this._selected;
             if (!id) return;
@@ -179,6 +293,20 @@ export class TouchPadLayoutEditor {
             this._view.setLayout(this._draft);
             this._refresh();
         });
+        this._el.querySelector('.tp-layout-editor-scale input').addEventListener('input', (e) => {
+            this._scale = clamp(Number(e.target.value), SCALE_MIN, SCALE_MAX);
+            this._showLook();
+            this._view.setLook({ scale: this._scale / 100 });
+            this._refresh();
+        });
+        this._el.querySelector('.tp-layout-editor-opacity input').addEventListener('input', (e) => {
+            this._opacity = clamp(Number(e.target.value), OPACITY_MIN, OPACITY_MAX);
+            this._showLook();
+            this._view.setLook({ opacity: this._opacity / 100 });
+        });
+        this._el
+            .querySelector('.tp-bar-grip')
+            .addEventListener('pointerdown', (e) => this._grabBar(e));
         this._keydown = (e) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -186,6 +314,104 @@ export class TouchPadLayoutEditor {
             }
         };
         document.addEventListener('keydown', this._keydown);
+    }
+
+    /**
+     * A preset is a starting point, not a nudge: the places the viewer moved
+     * were their own, and the preset arranges the rest afresh, in both
+     * orientations. Nothing is kept before Done.
+     */
+    _pickPreset(preset) {
+        this._draft = { ...this._draft, preset, landscape: {}, portrait: {} };
+        this._selected = null;
+        this._view.setLayout(this._draft);
+        this._refresh();
+    }
+
+    _fold(folded) {
+        this._folded = folded;
+        this._bar.classList.toggle('is-folded', folded);
+        const focus = this._bar.querySelector(folded ? '.tp-bar-unfold' : '.tp-bar-fold');
+        if (focus && typeof focus.focus === 'function') focus.focus();
+        this._placeBar();
+    }
+
+    _showBackground() {
+        for (const [id] of BACKGROUNDS) {
+            this._stage.classList.toggle('tp-bg-' + id, id === this._background);
+        }
+        for (const b of this._el.querySelectorAll('[data-bg]')) {
+            b.setAttribute('aria-pressed', String(b.dataset.bg === this._background));
+        }
+    }
+
+    /** The two sliders of the whole controller, and the preset in use. */
+    _showLook() {
+        const show = (cls, value) => {
+            const label = this._el.querySelector(cls);
+            label.querySelector('strong').textContent = String(value);
+            label.querySelector('input').value = String(value);
+        };
+        show('.tp-layout-editor-scale', this._scale);
+        show('.tp-layout-editor-opacity', this._opacity);
+        for (const b of this._el.querySelectorAll('[data-preset]')) {
+            b.setAttribute('aria-pressed', String(b.dataset.preset === this._draft.preset));
+        }
+    }
+
+    /**
+     * Keep the bar on the screen: in the middle the first time, then where it
+     * was put, pulled back inside when the screen turns or the bar unfolds.
+     */
+    _placeBar() {
+        if (!this._bar) return;
+        const room = this._el.getBoundingClientRect();
+        const box = this._bar.getBoundingClientRect();
+        if (!room.width || !room.height) return;
+        const at = this._barAt || {
+            x: (room.width - box.width) / 2,
+            y: (room.height - box.height) / 2,
+        };
+        const x = clamp(at.x, 0, Math.max(0, room.width - box.width));
+        const y = clamp(at.y, 0, Math.max(0, room.height - box.height));
+        this._bar.style.left = x + 'px';
+        this._bar.style.top = y + 'px';
+    }
+
+    /** The bar follows its grip. */
+    _grabBar(e) {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const grip = e.currentTarget;
+        const box = this._bar.getBoundingClientRect();
+        const room = this._el.getBoundingClientRect();
+        const drag = {
+            pointerId: e.pointerId,
+            dx: e.clientX - box.left,
+            dy: e.clientY - box.top,
+            room,
+        };
+        drag.onMove = (ev) => {
+            if (ev.pointerId !== drag.pointerId) return;
+            ev.preventDefault();
+            this._barAt = {
+                x: ev.clientX - drag.dx - drag.room.left,
+                y: ev.clientY - drag.dy - drag.room.top,
+            };
+            this._placeBar();
+        };
+        drag.onUp = () => {
+            grip.removeEventListener('pointermove', drag.onMove);
+            grip.removeEventListener('pointerup', drag.onUp);
+            grip.removeEventListener('pointercancel', drag.onUp);
+            this._barDrag = null;
+        };
+        this._barDrag = drag;
+        if (typeof grip.setPointerCapture === 'function') grip.setPointerCapture(e.pointerId);
+        grip.addEventListener('pointermove', drag.onMove);
+        grip.addEventListener('pointerup', drag.onUp);
+        grip.addEventListener('pointercancel', drag.onUp);
     }
 
     /** The orientation the stage is in, which is the save the drags go to. */
@@ -240,6 +466,7 @@ export class TouchPadLayoutEditor {
         this._el.dataset.stageWidth = String(rect.width);
         this._el.dataset.stageHeight = String(rect.height);
         this._el.classList.toggle('is-portrait', orientation === 'portrait');
+        this._showLook();
         this._syncSize();
     }
 
@@ -327,19 +554,30 @@ export class TouchPadLayoutEditor {
         const here = this._placeOf(id);
         const before = saved[id] || { x: here.x, y: here.y, s: 1 };
         saved[id] = {
-            x: x === undefined ? before.x : Math.min(1, Math.max(0, x)),
-            y: y === undefined ? before.y : Math.min(1, Math.max(0, y)),
-            s: s === undefined ? before.s : Math.min(SIZE_MAX, Math.max(SIZE_MIN, s)),
+            x: x === undefined ? before.x : clamp(x, 0, 1),
+            y: y === undefined ? before.y : clamp(y, 0, 1),
+            s: s === undefined ? before.s : clamp(s, SIZE_MIN, SIZE_MAX),
         };
     }
 
-    /** The size slider follows the control it resizes, and is dead with none. */
+    /**
+     * The size slider follows the control it resizes, and is dead with none:
+     * its line then says how the editor is used.
+     */
     _syncSize() {
         const input = this._el.querySelector('.tp-layout-editor-size input');
+        const text = this._el.querySelector('.tp-layout-editor-size-text');
         const saved = this._selected
             ? (this._draft[this._orientation()] || {})[this._selected]
             : null;
+        const size = saved ? saved.s : 1;
         input.disabled = !this._selected;
-        input.value = saved ? saved.s : 1;
+        input.value = String(size);
+        text.textContent = this._selected
+            ? t('settings.touchPadEditorControlSize', {
+                  name: NAMES[this._selected] || this._selected,
+                  size: Math.round(size * 100),
+              })
+            : t('settings.touchPadEditorHint');
     }
 }

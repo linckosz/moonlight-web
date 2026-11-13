@@ -185,3 +185,18 @@ html.remote-nav:has(.settings-header, .admin-header) {
 .settings-section-shortcuts .shortcut-keys kbd {
     color: var(--text-1);
 }
+/* On-screen controller: one line saying how it is set, and the button to the
+   editor that sets it. The button goes under the line on a narrow phone. */
+.settings-touch-pad-customize-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-3);
+}
+.settings-touch-pad-customize-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}

@@ -87,26 +87,43 @@ describe('SettingsView on-screen controller section', () => {
         expect(view._renderTouchPadSection()).toBe('');
     });
 
-    it('shows the defaults, the opacity up to 100%', () => {
+    it('shows the defaults, and one entry for everything the editor sets', () => {
         setTouch(true);
         paint();
         expect(field('mode').value).toBe('auto');
-        expect(field('scale').value).toBe('100');
-        expect(field('scale').min).toBe('80');
-        expect(field('scale').max).toBe('140');
-        expect(field('opacity').value).toBe('100');
-        expect(field('opacity').min).toBe('20');
-        expect(field('opacity').max).toBe('100');
         expect(field('vibrate').checked).toBe(true);
         expect(field('outside').value).toBe('mouse');
+        // Size, opacity and layout are the editor's now, behind one button.
+        for (const gone of ['scale', 'opacity', 'layout']) expect(field(gone)).toBeNull();
+        expect(field('edit').textContent).toContain('text:settings.touchPadCustomizeButton');
     });
 
-    it('reads back what the viewer set', () => {
+    it('says in one line how the controller is set', () => {
         setTouch(true);
+        view._touchPad = touchPadSettings({
+            touch_pad_scale: 1.2,
+            touch_pad_opacity: 0.45,
+            touch_pad_layout: { preset: 'left' },
+        });
+        paint();
+        expect(field('summary').textContent).toBe(
+            [
+                'text:settings.touchPadLayoutLeft',
+                'text:settings.touchPadSummarySize',
+                'text:settings.touchPadSummaryOpacity',
+            ].join(' · '),
+        );
+        view._touchPad = touchPadSettings({
+            touch_pad_layout: { portrait: { a: { x: 0.5, y: 0.5, s: 1 } } },
+        });
+        expect(view._touchPadSummary()).toContain('text:settings.touchPadSummaryMoved');
+    });
+
+    it('reads back what the viewer set, and what the editor last gave', () => {
+        setTouch(true);
+        view._touchPad = touchPadSettings({ touch_pad_scale: 1.2, touch_pad_opacity: 0.45 });
         paint();
         field('mode').value = 'always';
-        field('scale').value = '120';
-        field('opacity').value = '45';
         field('vibrate').checked = false;
         field('outside').value = 'ignore';
         expect(view._readTouchPadSection()).toEqual({
@@ -126,17 +143,13 @@ describe('SettingsView on-screen controller section', () => {
         expect(view._readTouchPadSection().mode).toBe('never');
     });
 
-    it('saves on every change, and shows a slider as it moves', () => {
+    it('saves on every change', () => {
         setTouch(true);
         paint();
-        field('opacity').value = '60';
-        field('opacity').dispatchEvent(new Event('input'));
-        expect(field('opacity-value').textContent).toBe('60');
-        expect(view._autoSave).not.toHaveBeenCalled();
-        for (const name of ['mode', 'scale', 'opacity', 'vibrate', 'outside']) {
+        for (const name of ['mode', 'vibrate', 'outside']) {
             field(name).dispatchEvent(new Event('change'));
         }
-        expect(view._autoSave).toHaveBeenCalledTimes(5);
+        expect(view._autoSave).toHaveBeenCalledTimes(3);
     });
 
     it('takes the gesture off the help as soon as the mode says never', () => {
@@ -149,49 +162,34 @@ describe('SettingsView on-screen controller section', () => {
         expect(view._helpOpts().touchPad).toBe(false);
     });
 
-    it('offers the presets, and starts from the one saved', () => {
-        setTouch(true);
-        view._touchPad = touchPadSettings({ touch_pad_layout: { preset: 'left' } });
-        paint();
-        expect(field('layout').value).toBe('left');
-        const values = Array.from(field('layout').options).map((o) => o.value);
-        expect(values).toEqual(['default', 'left', 'compact']);
-    });
-
-    it('takes a preset as a starting point, dropping the places it replaces', () => {
-        setTouch(true);
-        view._touchPad = touchPadSettings({
-            touch_pad_layout: { landscape: { a: { x: 0.5, y: 0.5, s: 1 } } },
-        });
-        paint();
-        field('layout').value = 'compact';
-        field('layout').dispatchEvent(new Event('change'));
-        expect(view._touchPad.layout).toEqual({
-            preset: 'compact',
-            landscape: {},
-            portrait: {},
-        });
-        expect(view._autoSave).toHaveBeenCalledTimes(1);
-    });
-
     it('opens the editor with what is saved, and keeps what it gives back', () => {
         setTouch(true);
         view._touchPad = touchPadSettings({
+            touch_pad_scale: 0.9,
+            touch_pad_opacity: 0.6,
             touch_pad_layout: { landscape: { a: { x: 0.5, y: 0.5, s: 1 } } },
         });
         paint();
-        view.container.querySelector('#settings-touch-pad-edit').click();
+        field('edit').click();
         expect(editors.length).toBe(1);
         const editor = editors[0];
         expect(editor.opened).toBe(true);
         expect(editor.container).toBe(document.body);
         expect(editor.options.layout).toEqual(view._touchPad.layout);
+        expect(editor.options.scale).toBe(0.9);
+        expect(editor.options.opacity).toBe(0.6);
 
         const layout = { preset: 'left', landscape: { a: { x: 0.2, y: 0.8, s: 1 } }, portrait: {} };
-        editor.options.onChange(layout);
+        editor.options.onChange(layout, { scale: 1.3, opacity: 0.4 });
         expect(view._touchPad.layout).toEqual(layout);
         expect(view._autoSave).toHaveBeenCalled();
-        expect(view._readTouchPadSection().layout).toEqual(layout);
+        const read = view._readTouchPadSection();
+        expect(read.layout).toEqual(layout);
+        expect(read.scale).toBe(1.3);
+        expect(read.opacity).toBe(0.4);
+        // The line under the button follows at once.
+        expect(field('summary').textContent).toContain('text:settings.touchPadLayoutLeft');
+        expect(field('summary').textContent).toContain('text:settings.touchPadSummaryMoved');
 
         editor.options.onClosed();
         expect(view._touchPadEditor).toBeNull();
