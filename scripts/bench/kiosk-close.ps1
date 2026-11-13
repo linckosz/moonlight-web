@@ -18,7 +18,10 @@ param(
     # By default every kiosk (content, client, the -Share guest) and the click
     # target. -Content / -Client narrow it.
     [switch] $Content,
-    [switch] $Client
+    [switch] $Client,
+    # The fleet half's client (run-fleet.ps1), alone: a local campaign may be
+    # running on this machine at the same time.
+    [switch] $Fleet
 )
 
 # The content page has a second profile when its DevTools port is open (the
@@ -27,7 +30,8 @@ $tags = @()
 if ($Content) { $tags += '.chrome-bench', '.chrome-content-cdp' }
 # The client kiosk opened by the owner's link has its own profile: .chrome-owner.
 if ($Client) { $tags += '.chrome-client', '.chrome-owner' }
-if (-not $tags) { $tags = @('.chrome-bench', '.chrome-content-cdp', '.chrome-client', '.chrome-owner', '.chrome-guest') }
+if ($Fleet) { $tags += '.chrome-fleet' }
+if (-not $tags) { $tags = @('.chrome-bench', '.chrome-content-cdp', '.chrome-client', '.chrome-owner', '.chrome-guest', '.chrome-fleet') }
 
 $killed = 0
 Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | ForEach-Object {

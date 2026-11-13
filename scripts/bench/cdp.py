@@ -20,6 +20,8 @@
                           each key, the foreground window must be the kiosk's
                           (process N, a browser window, on that screen);
                           at the first that is not, it stops, exit code 3
+    insert-stdin          type the first line of stdin into the focused field
+                          (a PIN); prints ok or failed only
     eval "<js>"           evaluate and print
     evalfile <path>       evaluate JS read from a file
     call <Method> [json]  raw CDP call
@@ -443,13 +445,32 @@ def main():
         # command line may (a share's PIN). Prints its answer, as eval does: the
         # script is to answer nothing of what it was given.
         print(c.eval(sys.stdin.read()))
+    elif cmd == "insert-stdin":
+        # The first line of standard input typed into the page's focused field
+        # (Input.insertText), for a value no command line and no script may
+        # carry: a PIN. Prints only ok or failed, never the text nor an error.
+        # A PowerShell that pipes in UTF-8 puts a byte order mark first: it is
+        # no part of the PIN.
+        text = sys.stdin.readline().rstrip("\r\n").lstrip("﻿")
+        ok = False
+        if text:
+            try:
+                c.call("Input.insertText", text=text)
+                ok = True
+            except (Exception, SystemExit):
+                ok = False
+        text = None
+        print("ok" if ok else "failed")
     elif cmd == "nav-stdin":
         # The address read from standard input (its last line that is not
         # empty), for one that must not be on a command line: a share link names
         # its token, the owner's link its key (owner_kiosk.py). An origin given
         # as the argument (https://127.0.0.1:8443) takes the place of the link's
         # own, the rest kept. Prints only whether it went.
-        lines = [line.strip() for line in sys.stdin.read().splitlines() if line.strip()]
+        # The byte order mark a PowerShell piping in UTF-8 puts first is no part
+        # of the address either.
+        lines = [line.strip().lstrip("﻿") for line in sys.stdin.read().splitlines()
+                 if line.strip().lstrip("﻿")]
         url = lines[-1] if lines else ""
         lines = None
         if url and args:

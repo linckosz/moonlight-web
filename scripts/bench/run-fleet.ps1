@@ -2,7 +2,19 @@
 # The FLEET half of a campaign: one REMOTE MoonlightWeb host, driven from the
 # Chrome on this machine.
 #
-#   .\run-fleet.ps1 -Label um790pro -AppUrl https://<addr>:49443/ -Pin 312761
+#   <the command that mints the host's PIN> | powershell -NoProfile -File run-fleet.ps1 `
+#       -Label um790pro -AppUrl https://<addr>:49443/
+#
+# The PIN comes on standard input, straight from the process that mints it
+# (fleet.py's mint_pin, or the host's own local channel), and that is the only
+# way it comes: no parameter, no prompt — the script refuses to start when its
+# input is a console, so nobody types it into a terminal, and no session of an
+# assistant ever sees it, copies it or puts it in a command. It is never shown,
+# typed into the page by cdp.py insert-stdin, and dropped at the end. The
+# client kiosk has a throwaway profile (.chrome-fleet): at the end, whatever
+# happened, the page logs out (the host revokes the session), the kiosk closes
+# and the profile goes. The run's own output and results are then searched for
+# a PIN, by its shape: the count only, 0 expected.
 #
 # The star matrix (run-campaign.ps1 + run-browser.ps1) measures the host that
 # runs the campaign: both kiosks, the click target and the flag are on THIS
@@ -26,7 +38,6 @@
 param(
     [Parameter(Mandatory = $true)] [string] $Label,
     [Parameter(Mandatory = $true)] [string] $AppUrl,
-    [string]   $Pin = '',
     [string]   $MachineName = 'bench',
     [string[]] $Codecs = @('hevc', 'h264'),
     [string]   $Tile = 'Display 1',
@@ -39,9 +50,32 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ($KeepKiosk) {
+    throw '-KeepKiosk: a kiosk that holds a session on the host is never left open'
+}
+# The PIN: one line of standard input, from the process that minted it.
+if (-not [Console]::IsInputRedirected) {
+    throw 'the PIN comes on standard input, piped from the command that mints it - never typed: see the header'
+}
+$Pin = [Console]::In.ReadLine()
+# A byte order mark, when the minting side pipes in UTF-8, is no part of it.
+if ($Pin) { $Pin = $Pin.TrimStart([char]0xFEFF) }
+if ($Pin -notmatch '^\d{4,8}$') {
+    $Pin = $null
+    throw 'no PIN on standard input (one line of 4 to 8 digits)'
+}
 if (-not $ResultsDir) { $ResultsDir = Join-Path $PSScriptRoot 'results-fleet' }
 New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 Set-Location $PSScriptRoot
+$profileName = '.chrome-fleet'
+$fleetWarnings = @()
+
+# What this run says, kept as well for the final count of PINs in it.
+$said = New-Object System.Collections.Generic.List[string]
+function Say([string] $Text = '') {
+    $script:said.Add($Text)
+    Write-Host $Text
+}
 
 function Cdp {
     param([Parameter(ValueFromRemainingArguments = $true)] $Args)
@@ -58,10 +92,28 @@ function Cdp {
 # without it the matrix dies on the first settings reload, and the error says
 # the library never came back, which sounds like the host went away.
 function Invoke-Unlock {
-    if (-not $Pin) { return $false }
+    if (-not $script:Pin) { return $false }
     if ((Cdp eval "JSON.stringify(!!document.getElementById('login-pin-input'))") -notmatch 'true') { return $false }
-    $js = "(()=>{const set=(el,v)=>{const p=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;p.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};set(document.getElementById('login-machine-input'),'$MachineName');set(document.getElementById('login-pin-input'),'$Pin');const k=document.getElementById('login-remember');if(k&&!k.checked){k.click();}const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Unlock');if(!b)return 'no Unlock button';b.click();return 'submitted';})()"
-    Write-Host "unlock       : $((Cdp eval $js).Trim())"
+    # The machine's name and the remember box first (a click on the box takes
+    # the focus), then the PIN field emptied and focused: no value of the PIN
+    # in any script. The answer is a boolean.
+    $js = "(()=>{const set=(el,v)=>{const p=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;p.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));};set(document.getElementById('login-machine-input'),'$MachineName');const k=document.getElementById('login-remember');if(k&&!k.checked){k.click();}const i=document.getElementById('login-pin-input');set(i,'');i.focus();return document.activeElement===i;})()"
+    if ((Cdp eval $js) -notmatch 'true') {
+        Say 'unlock       : no PIN field to type into'
+        return $true
+    }
+    # The PIN through a pipe to cdp.py, which types it and answers ok or failed;
+    # neither its output nor an error is shown beyond that word.
+    $typed = 'failed'
+    try {
+        $typed = ($script:Pin | & python "$PSScriptRoot\cdp.py" --port $DebugPort insert-stdin 2>$null | Out-String).Trim()
+    } catch { $typed = 'failed' }
+    if ($typed -ne 'ok') {
+        Say 'unlock       : the PIN could not be typed'
+        return $true
+    }
+    $sent = Cdp eval "(()=>{const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Unlock');if(!b)return false;b.click();return true;})()"
+    Say "unlock       : submitted $($sent -match 'true')"
     Start-Sleep -Seconds 8
     return $true
 }
@@ -98,18 +150,20 @@ if (-not $ClientRect) {
     $ClientRect = $pick
 }
 $r = $ClientRect -split ','
-Write-Host "client kiosk : $ClientRect"
-Write-Host "host         : $AppUrl"
+Say "client kiosk : $ClientRect"
+Say "host         : $AppUrl"
 # `powershell -File` cannot pass an array: -Codecs hevc,h264 arrives as the
 # single string 'hevc,h264', which is not a codec - the app then falls back to
 # H.264 and the run looks like two passes that both chose H.264 on their own.
 $Codecs = @($Codecs | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-Write-Host "codecs       : $($Codecs -join ', ')"
-
-& powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $AppUrl `
-    -X ([int]$r[0]) -Y ([int]$r[1]) -W ([int]$r[2]) -H ([int]$r[3]) -DebugPort $DebugPort | Out-Host
+Say "codecs       : $($Codecs -join ', ')"
 
 try {
+    # Inside the try: from the moment the kiosk exists, the finally ends it.
+    & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $AppUrl `
+        -X ([int]$r[0]) -Y ([int]$r[1]) -W ([int]$r[2]) -H ([int]$r[3]) -DebugPort $DebugPort `
+        -ChromeProfile $profileName | ForEach-Object { Say "$_" }
+
     # ── The PIN, when the host asks for one ─────────────────────────────────
     # A machine this browser has never unlocked shows the login page instead of
     # the library, and every later step then fails on "no element with text
@@ -128,7 +182,7 @@ try {
     if (-not $ready) {
         throw "no tile named '$Tile' at $AppUrl — cdp.py --port $DebugPort tiles lists what is on the page. The native host names its tiles after the DISPLAY, so the first 'Desktop' on the page belongs to somebody else."
     }
-    Write-Host "app ready    : tile '$Tile' is on the page"
+    Say "app ready    : tile '$Tile' is on the page"
 
     $jsonl = Join-Path $ResultsDir "$Label.jsonl"
     if (Test-Path $jsonl) { Remove-Item $jsonl }
@@ -136,8 +190,8 @@ try {
     foreach ($codec in $Codecs) {
         foreach ($enh in @('off', 'on')) {
             $id = "$codec-enhancer-$enh"
-            Write-Host ''
-            Write-Host "=== $Label / $id ==="
+            Say ''
+            Say "=== $Label / $id ==="
             # Whatever the previous pass left on screen, start from the library.
             if ((Cdp eval "JSON.stringify([...document.querySelectorAll('button')].filter(e=>e.offsetParent).map(e=>e.textContent.trim()))") -match 'Stop Streaming') {
                 Cdp exitfs | Out-Null
@@ -193,15 +247,15 @@ try {
             }
             $sw.Stop()
             if (-not $live) {
-                Write-Host "  NO STREAM  : nothing came up in $([int]$sw.Elapsed.TotalSeconds)s - recorded and moving on"
+                Say "  NO STREAM  : nothing came up in $([int]$sw.Elapsed.TotalSeconds)s - recorded and moving on"
                 ([pscustomobject]@{ label = $Label; id = $id; asked = "1080p60 $codec 4:2:0 SDR enhancer=$enh";
                                     failed = "the stream never came up" } | ConvertTo-Json -Compress) |
                     Add-Content -Path $jsonl -Encoding UTF8
                 continue
             }
-            Write-Host "  first image: $([int]$sw.Elapsed.TotalSeconds)s after the click"
+            Say "  first image: $([int]$sw.Elapsed.TotalSeconds)s after the click"
             # Fullscreen is cosmetic for these numbers: never fatal.
-            try { Cdp fullscreen | Out-Null } catch { Write-Host '  (fullscreen refused - measuring windowed)' }
+            try { Cdp fullscreen | Out-Null } catch { Say '  (fullscreen refused - measuring windowed)' }
             Start-Sleep -Seconds $SettleSec
 
             $row = [ordered]@{
@@ -210,7 +264,7 @@ try {
                 asked      = "1080p60 $codec 4:2:0 SDR enhancer=$enh"
                 negotiated = (Cdp stats).Trim()
             }
-            Write-Host "  negotiated : $($row.negotiated)"
+            Say "  negotiated : $($row.negotiated)"
             $row.perf = (Cdp perf 15).Trim()
             ([pscustomobject]$row | ConvertTo-Json -Compress -Depth 6) | Add-Content -Path $jsonl -Encoding UTF8
 
@@ -221,13 +275,42 @@ try {
             }
         }
     }
-    Write-Host ''
-    Write-Host "fleet half written to $jsonl"
+    Say ''
+    Say "fleet half written to $jsonl"
 }
 finally {
-    if ($KeepKiosk) {
-        Write-Host 'kiosk left open (-KeepKiosk): Ctrl+Alt+Shift+Q closes it.'
-    } else {
-        & powershell -NoProfile -File "$PSScriptRoot\kiosk-close.ps1" -Client | Out-Host
+    $Pin = $null
+    $script:Pin = $null
+    # In this order: the page ends its session (the host revokes it), the kiosk
+    # closes, then its profile goes once no Chrome runs on it.
+    & python "$PSScriptRoot\owner_kiosk.py" logout --cdp-port $DebugPort | ForEach-Object { Say "$_" }
+    if ($LASTEXITCODE -ne 0) {
+        $fleetWarnings += 'the session on the host could not be ended by the page: revoke it in its Active Sessions'
     }
+    & powershell -NoProfile -File "$PSScriptRoot\kiosk-close.ps1" -Fleet | ForEach-Object { Say "$_" }
+    $profilePath = Join-Path $PSScriptRoot $profileName
+    for ($i = 0; $i -lt 5 -and (Test-Path -LiteralPath $profilePath); $i++) {
+        Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $profilePath) { Start-Sleep -Seconds 1 }
+    }
+    if (Test-Path -LiteralPath $profilePath) {
+        $fleetWarnings += "$profileName still holds the host's session cookie: remove it once Chrome is closed"
+    }
+    Say "fleet kiosk profile removed: $(-not (Test-Path -LiteralPath $profilePath))"
+    # The proof no PIN was left: by its shape, in the results and in what this
+    # run said. The count only.
+    $pinShape = '(?i)\bpin\b["'']?\s*[:=]\s*["'']?\d{4,}'
+    $pins = [regex]::Matches(($said -join "`n"), $pinShape).Count
+    Get-ChildItem -LiteralPath $ResultsDir -File -Recurse -ErrorAction SilentlyContinue |
+        Where-Object { $_.Length -lt 64MB } | ForEach-Object {
+            $file = $_
+            try {
+                $pins += [regex]::Matches([System.IO.File]::ReadAllText($file.FullName,
+                    [System.Text.Encoding]::GetEncoding(28591)), $pinShape).Count
+            } catch { $fleetWarnings += "PINs not counted in $($file.Name): unreadable" }
+        }
+    Say "PINs left by the run: $pins"
+    foreach ($w in $fleetWarnings) { Write-Warning $w }
 }
+# Said again last, where they cannot be lost in the passes' output.
+foreach ($w in $fleetWarnings) { Write-Warning $w }

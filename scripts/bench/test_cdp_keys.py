@@ -91,6 +91,51 @@ class PerKey(unittest.TestCase):
             self.assertEqual(typed, [])
 
 
+class InsertStdin(unittest.TestCase):
+    """insert-stdin types the first line of stdin and says only ok or failed."""
+    PIN = "48151623"
+
+    def run_insert(self, stdin, fail=False):
+        class Failing(FakeCdp):
+            def call(self, method, **params):
+                raise RuntimeError("could not insert " + params.get("text", ""))
+        out = io.StringIO()
+        with mock.patch.object(cdp, "Cdp", Failing if fail else FakeCdp), \
+             mock.patch.object(sys, "argv", ["cdp.py", "insert-stdin"]), \
+             mock.patch.object(sys, "stdin", io.StringIO(stdin)), \
+             contextlib.redirect_stdout(out):
+            cdp.main()
+        return out.getvalue().strip()
+
+    def test_typed_and_said_ok(self):
+        self.assertEqual(self.run_insert(self.PIN + "\n"), "ok")
+        self.assertIn("Input.insertText", FakeCdp.calls)
+
+    def test_byte_order_mark_is_not_typed(self):
+        # What a PowerShell piping in UTF-8 sends: the mark, then the PIN.
+        typed = []
+
+        class Recording(FakeCdp):
+            def call(self, method, **params):
+                typed.append(params.get("text"))
+                return {}
+        with mock.patch.object(cdp, "Cdp", Recording), \
+             mock.patch.object(sys, "argv", ["cdp.py", "insert-stdin"]), \
+             mock.patch.object(sys, "stdin", io.StringIO("﻿" + self.PIN + "\r\n")), \
+             contextlib.redirect_stdout(io.StringIO()):
+            cdp.main()
+        self.assertEqual(typed, [self.PIN])
+
+    def test_nothing_to_type(self):
+        self.assertEqual(self.run_insert("\n"), "failed")
+        self.assertNotIn("Input.insertText", FakeCdp.calls)
+
+    def test_failure_says_only_failed(self):
+        said = self.run_insert(self.PIN + "\n", fail=True)
+        self.assertEqual(said, "failed")
+        self.assertNotIn(self.PIN, said)
+
+
 @unittest.skipUnless(sys.platform == "win32", "the foreground is a Windows question")
 class RealForeground(unittest.TestCase):
     """The real check, against whatever window has the foreground while the test runs."""

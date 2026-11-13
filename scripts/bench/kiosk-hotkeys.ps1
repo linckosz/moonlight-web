@@ -52,7 +52,7 @@ public class KHot {
 }
 "@
 
-$TAGS = @('.chrome-bench', '.chrome-client', '.chrome-owner')
+$TAGS = @('.chrome-bench', '.chrome-client', '.chrome-owner', '.chrome-fleet')
 
 function Get-KioskPids {
     $pids = New-Object 'System.Collections.Generic.HashSet[uint32]'
