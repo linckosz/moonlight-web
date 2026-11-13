@@ -557,6 +557,9 @@ void run_request_guard_tests()
 
     // What the booth changes, refused.
     CHECK(lockedByNoAdmin("POST", "/api/hosts/manual"));
+    // The tray's Disconnect (issue #42), on every path.
+    CHECK(lockedByNoAdmin("POST", "/api/server/stream-disconnect"));
+    CHECK(!lockedByNoAdmin("GET", "/api/server/stream-activity"));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/scan"));
     CHECK(lockedByNoAdmin("DELETE", "/api/hosts/uuid-1"));
     CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/name"));
@@ -708,6 +711,9 @@ void run_request_guard_tests()
     CHECK(localChannelRoute("POST", "/api/admin/password"));
     CHECK(localChannelRoute("POST", "/api/system/restart"));
     CHECK(localChannelRoute("POST", "/api/system/quit"));
+    // The tray's Disconnect (issue #42), asked by the icon of a service.
+    CHECK(localChannelRoute("POST", "/api/server/stream-disconnect"));
+    CHECK(!localChannelRoute("GET", "/api/server/stream-disconnect"));
     CHECK(localChannelRoute("POST", "/api/local/focus"));
 
     // And nothing else. The other verb of a listed route.

@@ -74,6 +74,25 @@ public:
     /// name, cleaned (see the .cpp), "This computer" for this machine's browser.
     static QString nameOf(const StreamViewer& v);
 
+    /// Characters of a name in the tray's menu (issue #42): fewer than a
+    /// notice's, the menu being narrow.
+    static constexpr int kMaxMenuNameLength = 32;
+
+    /// Who a line of the tray stands for: nameOf(), cut to kMaxMenuNameLength,
+    /// with the address the server gave in brackets ("Living room TV
+    /// (192.168.1.50)", "Bruno (Internet)").
+    static QString whoOf(const StreamViewer& v);
+
+    /// A line of the tray's menu: "Disconnect " + whoOf(), every "&" doubled,
+    /// which Qt would otherwise read as a shortcut.
+    static QString disconnectLabel(const StreamViewer& v);
+
+    /// The tray's tooltip: @p product, "Streaming (n)" while anyone is, and a
+    /// security notice naming the TVs on plain HTTP. Never past the 127
+    /// characters Windows keeps: the names go first, then the addresses, then
+    /// all but their count.
+    static QString tooltip(const QString& product, const QList<StreamViewer>& viewers);
+
     /// One recent viewer: the first time this process saw them arrive, and the
     /// last time they left (invalid while they are still watching).
     struct Viewing
@@ -133,6 +152,7 @@ private:
         QDateTime to;             // invalid while they are still watching
         bool arrivalTold = false; // only the departure is left to tell
         bool held = false;        // Windows made it wait at least once
+        bool plainHttp = false;   // a TV on plain HTTP: a security notice
     };
 
     void queueArrival(const StreamViewer& v, const QDateTime& now);

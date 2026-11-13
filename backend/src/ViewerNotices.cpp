@@ -114,7 +114,8 @@ ViewerNotices::Changes ViewerNotices::observe(const QList<StreamViewer>& viewers
         changes.arrived.append(v);
         m_Since.append({v.id, now});
         noteArrival(v, now);
-        if (announce) queueArrival(v, now);
+        // A TV on plain HTTP is told whatever the switch says (issue #42).
+        if (announce || v.lanHttp) queueArrival(v, now);
     }
     // Departures are named from the previous poll, the only place a viewer who
     // is gone still has a name.
@@ -134,18 +135,24 @@ ViewerNotices::Changes ViewerNotices::observe(const QList<StreamViewer>& viewers
     return changes;
 }
 
+// The name a notice gives: a TV on plain HTTP with its address (issue #42).
+static QString noticeName(const StreamViewer& v)
+{
+    return v.lanHttp ? ViewerNotices::whoOf(v) : ViewerNotices::nameOf(v);
+}
+
 // A person already waiting in the queue keeps their one place in it: whatever
 // they did since, the notice will tell it from their first time to their last.
 void ViewerNotices::queueArrival(const StreamViewer& v, const QDateTime& now)
 {
     for (Pending& p : m_Queue) {
         if (p.id != v.id) continue;
-        p.name = nameOf(v);
+        p.name = noticeName(v);
         p.to = QDateTime();
         p.arrivalTold = false; // back before their departure was told: one span
         return;
     }
-    m_Queue.append({v.id, nameOf(v), now, QDateTime(), false, false});
+    m_Queue.append({v.id, noticeName(v), now, QDateTime(), false, false, v.lanHttp});
     while (m_Queue.size() > kMaxPeople) {
         m_Queue.removeFirst();
         ++m_Dropped;
@@ -157,11 +164,11 @@ void ViewerNotices::queueDeparture(const StreamViewer& v, const QDateTime& since
 {
     for (Pending& p : m_Queue) {
         if (p.id != v.id) continue;
-        p.name = nameOf(v);
+        p.name = noticeName(v);
         p.to = now;
         return;
     }
-    m_Queue.append({v.id, nameOf(v), since, now, true, false});
+    m_Queue.append({v.id, noticeName(v), since, now, true, false, v.lanHttp});
     while (m_Queue.size() > kMaxPeople) {
         m_Queue.removeFirst();
         ++m_Dropped;
@@ -237,9 +244,66 @@ QString ViewerNotices::text(const Pending& p, const QDateTime& now) const
         return tr("%1 streamed this screen from %2 to %3")
             .arg(p.name, clock(p.from, now), clock(p.to, now));
     }
+    // A TV on plain HTTP, with its address: a security notice.
+    if (p.plainHttp && p.held)
+        return tr("Security notice: %1 has been streaming this screen over plain HTTP since %2")
+            .arg(p.name, clock(p.from, now));
+    if (p.plainHttp)
+        return tr("Security notice: %1 started streaming this screen over plain HTTP").arg(p.name);
     if (p.held)
         return tr("%1 has been streaming this screen since %2").arg(p.name, clock(p.from, now));
     return tr("%1 started streaming this screen").arg(p.name);
+}
+
+QString ViewerNotices::whoOf(const StreamViewer& v)
+{
+    QString name = nameOf(v);
+    const QList<uint> points = name.toUcs4();
+    if (points.size() > kMaxMenuNameLength)
+        name = QString::fromUcs4(reinterpret_cast<const char32_t*>(points.constData()),
+                                 kMaxMenuNameLength)
+                   .trimmed() +
+               QChar(0x2026); // …
+    if (v.self || v.address.isEmpty()) return name;
+    return name + QStringLiteral(" (") + v.address + QLatin1Char(')');
+}
+
+QString ViewerNotices::disconnectLabel(const StreamViewer& v)
+{
+    QString label = tr("Disconnect %1").arg(whoOf(v));
+    label.replace(QLatin1Char('&'), QStringLiteral("&&"));
+    return label;
+}
+
+QString ViewerNotices::tooltip(const QString& product, const QList<StreamViewer>& viewers)
+{
+    // What NOTIFYICONDATA's szTip holds, its terminator aside.
+    constexpr int kMax = 127;
+    QString head = product;
+    if (!viewers.isEmpty()) head += QLatin1Char('\n') + tr("Streaming (%1)").arg(viewers.size());
+
+    QStringList named, addressed;
+    for (const StreamViewer& v : viewers) {
+        if (!v.lanHttp) continue;
+        named.append(whoOf(v));
+        addressed.append(v.address.isEmpty() ? nameOf(v) : v.address);
+    }
+    if (named.isEmpty()) return head.left(kMax);
+    const auto notice = [&](const QStringList& who) {
+        return head + QLatin1Char('\n') +
+               (who.size() == 1
+                    ? tr("Security notice: %1 is streaming over plain HTTP").arg(who.first())
+                    : tr("Security notice: %1 are streaming over plain HTTP")
+                          .arg(who.join(QStringLiteral(", "))));
+    };
+    for (const QStringList& who : {named, addressed}) {
+        const QString text = notice(who);
+        if (text.size() <= kMax) return text;
+    }
+    const QString counted =
+        head + QLatin1Char('\n') +
+        tr("Security notice: %1 devices are streaming over plain HTTP").arg(named.size());
+    return counted.left(kMax);
 }
 
 // The time alone today; the date too for an older one (a server up for days).

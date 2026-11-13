@@ -286,4 +286,160 @@ void run_viewer_notices_tests()
         CHECK(!wire.contains("tokenA"));
         CHECK(wire.contains(id.toLatin1()));
     }
+    SECTION("ViewerNotices: a TV on plain HTTP is told, whatever the switch says (issue #42)");
+    {
+        ViewerNotices n = started(loc);
+        StreamViewer tv = viewer("tv", "Living room TV");
+        tv.lanHttp = true;
+        tv.address = "192.168.1.50";
+        StreamViewer phone = viewer("phone", "Bruno");
+        phone.address = "192.168.1.177";
+        // Notifications switched off: the phone is not told, the TV is.
+        n.observe({tv, phone}, kT0.addSecs(10), false);
+        CHECK(n.due(0));
+        CHECK_EQ(n.take(kT0.addSecs(10), 0),
+                 QStringLiteral("Security notice: Living room TV (192.168.1.50) started streaming "
+                                "this screen over plain HTTP"));
+        CHECK(!n.due(100000));
+    }
+
+    SECTION("ViewerNotices: the tray's menu lines");
+    {
+        StreamViewer tv = viewer("tv", "Living room TV");
+        tv.lanHttp = true;
+        tv.address = "192.168.1.50";
+        CHECK_EQ(ViewerNotices::disconnectLabel(tv),
+                 QStringLiteral("Disconnect Living room TV (192.168.1.50)"));
+        StreamViewer far = viewer("far", "Bruno");
+        far.address = "Internet";
+        CHECK_EQ(ViewerNotices::whoOf(far), QStringLiteral("Bruno (Internet)"));
+        CHECK_EQ(ViewerNotices::whoOf(viewer("me", "Host machine", true)),
+                 QStringLiteral("This computer"));
+        // A name is the device's own: "&" is no shortcut, a control, a bidi
+        // mark or a line break is no part of it, and 32 characters are enough.
+        CHECK_EQ(ViewerNotices::disconnectLabel(viewer("x", "Tom & Jerry")),
+                 QStringLiteral("Disconnect Tom && Jerry"));
+        const QString tricky = QStringLiteral("Ev") + QChar(0x202E) + QStringLiteral("il") +
+                               QChar(0x2066) + QStringLiteral(" TV") + QChar(0x2028) + QChar(0x07);
+        CHECK_EQ(ViewerNotices::whoOf(viewer("x", tricky)), QStringLiteral("Evil TV"));
+        const QString longName = QString(40, QLatin1Char('a'));
+        CHECK_EQ(ViewerNotices::whoOf(viewer("x", longName)),
+                 QString(32, QLatin1Char('a')) + QChar(0x2026));
+        CHECK_EQ(ViewerNotices::whoOf(viewer("x", "")), QStringLiteral("Someone"));
+    }
+
+    SECTION("ViewerNotices: the tray's tooltip, within Windows' 127 characters");
+    {
+        CHECK_EQ(ViewerNotices::tooltip("MoonlightWeb", {}), QStringLiteral("MoonlightWeb"));
+        StreamViewer phone = viewer("phone", "Bruno");
+        phone.address = "192.168.1.177";
+        CHECK_EQ(ViewerNotices::tooltip("MoonlightWeb", {phone}),
+                 QStringLiteral("MoonlightWeb\nStreaming (1)"));
+        StreamViewer tv = viewer("tv", "Living room TV");
+        tv.lanHttp = true;
+        tv.address = "192.168.1.50";
+        CHECK_EQ(ViewerNotices::tooltip("MoonlightWeb", {phone, tv}),
+                 QStringLiteral("MoonlightWeb\nStreaming (2)\nSecurity notice: Living room TV "
+                                "(192.168.1.50) is streaming over plain HTTP"));
+        // 126 characters: the names still fit.
+        StreamViewer den = viewer("tv2", "Den TV");
+        den.lanHttp = true;
+        den.address = "192.168.1.51";
+        CHECK_EQ(ViewerNotices::tooltip("MoonlightWeb", {tv, den}),
+                 QStringLiteral("MoonlightWeb\nStreaming (2)\nSecurity notice: Living room TV "
+                                "(192.168.1.50), Den TV (192.168.1.51) are streaming over "
+                                "plain HTTP"));
+        // Too long with the names: the addresses alone; still too long: a count.
+        StreamViewer a = viewer("a", QString(30, QLatin1Char('a')));
+        a.lanHttp = true;
+        a.address = "192.168.1.60";
+        StreamViewer b = viewer("b", QString(30, QLatin1Char('b')));
+        b.lanHttp = true;
+        b.address = "192.168.1.61";
+        const QString two = ViewerNotices::tooltip("MoonlightWeb", {a, b});
+        CHECK(two.size() <= 127);
+        CHECK(two.endsWith(
+            QStringLiteral("192.168.1.60, 192.168.1.61 are streaming over plain HTTP")));
+        QList<StreamViewer> many;
+        for (int i = 0; i < 6; ++i) {
+            StreamViewer v = viewer(QString::number(i), QStringLiteral("TV %1").arg(i));
+            v.lanHttp = true;
+            v.address = QStringLiteral("192.168.1.%1").arg(100 + i);
+            many.append(v);
+        }
+        const QString counted = ViewerNotices::tooltip("MoonlightWeb", many);
+        CHECK(counted.size() <= 127);
+        CHECK(counted.endsWith(QStringLiteral("6 devices are streaming over plain HTTP")));
+    }
+
+    SECTION("StreamActivity: one id per stream, an address the tray may show");
+    {
+        const QByteArray salt("0123456789abcdef0123456789abcdef");
+        const QString id = StreamActivity::instanceId(salt, 0, "stream-1");
+        CHECK_EQ(id.size(), qsizetype(16));
+        CHECK_EQ(StreamActivity::instanceId(salt, 0, "stream-1"), id);
+        // Another stream in the same slot, the same stream id in another slot,
+        // another run: another id.
+        CHECK(StreamActivity::instanceId(salt, 0, "stream-2") != id);
+        CHECK(StreamActivity::instanceId(salt, 1, "stream-1") != id);
+        CHECK(StreamActivity::instanceId("another-salt", 0, "stream-1") != id);
+        CHECK(StreamActivity::instanceId(QByteArray(), 0, "stream-1").isEmpty());
+        CHECK(StreamActivity::instanceId(salt, 0, QString()).isEmpty());
+
+        CHECK_EQ(StreamActivity::shownAddress("192.168.1.50"), QStringLiteral("192.168.1.50"));
+        CHECK_EQ(StreamActivity::shownAddress("::ffff:10.0.0.7"), QStringLiteral("10.0.0.7"));
+        CHECK_EQ(StreamActivity::shownAddress("82.64.10.20"), QStringLiteral("Internet"));
+        CHECK_EQ(StreamActivity::shownAddress("2a01:e0a::1"), QStringLiteral("Internet"));
+        CHECK_EQ(StreamActivity::shownAddress("100.64.0.9"), QStringLiteral("Internet"));
+        CHECK(StreamActivity::shownAddress("").isEmpty());
+
+        QList<StreamSlotFacts> live;
+        live.append({0, "tokenA", "Bruno", false, "s0", "82.64.10.20", false});
+        live.append({1, "tokenA", "Bruno", false, "s1", "82.64.10.20", false}); // its standby
+        live.append({5, "tokenTv", "Living room TV", false, "s5", "192.168.1.50", true});
+        live.append({6, "", "", true, "s6", "127.0.0.1", false});
+        const QList<StreamViewer> viewers = StreamActivity::viewersOf(live, 2, salt);
+        CHECK_EQ(viewers.size(), qsizetype(3));
+        CHECK_EQ(viewers[0].instance, StreamActivity::instanceId(salt, 0, "s0"));
+        CHECK_EQ(viewers[0].address, QStringLiteral("Internet"));
+        CHECK(!viewers[0].lanHttp);
+        CHECK_EQ(viewers[0].slot, 0);
+        CHECK(viewers[1].lanHttp);
+        CHECK_EQ(viewers[1].address, QStringLiteral("192.168.1.50"));
+        CHECK_EQ(viewers[1].slot, 5);
+        CHECK(viewers[2].address.isEmpty()); // this computer
+
+        StreamActivity a;
+        a.viewers = viewers;
+        const StreamActivity back = StreamActivity::fromJson(a.toJson());
+        CHECK_EQ(back.viewers.size(), qsizetype(3));
+        CHECK_EQ(back.viewers[1].instance, viewers[1].instance);
+        CHECK_EQ(back.viewers[1].address, QStringLiteral("192.168.1.50"));
+        CHECK(back.viewers[1].lanHttp);
+        CHECK_EQ(back.viewers[1].slot, 5);
+        const QByteArray wire = QJsonDocument(a.toJson()).toJson();
+        CHECK(!wire.contains("tokenTv"));
+        CHECK(!wire.contains("82.64.10.20"));
+    }
+
+    SECTION("StreamActivity: who may end a stream from the tray");
+    {
+        using SA = StreamActivity;
+        // The local channel: the icon of a server that runs as a service.
+        CHECK(SA::mayDisconnect(true, false, false, false, false, false));
+        // The administrator's right, from a host or an administrator session.
+        CHECK(SA::mayDisconnect(false, true, false, true, false, false));
+        CHECK(SA::mayDisconnect(false, true, false, false, true, false));
+        // This machine's loopback without a session, a session without the
+        // right, an ordinary session: no.
+        CHECK(!SA::mayDisconnect(false, true, false, false, false, false));
+        CHECK(!SA::mayDisconnect(false, false, false, true, false, false));
+        CHECK(!SA::mayDisconnect(false, false, false, false, false, false));
+        // A TV on plain HTTP, whatever else it carries.
+        CHECK(!SA::mayDisconnect(false, true, true, true, true, false));
+        CHECK(!SA::mayDisconnect(true, true, true, true, true, false));
+        // --noadmin: nobody, the channel included.
+        CHECK(!SA::mayDisconnect(true, false, false, false, false, true));
+        CHECK(!SA::mayDisconnect(false, true, false, true, true, true));
+    }
 }

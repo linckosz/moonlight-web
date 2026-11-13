@@ -61,6 +61,9 @@ void run_local_request_tests()
         // The probe of the router: no credential, and nothing a script should
         // set off by asking for a status.
         CHECK(!allowed(Asked{QStringLiteral("GET"), QStringLiteral("/api/internet/upnp-probe")}));
+        // It ends someone's stream: the tray's button, never a script's (issue #42).
+        CHECK(!allowed(
+            Asked{QStringLiteral("POST"), QStringLiteral("/api/server/stream-disconnect")}));
         CHECK(RequestGuard::localChannelRoute(QStringLiteral("GET"),
                                               QStringLiteral("/api/internet/upnp-probe")));
         // The three others are routes of the channel too: it is this verb that

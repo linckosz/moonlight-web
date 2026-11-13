@@ -367,6 +367,9 @@ bool localChannelRoute(const QString& method, const QString& path)
         {"POST", "/api/admin/password"},
         {"POST", "/api/system/restart"},
         {"POST", "/api/system/quit"},
+        // The tray's Disconnect (issue #42): the icon of a server that runs as
+        // a service asks it this way. Never a script's (LocalRequest).
+        {"POST", "/api/server/stream-disconnect"},
         {"POST", "/api/local/focus"},
     };
     for (const Route& route : kRoutes)
@@ -395,6 +398,9 @@ bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllow
 
     if (area == QLatin1String("system")) return true;
     if (area == QLatin1String("update")) return true;
+    // The tray's Disconnect (issue #42): the icon greys it under --noadmin,
+    // and the channel that carries it is refused it as well.
+    if (path == QLatin1String("/api/server/stream-disconnect")) return true;
     if (area == QLatin1String("auth")) {
         static const QStringList doors = {QStringLiteral("validate"),
                                           QStringLiteral("admin-unlock"),

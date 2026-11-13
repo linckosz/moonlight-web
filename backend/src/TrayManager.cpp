@@ -32,7 +32,9 @@
 #include <QAction>
 #include <QGuiApplication>
 #include <QMenu>
+#include <QFont>
 #include <QPainter>
+#include <QPolygonF>
 #include <QSignalBlocker>
 
 #ifdef Q_OS_WIN
@@ -100,7 +102,12 @@ bool TrayManager::init()
         icon = QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
     }
     m_Icon = icon;
-    m_IconWatched = withDot(icon);
+    // Every count the tray may show, painted now rather than when it changes
+    // during a stream (see noticeIcon for what drawing then costs).
+    for (int http = 0; http < 2; ++http)
+        for (int n = 1; n <= 10; ++n)
+            m_CountIcons[http][n - 1] = withCount(icon, n, http == 1);
+    m_WarnIcon = warningIcon();
     m_TrayIcon->setIcon(m_Icon);
     m_Clock.start();
 
@@ -111,7 +118,7 @@ bool TrayManager::init()
     // and the one least able to keep up with it. "Streaming (2)" is a different
     // kind of fact: it is about this machine right now, and there is nowhere
     // else it could be read without opening a page.
-    refreshTooltip(0);
+    refreshTooltip({});
 
     // Build context menu. In client mode the server is a service in another
     // session this process cannot see: the header says so, and Restart / Quit act
@@ -129,11 +136,7 @@ bool TrayManager::init()
     // and the tooltip already answers "is anyone?" without a click.
     m_StreamingAction = m_Menu->addAction(tr("Streaming"));
     m_StreamingAction->setVisible(false);
-    // Who watched lately, and when: what a notice that went unseen would have
-    // said (A137). In memory only, gone with this process; hidden while empty.
-    m_RecentMenu = m_Menu->addMenu(tr("Recent viewers"));
-    m_RecentMenu->menuAction()->setVisible(false);
-    connect(m_Menu, &QMenu::aboutToShow, this, &TrayManager::refreshRecentMenu);
+    // Then one Disconnect per viewer (refreshViewerActions), inserted here.
     m_StreamingSeparator = m_Menu->addSeparator();
     m_StreamingSeparator->setVisible(false);
     connect(m_StreamingAction, &QAction::triggered, this, &TrayManager::onOpenSessions);
@@ -221,13 +224,58 @@ bool TrayManager::init()
 }
 
 // "MoonlightWeb" alone when nobody is watching; the count on a second line when
-// someone is. Windows shows both lines, and every platform shows the first.
-void TrayManager::refreshTooltip(int count)
+// someone is, and a security notice on a third while a TV streams over plain
+// HTTP. Windows shows them all, and every platform shows the first.
+void TrayManager::refreshTooltip(const QList<StreamViewer>& viewers)
 {
     if (!m_TrayIcon) return;
-    QString tip = mw::edition::displayName();
-    if (count > 0) tip += QLatin1Char('\n') + tr("Streaming (%1)").arg(count);
-    m_TrayIcon->setToolTip(tip);
+    m_TrayIcon->setToolTip(ViewerNotices::tooltip(mw::edition::displayName(), viewers));
+}
+
+void TrayManager::refreshViewerActions(const QList<StreamViewer>& viewers)
+{
+    // The TVs on plain HTTP first, the others in the server's order.
+    QList<StreamViewer> ordered;
+    for (const StreamViewer& v : viewers)
+        if (v.lanHttp) ordered.append(v);
+    for (const StreamViewer& v : viewers)
+        if (!v.lanHttp) ordered.append(v);
+    QStringList key;
+    for (const StreamViewer& v : std::as_const(ordered))
+        key.append(v.instance + QLatin1Char('|') + ViewerNotices::disconnectLabel(v) +
+                   (v.lanHttp ? QStringLiteral("|http") : QString()));
+    if (key == m_ViewerKey) return;
+    m_ViewerKey = key;
+
+    qDeleteAll(m_ViewerActions);
+    m_ViewerActions.clear();
+    for (const StreamViewer& v : std::as_const(ordered)) {
+        auto* line = new QAction(ViewerNotices::disconnectLabel(v), m_Menu);
+        if (v.lanHttp) line->setIcon(m_WarnIcon);
+        // Booth mode changes nothing from here; a line without an id names no
+        // stream.
+        const QString instance = v.instance;
+        line->setEnabled(!m_AdminLocked && m_Disconnect && !instance.isEmpty());
+        connect(line, &QAction::triggered, this, [this, instance]() { onDisconnect(instance); });
+        m_Menu->insertAction(m_StreamingSeparator, line);
+        m_ViewerActions.append(line);
+        // A TV on plain HTTP: said on its own line, under its name.
+        if (v.lanHttp) {
+            auto* note = new QAction(tr("Plain HTTP"), m_Menu);
+            note->setEnabled(false);
+            m_Menu->insertAction(m_StreamingSeparator, note);
+            m_ViewerActions.append(note);
+        }
+    }
+}
+
+void TrayManager::onDisconnect(const QString& instance)
+{
+    if (!m_Disconnect || instance.isEmpty()) return;
+    // The server says which stream it stopped, in its log; the tray only says
+    // when it was gone already.
+    if (!m_Disconnect(instance))
+        qWarning() << "[TrayManager] Disconnect: that stream had ended already";
 }
 
 void TrayManager::notify(const QString& text)
@@ -292,23 +340,28 @@ void TrayManager::pollActivity()
     }
     releaseNotice();
 
-    // The dot says "someone is watching" on its own, whatever became of the
+    // The count says "someone is watching" on its own, whatever became of the
     // notices: a wrong reading of Windows' state, or a balloon nobody saw,
-    // still leaves it there until the last viewer has gone.
-    const bool watched = m_Notices.watched();
-    if (watched != m_ShowsDot) {
-        m_ShowsDot = watched;
-        m_TrayIcon->setIcon(watched ? m_IconWatched : m_Icon);
+    // still leaves it there until the last viewer has gone. Yellow while a TV
+    // streams over plain HTTP (issue #42).
+    const int count = activity.count();
+    bool plainHttp = false;
+    for (const StreamViewer& v : activity.viewers)
+        plainHttp = plainHttp || v.lanHttp;
+    const int iconKey = count == 0 ? 0 : (plainHttp ? 100 : 0) + qMin(count, 10);
+    if (iconKey != m_IconKey) {
+        m_IconKey = iconKey;
+        m_TrayIcon->setIcon(count == 0 ? m_Icon
+                                       : m_CountIcons[plainHttp ? 1 : 0][qMin(count, 10) - 1]);
     }
 
-    refreshTooltip(activity.count());
+    refreshTooltip(activity.viewers);
     if (m_StreamingAction) {
-        m_StreamingAction->setText(tr("Streaming (%1)").arg(activity.count()));
-        m_StreamingAction->setVisible(activity.count() > 0);
+        m_StreamingAction->setText(tr("Streaming (%1)").arg(count));
+        m_StreamingAction->setVisible(count > 0);
     }
-    const bool anyRecent = !m_Notices.recent().isEmpty();
-    if (m_RecentMenu) m_RecentMenu->menuAction()->setVisible(anyRecent);
-    if (m_StreamingSeparator) m_StreamingSeparator->setVisible(activity.count() > 0 || anyRecent);
+    refreshViewerActions(activity.viewers);
+    if (m_StreamingSeparator) m_StreamingSeparator->setVisible(count > 0);
 }
 
 // One notice at a time, and only once Windows says it would show it.
@@ -350,36 +403,61 @@ void TrayManager::releaseNotice()
     }
 }
 
-void TrayManager::refreshRecentMenu()
+// The app's icon with a count in its lower right corner, white-ringed so it
+// reads on a dark taskbar and a light one alike: blue, or yellow with a dark
+// figure while a TV streams over plain HTTP. Painted once, at init, for every
+// size a tray asks for: never while somebody is streaming (see noticeIcon for
+// what drawing then costs).
+QIcon TrayManager::withCount(const QIcon& base, int count, bool plainHttp)
 {
-    if (!m_RecentMenu) return;
-    m_RecentMenu->clear();
-    const QDateTime now = QDateTime::currentDateTime();
-    for (const ViewerNotices::Viewing& v : m_Notices.recent())
-        m_RecentMenu->addAction(m_Notices.recentLine(v, now))->setEnabled(false);
-}
-
-// The app's icon with a red dot in its lower right corner, white-ringed so it
-// reads on a dark taskbar and a light one alike. Painted once, at init, for
-// every size a tray asks for: never while somebody is streaming (see noticeIcon
-// for what drawing then costs).
-QIcon TrayManager::withDot(const QIcon& base)
-{
+    const QColor fill = plainHttp ? QColor(0xFF, 0xC4, 0x00) : QColor(0x2F, 0x80, 0xD8);
+    const QColor ink = plainHttp ? QColor(0x1B, 0x1B, 0x1B) : QColor(Qt::white);
+    const QString figure = count > 9 ? QStringLiteral("9+") : QString::number(count);
     QIcon out;
     for (int size : {16, 20, 24, 32, 40, 48, 64}) {
         QPixmap pm = base.pixmap(size, size);
         if (pm.isNull()) continue;
         QPainter p(&pm);
         p.setRenderHint(QPainter::Antialiasing);
-        const qreal d = size * 0.5;
-        const QRectF dot(size - d, size - d, d, d);
+        p.setRenderHint(QPainter::TextAntialiasing);
+        const qreal d = size * 0.62;
+        const QRectF badge(size - d, size - d, d, d);
         p.setPen(QPen(Qt::white, qMax<qreal>(1.0, size / 16.0)));
-        p.setBrush(QColor(0xE5, 0x1A, 0x1A));
-        p.drawEllipse(dot.adjusted(0.5, 0.5, -0.5, -0.5));
+        p.setBrush(fill);
+        p.drawEllipse(badge.adjusted(0.5, 0.5, -0.5, -0.5));
+        QFont font = p.font();
+        font.setBold(true);
+        font.setPixelSize(qMax(5, static_cast<int>(d * (figure.size() > 1 ? 0.5 : 0.72))));
+        p.setFont(font);
+        p.setPen(ink);
+        p.drawText(badge, Qt::AlignCenter, figure);
         p.end();
         out.addPixmap(pm);
     }
     return out.isNull() ? base : out;
+}
+
+QIcon TrayManager::warningIcon()
+{
+    QIcon out;
+    for (int size : {16, 20, 24, 32}) {
+        QPixmap pm(size, size);
+        pm.fill(Qt::transparent);
+        QPainter p(&pm);
+        p.setRenderHint(QPainter::Antialiasing);
+        const qreal s = size;
+        const QPolygonF triangle(
+            {QPointF(s * 0.5, s * 0.08), QPointF(s * 0.95, s * 0.9), QPointF(s * 0.05, s * 0.9)});
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(0xFF, 0xC4, 0x00));
+        p.drawPolygon(triangle);
+        p.setBrush(QColor(0x1B, 0x1B, 0x1B));
+        p.drawRoundedRect(QRectF(s * 0.45, s * 0.35, s * 0.1, s * 0.3), s * 0.03, s * 0.03);
+        p.drawEllipse(QPointF(s * 0.5, s * 0.76), s * 0.06, s * 0.06);
+        p.end();
+        out.addPixmap(pm);
+    }
+    return out;
 }
 
 void TrayManager::onActivated(QSystemTrayIcon::ActivationReason reason)

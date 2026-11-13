@@ -1416,6 +1416,13 @@ static int runTrayClient(QApplication& app, bool ownerHasNoDesktopHere)
         []() { localRequest(QStringLiteral("/api/system/restart"), QByteArrayLiteral("{}")); });
     tray.setQuitHandler(
         []() { localRequest(QStringLiteral("/api/system/quit"), QByteArrayLiteral("{}")); });
+    // Disconnect: the stream a menu line stands for, by its id (issue #42).
+    tray.setDisconnectHandler([](const QString& id) {
+        return localRequest(QStringLiteral("/api/server/stream-disconnect"),
+                            QJsonDocument(QJsonObject{{QStringLiteral("id"), id}})
+                                .toJson(QJsonDocument::Compact))
+            .ok;
+    });
 
     // Who is watching the screen this tray sits on. The server keeps that
     // answer — this process has no slot table, no sessions and no settings —
@@ -2902,7 +2909,16 @@ int main(int argc, char* argv[])
     // The legacy in-process path (stream_worker_enabled off) is deliberately
     // not consulted: its globals are not cleared on every exit, and a stuck
     // "Streaming (1)" that no longer matches anything is worse than silence.
-    auto streamActivity = [&g_Pool, &authManager, &shareManager, &appSettings]() {
+    // The salt of the tray's stream ids (StreamActivity::instanceId): drawn once
+    // per run, so that an id of one run never names a stream of the next.
+    const QByteArray streamInstanceSalt = []() {
+        QByteArray salt(32, '\0');
+        for (char& c : salt)
+            c = static_cast<char>(QRandomGenerator::system()->bounded(256));
+        return salt;
+    }();
+    auto streamActivity = [&g_Pool, &authManager, &shareManager, &appSettings,
+                           &streamInstanceSalt]() {
         StreamActivity activity;
         activity.notify = appSettings.streamNotifications();
         QList<StreamSlotFacts> live;
@@ -2915,10 +2931,57 @@ int main(int argc, char* argv[])
             const SessionInfo session = authManager.sessionForToken(sl.sessionToken);
             QString name = session.machineName;
             if (name.isEmpty() && ShareManager::isPlayerSlot(i)) name = shareManager.name(i);
-            live.append({i, sl.sessionToken, name, session.isHost});
+            // Where it stands, for the tray: a TV by the address it is bound to.
+            const auto* worker = g_Pool.workerAs<StreamWorkerHost>(i);
+            live.append({i, sl.sessionToken, name, session.isHost,
+                         worker ? worker->streamId() : QString(),
+                         session.lanHttp ? session.boundIp : session.ip, session.lanHttp});
         }
-        activity.viewers = StreamActivity::viewersOf(live, kOwnerSlots);
+        activity.viewers = StreamActivity::viewersOf(live, kOwnerSlots, streamInstanceSalt);
         return activity;
+    };
+
+    // The tray's Disconnect (issue #42): the stream a line of its menu stands
+    // for, named by the id it was given for that one stream. A stale id (that
+    // stream ended, another took its slot) ends nothing. Both legs of an
+    // owner's stream go together, being one viewer; the session is not
+    // revoked, and the device may come back. Returns the slots stopped.
+    auto disconnectStream = [&g_Pool, &authManager, &detachWorkerSlot,
+                             &streamInstanceSalt](const QString& instance) -> int {
+        if (instance.isEmpty()) return 0;
+        int target = -1;
+        for (int i = 0; i < g_Pool.size() && target < 0; ++i) {
+            const SessionPool::Slot& sl = g_Pool.at(i);
+            if (sl.worker.isNull() || sl.hostUuid != NativeHostBackend::hostUuid()) continue;
+            const auto* worker = g_Pool.workerAs<StreamWorkerHost>(i);
+            if (worker &&
+                StreamActivity::instanceId(streamInstanceSalt, i, worker->streamId()) == instance)
+                target = i;
+        }
+        if (target < 0) return 0;
+        const QString token = g_Pool.at(target).sessionToken;
+        const QString host = g_Pool.at(target).hostUuid;
+        const SessionInfo session = authManager.sessionForToken(token);
+        const QString kind = session.lanHttp ? QStringLiteral("LAN HTTP")
+                             : !session.isHost && StreamActivity::shownAddress(session.ip) ==
+                                                      QLatin1String("Internet")
+                                 ? QStringLiteral("Internet")
+                                 : QStringLiteral("HTTPS");
+        QVector<int> stopped{target};
+        if (!token.isEmpty())
+            for (int i = 0; i < g_Pool.size(); ++i)
+                if (i != target && !g_Pool.at(i).worker.isNull() && g_Pool.at(i).hostUuid == host &&
+                    g_Pool.at(i).sessionToken == token)
+                    stopped.append(i);
+        for (int i : std::as_const(stopped)) {
+            // The slot and the kind of link, never a name: who it was is the
+            // tray's to say.
+            Logger::info(QString("[TrayManager] Stream of slot %1 (%2) stopped from the tray")
+                             .arg(i)
+                             .arg(kind));
+            detachWorkerSlot(i, false);
+        }
+        return static_cast<int>(stopped.size());
     };
 
     // Tear the player workers of @p hostUuid down and revoke their shares.
@@ -7471,6 +7534,26 @@ int main(int argc, char* argv[])
                              return HttpResponse::json(streamActivity().toJson());
                          });
 
+    // POST /api/server/stream-disconnect {"id"} — the tray's Disconnect (issue
+    // #42). From the local channel (the tray of a server that runs as a
+    // service), or from a host or administrator session with its key; for
+    // anyone else it does not exist, a page on this machine without a session
+    // included. Never a script's (LocalRequest).
+    server.router()->post(
+        "/api/server/stream-disconnect",
+        [&authManager, disconnectStream](const HttpRequest& req) -> HttpResponse {
+            const QString token = HttpServer::sessionTokenFromRequest(req);
+            if (!StreamActivity::mayDisconnect(req.localChannel, req.isLocal, req.lanHttp,
+                                               authManager.isHostSession(token),
+                                               authManager.isAdminSession(token), req.adminLocked))
+                return HttpResponse::error(404, "Not Found");
+            const QString id =
+                QJsonDocument::fromJson(req.body).object().value(QStringLiteral("id")).toString();
+            if (disconnectStream(id) == 0)
+                return HttpResponse::json(QJsonObject{{"error", "gone"}}, 404);
+            return HttpResponse::json(QJsonObject{{"stopped", true}});
+        });
+
     if (rendezvousShouldRun()) rendezvous.start();
 
     // Write the Desktop admin shortcut with the best URL known at this point.
@@ -7677,6 +7760,8 @@ int main(int argc, char* argv[])
     // (the log line at start-up), and what is left if no link could be made.
     trayManager.setRemoteLinkProvider(ownerLink);
     trayManager.setActivityProvider(streamActivity);
+    trayManager.setDisconnectHandler(
+        [disconnectStream](const QString& id) { return disconnectStream(id) > 0; });
     trayManager.setAdminLocked(adminLocked);
     if (hasGuiSession()) trayManager.init();
     // A login item an earlier version wrote may name the bare binary, which

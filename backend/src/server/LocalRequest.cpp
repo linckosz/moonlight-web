@@ -88,6 +88,8 @@ bool allowed(const Asked& asked)
         // Not a credential: it talks to the router, which no script should
         // find itself doing by asking for a status.
         {"GET", "/api/internet/upnp-probe"},
+        // It ends someone's stream: the tray's button, never a script's.
+        {"POST", "/api/server/stream-disconnect"},
     };
     for (const Route& route : kElsewhere)
         if (asked.method == QLatin1String(route.method) && asked.path == QLatin1String(route.path))

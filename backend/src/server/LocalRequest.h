@@ -89,8 +89,12 @@ qsizetype maxBodyBytes();
 ///                                 helper's or Windows' own text, which may
 ///                                 hold a local path. A bench prints the
 ///                                 booleans and the job's state only
-///   /api/server/stream-activity   device names, and an id that is a salted
-///                                 hash made for this one use
+///   /api/server/stream-activity   device names, an id that is a salted hash
+///                                 made for this one use, one per stream made
+///                                 the same way ("instance": what the tray's
+///                                 Disconnect names, a route not asked this
+///                                 way), and private IPv4 addresses (any other
+///                                 reads "Internet")
 ///   /api/health, /api/server/status, /api/settings/streaming, and the answers
 ///   to the four POSTs             settings and states
 /// None carries the admin key, a session's token, a host key or a link's key.

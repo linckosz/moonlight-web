@@ -122,6 +122,15 @@ public:
         m_ActivityIntervalMs = intervalMs;
     }
 
+    /// The menu's Disconnect (issue #42): ends the stream a line stands for,
+    /// by the id the snapshot gave it (StreamViewer::instance). True when the
+    /// server stopped it; false when that stream was gone. Without a handler
+    /// the lines are shown and greyed.
+    void setDisconnectHandler(std::function<bool(const QString& instance)> handler)
+    {
+        m_Disconnect = std::move(handler);
+    }
+
 private slots:
     void onActivated(QSystemTrayIcon::ActivationReason reason);
     void onOpen();
@@ -141,16 +150,23 @@ private:
     void pollActivity();
     /// The next waiting notice out, if it is due and Windows would show it now.
     void releaseNotice();
-    /// "MoonlightWeb", plus "Streaming (n)" on a second line while anyone is.
-    void refreshTooltip(int count);
-    /// The "Recent viewers" submenu, rebuilt as the menu opens.
-    void refreshRecentMenu();
+    /// "MoonlightWeb", "Streaming (n)" while anyone is, and a security notice
+    /// for the TVs on plain HTTP (ViewerNotices::tooltip).
+    void refreshTooltip(const QList<StreamViewer>& viewers);
+    /// One "Disconnect" line per viewer, the TVs on plain HTTP first, rebuilt
+    /// when who is streaming changes.
+    void refreshViewerActions(const QList<StreamViewer>& viewers);
+    /// A line's Disconnect clicked.
+    void onDisconnect(const QString& instance);
     /// A notification under the product's name, with the information icon.
     void notify(const QString& text);
     /// That icon, rendered once per device pixel ratio (Windows, see the .cpp).
     QIcon noticeIcon();
-    /// @p base with a red dot in its corner, at the sizes a tray asks for.
-    static QIcon withDot(const QIcon& base);
+    /// @p base with a count in its corner, blue, or yellow while a TV streams
+    /// over plain HTTP, at the sizes a tray asks for. "9+" past nine.
+    static QIcon withCount(const QIcon& base, int count, bool plainHttp);
+    /// A yellow warning triangle, for a TV's line in the menu.
+    static QIcon warningIcon();
     /// localhost URL for `path`, preferring HTTPS, falling back to HTTP; empty if
     /// no listener is up.
     QUrl localUrl(const QString& path) const;
@@ -164,8 +180,9 @@ private:
     bool m_AdminLocked = false;
     std::function<QUrl(const QString& path)> m_UrlProvider;
     std::function<QString(const QString& path)> m_RemoteLink; // see setRemoteLinkProvider
-    std::function<void()> m_RestartServer; // client mode: restart the remote server
-    std::function<void()> m_QuitServer;    // client mode: stop the remote server
+    std::function<void()> m_RestartServer;            // client mode: restart the remote server
+    std::function<void()> m_QuitServer;               // client mode: stop the remote server
+    std::function<bool(const QString&)> m_Disconnect; // see setDisconnectHandler
     QSystemTrayIcon* m_TrayIcon;
     QMenu* m_Menu;
     QMenu* m_DockMenu;                    // macOS Dock right-click menu (null elsewhere)
@@ -179,13 +196,15 @@ private:
     int m_ActivityIntervalMs = 2000;
     QTimer m_ActivityTimer;
     QAction* m_StreamingAction = nullptr;    // hidden while nobody is streaming
-    QMenu* m_RecentMenu = nullptr;           // "Recent viewers", hidden while empty
-    QAction* m_StreamingSeparator = nullptr; // hidden with them
+    QAction* m_StreamingSeparator = nullptr; // hidden with it
+    QList<QAction*> m_ViewerActions;         // one Disconnect per viewer (and a note)
+    QStringList m_ViewerKey;                 // what they were built from
     // Who arrived and left, the notices waiting for Windows, and the recent
     // viewers: in this process's memory only (see ViewerNotices).
     ViewerNotices m_Notices;
-    QElapsedTimer m_Clock; // the gap between two notices
-    QIcon m_Icon;          // the icon, and the same with the red dot,
-    QIcon m_IconWatched;   // both rendered at init, never during a stream
-    bool m_ShowsDot = false;
+    QElapsedTimer m_Clock;     // the gap between two notices
+    QIcon m_Icon;              // the icon, and the same with a count: blue, and
+    QIcon m_CountIcons[2][10]; // yellow for plain HTTP, 1..9 and 9+, all
+    QIcon m_WarnIcon;          // rendered at init, never during a stream
+    int m_IconKey = 0;         // which one is shown: 0 none
 };

@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "server/LanHttp.h"
+
 #include <QCryptographicHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -54,6 +56,18 @@ struct StreamViewer
     /// and a strange thing to be told on the machine it names. The tray says
     /// "This computer" instead.
     bool self = false;
+    /// The stream this line stands for, by an id made for this one stream and
+    /// gone with it (instanceId): what the tray's Disconnect names. Never a
+    /// token, a slot or an address, which outlive a stream or pass to another.
+    QString instance;
+    /// Where it stands, as the tray may show it (shownAddress): a private IPv4,
+    /// or "Internet" for any other. Empty for this computer and when unknown.
+    QString address;
+    /// A TV on plain HTTP (issue #42): said by the server's own session, never
+    /// by anything the client sent.
+    bool lanHttp = false;
+    /// The pool slot of its first stream, for the log line of a Disconnect.
+    int slot = -1;
 };
 
 /// One live slot of the native host, as far as "who is watching" needs it.
@@ -63,6 +77,9 @@ struct StreamSlotFacts
     QString sessionToken; ///< the signed-in device behind it; empty for none
     QString name;         ///< what to call it (sessions table, or a guest's row)
     bool self = false;    ///< a browser on this very machine
+    QString streamId;     ///< the stream's own id (StreamEnds), 128 random bits
+    QString address;      ///< where its session stands, as the server knows it
+    bool lanHttp = false; ///< a TV on plain HTTP, from its session
 };
 
 struct StreamActivity
@@ -85,9 +102,48 @@ struct StreamActivity
         return QStringLiteral("slot-%1").arg(index);
     }
 
+    /// The id of one stream for the tray's Disconnect: its slot and its own
+    /// id, hashed with @p salt, which this process draws once. A new stream in
+    /// the same slot is another id, so a Disconnect asked from a menu opened
+    /// before it never ends it. Empty without a salt or a stream id.
+    static QString instanceId(const QByteArray& salt, int index, const QString& streamId)
+    {
+        if (salt.isEmpty() || streamId.isEmpty()) return {};
+        const QByteArray h = QCryptographicHash::hash(salt + '|' + QByteArray::number(index) + '|' +
+                                                          streamId.toUtf8(),
+                                                      QCryptographicHash::Sha256);
+        return QString::fromLatin1(h.toHex().left(16));
+    }
+
+    /// An address as the tray may show it: a private IPv4 as it is, anything
+    /// else (a public address, IPv6, a tunnel's) as "Internet". A public
+    /// address is a person's, and every account of this PC can read the tray.
+    static QString shownAddress(const QString& address)
+    {
+        if (address.isEmpty()) return {};
+        const QString v4 = LanHttp::normalizePeer(address);
+        return !v4.isEmpty() && LanHttp::isPrivateIpv4(v4) ? v4 : QStringLiteral("Internet");
+    }
+
+    /// Who may ask for a stream to end from the tray (issue #42): the local
+    /// channel (the icon of a server that runs as a service), or a request with
+    /// the administrator's right (@p isLocal, its key included) from a host or
+    /// administrator session. Never a TV on plain HTTP, never a page on this
+    /// machine without a session, never under --noadmin, whose tray changes
+    /// nothing.
+    static bool mayDisconnect(bool localChannel, bool isLocal, bool lanHttp, bool hostSession,
+                              bool adminSession, bool adminLocked)
+    {
+        if (adminLocked || lanHttp) return false;
+        if (localChannel) return true;
+        return isLocal && (hostSession || adminSession);
+    }
+
     /// The people behind the live slots: one viewer per id, named after the
-    /// first of their slots.
-    static QList<StreamViewer> viewersOf(const QList<StreamSlotFacts>& live, int ownerSlots)
+    /// first of their slots, and standing for that slot's stream (@p salt:
+    /// instanceId's).
+    static QList<StreamViewer> viewersOf(const QList<StreamSlotFacts>& live, int ownerSlots,
+                                         const QByteArray& salt = QByteArray())
     {
         QList<StreamViewer> out;
         QSet<QString> seen;
@@ -95,7 +151,8 @@ struct StreamActivity
             const QString id = viewerId(s.sessionToken, s.index, ownerSlots);
             if (seen.contains(id)) continue;
             seen.insert(id);
-            out.append({id, s.name, s.self});
+            out.append({id, s.name, s.self, instanceId(salt, s.index, s.streamId),
+                        s.self ? QString() : shownAddress(s.address), s.lanHttp, s.index});
         }
         return out;
     }
@@ -121,7 +178,11 @@ struct StreamActivity
         for (const StreamViewer& v : viewers)
             arr.append(QJsonObject{{QStringLiteral("id"), v.id},
                                    {QStringLiteral("name"), v.name},
-                                   {QStringLiteral("self"), v.self}});
+                                   {QStringLiteral("self"), v.self},
+                                   {QStringLiteral("instance"), v.instance},
+                                   {QStringLiteral("address"), v.address},
+                                   {QStringLiteral("lan_http"), v.lanHttp},
+                                   {QStringLiteral("slot"), v.slot}});
         return QJsonObject{{QStringLiteral("count"), viewers.size()},
                            {QStringLiteral("viewers"), arr},
                            {QStringLiteral("notify"), notify}};
@@ -135,7 +196,11 @@ struct StreamActivity
             const QJsonObject o = v.toObject();
             a.viewers.append({o.value(QStringLiteral("id")).toString(),
                               o.value(QStringLiteral("name")).toString(),
-                              o.value(QStringLiteral("self")).toBool(false)});
+                              o.value(QStringLiteral("self")).toBool(false),
+                              o.value(QStringLiteral("instance")).toString(),
+                              o.value(QStringLiteral("address")).toString(),
+                              o.value(QStringLiteral("lan_http")).toBool(false),
+                              o.value(QStringLiteral("slot")).toInt(-1)});
         }
         return a;
     }

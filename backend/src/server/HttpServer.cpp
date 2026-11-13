@@ -1272,6 +1272,7 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     // page, not a stream, not a session — and it carries no cookie: whatever
     // such a request holds, none is read.
     const bool viaLocal = (arrival == Arrival::Local);
+    req.localChannel = viaLocal;
     if (viaLocal && !RequestGuard::localChannelRoute(req.method, req.path)) {
         respond(HttpResponse::error(404, "Not Found"));
         return;

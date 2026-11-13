@@ -81,6 +81,9 @@ struct HttpRequest
                                 // hostTrusted are false whatever else holds.
     QString lanHttpHost;        // With lanHttp: the Host it asked under, validated
                                 // (LanHttp::validatedHost), "192.168.1.10:8080".
+    bool localChannel = false;  // Asked over the local channel by a program of this
+                                // install (server/LocalChannel.h), set by HttpServer
+                                // alone: the tray of a server that runs as a service.
 };
 
 struct HttpResponse
