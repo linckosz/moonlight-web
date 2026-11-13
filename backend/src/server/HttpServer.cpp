@@ -42,6 +42,8 @@
 #include <QSslKey>
 #include <QSslConfiguration>
 #include <QRandomGenerator>
+#include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -84,6 +86,30 @@ static bool isPlainAuthority(const QString& authority)
         if (!ok) return false;
     }
     return true;
+}
+
+// What this machine's own address still opens by itself, with neither the
+// local channel nor a host or admin session behind the request: one line per
+// method and route, once per run, so that what answers this way can be counted.
+// The route only: a segment of the path is kept when it reads as a word of a
+// route (lower-case letters and dashes, a few of them) and becomes a star
+// otherwise, whatever it is, an id, a name or a token; neither the query, the
+// Host, the peer nor a header is written. Called from the one thread the
+// server answers on.
+static void noteAnsweredByAddress(const QString& what, const QString& path, bool session)
+{
+    static const QRegularExpression word(QStringLiteral("\\A[a-z-]{1,24}\\z"));
+    QStringList parts = path.split(QLatin1Char('/'));
+    for (QString& part : parts)
+        if (!part.isEmpty() && !word.match(part).hasMatch()) part = QStringLiteral("*");
+    const QString key = what + QLatin1Char(' ') + parts.join(QLatin1Char('/'));
+
+    static QSet<QString> seen;
+    if (seen.size() >= 512 || seen.contains(key)) return;
+    seen.insert(key);
+    Logger::info(QStringLiteral("[Local] %1 answered on this machine's own address, with %2")
+                     .arg(key, session ? QStringLiteral("an ordinary session")
+                                       : QStringLiteral("no session")));
 }
 
 // QTcpServer answers any accept() failure it does not class as temporary (a
@@ -1284,6 +1310,9 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     }
 
     const bool localPrivilege = decision.localPrivilege;
+    if (localPrivilege && !viaLocal && !ctx.hostSession && !ctx.adminSession &&
+        req.path.startsWith(QLatin1String("/api/")))
+        noteAnsweredByAddress(req.method, req.path, isAuthenticated(req));
     req.adminLocked = m_AdminLocked;
     req.boothShare = m_AdminLocked && m_BoothShare;
     req.isLocal = decision.adminPrivilege;
@@ -1622,6 +1651,11 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
             sendResponse(clientSocket, resp);
             return;
         }
+    } else if (m_AuthManager) {
+        const QString token = sessionTokenFromRequest(up);
+        if (!m_AuthManager->isHostSession(token) && !m_AuthManager->isAdminSession(token))
+            noteAnsweredByAddress(QStringLiteral("WebSocket"), path,
+                                  m_AuthManager->validateSession(token));
     }
 
     qInfo() << "[HttpServer] WebSocket upgrade detected, path=" << path
