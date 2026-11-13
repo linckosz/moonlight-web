@@ -64,6 +64,8 @@ export const serverDiag = { debug: false, verbose: false };
 
 /** @type {'probing' | 'on' | 'off'} */
 let state = 'probing';
+/** A TV on plain HTTP (keepClientLogOff): never heard, so never mirrored. */
+let plainHttpTv = false;
 /** @type {{t: number, l: string, m: string}[]} */
 let buffer = [];
 let chars = 0;
@@ -246,6 +248,18 @@ function stop() {
     timer = 0;
 }
 
+/**
+ * A TV on plain HTTP (app.js): its console stays its own, in debug mode too.
+ * Such a TV may ask the server only the few routes listed for it
+ * (server/LanHttp.cpp), and neither the session's status nor the client log
+ * is one of them: the mirror would ask, and be refused, every few seconds for
+ * as long as the page stays open, without ever sending a line.
+ */
+export function keepClientLogOff() {
+    plainHttpTv = true;
+    stop();
+}
+
 async function tick() {
     if (state !== 'on') return;
     if (!authed && !(await checkAuth())) return;
@@ -278,7 +292,7 @@ export async function refreshClientLog() {
     if (!health && state === 'on') return;
     serverDiag.debug = !!(health && health.debug === true);
     serverDiag.verbose = !!(health && health.verbose === true);
-    if (!serverDiag.debug) {
+    if (!serverDiag.debug || plainHttpTv) {
         stop();
         return;
     }

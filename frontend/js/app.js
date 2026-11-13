@@ -51,7 +51,7 @@
 import { takeLinkKey, forgetLinkKey, putLinkKeyBack } from './net/linkKey.js';
 // Then, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
-import { refreshClientLog } from './util/ClientLog.js';
+import { keepClientLogOff, refreshClientLog } from './util/ClientLog.js';
 import { HostListView } from './ui/HostListView.js';
 import { StreamView } from './ui/StreamView.js';
 import { lockLandscape } from './ui/StreamViewFullscreen.js';
@@ -105,6 +105,7 @@ import {
     av1HardwareHere,
     hevcFailedHere,
     migrateStoredCodecToAuto,
+    plainHttpLaunchCodec,
 } from './util/CodecAuto.js';
 import {
     startRefreshRateMonitor,
@@ -582,6 +583,8 @@ export const MoonlightApp = {
         const status = await lanHttpStatus();
         if (!status) return false;
         this._plainHttpTv = true;
+        // Its console stays its own: the client log's routes are not a TV's.
+        keepClientLogOff();
         this._hasAdminAccess = false;
         document.body.classList.add('plain-http-tv');
         for (const id of ['btn-admin', 'btn-settings', 'btn-bmc']) {
@@ -1005,11 +1008,10 @@ export const MoonlightApp = {
             return;
         }
 
-        this.hostListView = new HostListView(main);
+        this.hostListView = new HostListView(main, { plainHttp: this._plainHttpTv === true });
         this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
         this.hostListView.memoryKey = currentInstanceRef(tunnelHostId()).id;
         this.hostListView.canAdminister = !!this._hasAdminAccess;
-        this.hostListView.plainHttp = this._plainHttpTv === true;
         bootMark('host-page');
         this.hostListView.start();
         // A TV on plain HTTP: none of the banners below are its to read, and
@@ -2429,7 +2431,17 @@ export const MoonlightApp = {
         // the launch it follows: the overlay still says Auto.
         if (!codecOverride) {
             this._codecAuto = streamingSettings.video_codec === CODEC_AUTO;
-            if (this._codecAuto) {
+            // A TV on plain HTTP asks H.264 for Auto, and for no codec stored
+            // at all (plainHttpLaunchCodec). The launch is still an Auto one:
+            // the host is told so, and HDR is not asked (below).
+            const tvCodec = this._plainHttpTv
+                ? plainHttpLaunchCodec(streamingSettings.video_codec)
+                : streamingSettings.video_codec;
+            if (tvCodec !== streamingSettings.video_codec) {
+                this._codecAuto = true;
+                streamingSettings.video_codec = tvCodec;
+                console.log('[MW] Auto: a TV on plain HTTP — asking H.264');
+            } else if (this._codecAuto) {
                 // The browser is asked about its AV1 only where the answer counts.
                 const av1 = hevcFailedHere()
                     ? { hardware: await av1HardwareHere({ gecko: IS_GECKO }), gecko: IS_GECKO }

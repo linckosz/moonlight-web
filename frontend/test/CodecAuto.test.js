@@ -38,6 +38,7 @@ import {
     CODEC_AUTO,
     codecAfterAutoMigration,
     migrateStoredCodecToAuto,
+    plainHttpLaunchCodec,
 } from '../js/util/CodecAuto.js';
 
 function memoryStore(init = {}) {
@@ -107,6 +108,23 @@ describe('CodecAuto: the one move of HEVC to Auto', () => {
         const bad = memoryStore({ 'mw-streaming-settings': 'not json' });
         expect(() => migrateStoredCodecToAuto(bad)).not.toThrow();
         expect(bad.getItem('mw-streaming-settings')).toBe('not json');
+    });
+});
+
+describe('CodecAuto: a TV on plain HTTP asks H.264 (#42)', () => {
+    it('asks H.264 for Auto', () => {
+        expect(plainHttpLaunchCodec(CODEC_AUTO)).toBe('h264');
+    });
+
+    it('asks H.264 with no codec stored, the TV whose settings page is hidden', () => {
+        expect(plainHttpLaunchCodec(undefined)).toBe('h264');
+        expect(plainHttpLaunchCodec('')).toBe('h264');
+    });
+
+    it('keeps a codec stored by hand', () => {
+        expect(plainHttpLaunchCodec('hevc')).toBe('hevc');
+        expect(plainHttpLaunchCodec('av1')).toBe('av1');
+        expect(plainHttpLaunchCodec('h264')).toBe('h264');
     });
 });
 

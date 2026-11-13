@@ -97,7 +97,12 @@ export class HostListView {
     static DEVICE_RUNNING_MS = 15 * 1000;
     static UPDATE_CHECK_MIN_MS = 5 * 60 * 1000;
 
-    constructor(container) {
+    /**
+     * @param {HTMLElement} container
+     * @param {{plainHttp?: boolean}} [opts] plainHttp: a TV on plain HTTP's
+     *   list, known from the start, since the shell is drawn right here
+     */
+    constructor(container, { plainHttp = false } = {}) {
         this.container = container;
         this.hosts = [];
         // Which machine this page belongs to (instances.js id), set by the app
@@ -110,8 +115,9 @@ export class HostListView {
         this.canAdminister = false;
         // A TV on plain HTTP (issue #42): the hosts and their apps, as in booth
         // mode, and not even the card menu: its one entry there, Stop session,
-        // is on a route the TV does not reach.
-        this.plainHttp = false;
+        // is on a route the TV does not reach. Nor « Add manually », which the
+        // shell below would draw if it were told later.
+        this.plainHttp = plainHttp === true;
         // The cards on screen came from that memory and the machine has not
         // answered yet: its first answer replaces them, and drops any host it
         // no longer has.

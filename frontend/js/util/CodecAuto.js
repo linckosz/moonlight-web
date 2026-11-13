@@ -321,6 +321,21 @@ export function autoLaunchCodec(hostCodecs = 0, ua, s, now, av1 = {}) {
     return 'h264';
 }
 
+/**
+ * The codec a TV on plain HTTP asks for (issue #42): H.264 for Auto, and for
+ * no codec stored at all, which is the TV's case, its settings page being
+ * hidden. Outside a secure context there is no WebCodecs: the picture comes
+ * through the browser's own WebRTC video, and H.264 is the codec every
+ * browser's WebRTC takes. Asked HEVC, the Mi TV's browser went through the
+ * whole transport chain without a picture (bench of 13/11/2026). A codec
+ * stored by hand is kept, as everywhere else.
+ * @param {string|undefined} stored the codec of the stored settings
+ * @returns {string|undefined}
+ */
+export function plainHttpLaunchCodec(stored) {
+    return !stored || stored === CODEC_AUTO ? 'h264' : stored;
+}
+
 /** A decoder queue this full on average is one that does not keep up: the
  *  stream stops feeding it at 8 (StreamView, DECODE_QUEUE_MAX), and a decoder
  *  that keeps up holds 0 or 1. */
