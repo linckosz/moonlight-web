@@ -368,6 +368,23 @@
         "gpuChoiceHint": "Pris en compte au prochain allumage de l'écran virtuel",
         "gpuSaveFailed": "Impossible de changer le GPU de l'écran virtuel."
     },
+    "appLink": {
+        "copyAria": "Copier le lien de {{name}}",
+        "shareAria": "Partager un lien vers {{name}}",
+        "copied": "Lien de {{name}} copié",
+        "copyFailed": "Le lien n'a pas pu être copié",
+        "makeFailed": "Le lien n'a pas pu être créé",
+        "full": "Ce serveur garde déjà 500 liens : impossible d’en créer un autre",
+        "homeScreenHint": "Touchez Partager, puis « Sur l’écran d’accueil »",
+        "shareNow": "Partager le lien",
+        "done": "Terminé",
+        "gone": "Ce lien ne mène plus à rien",
+        "hostUnavailable": "{{host}} ne répond pas pour l’instant",
+        "missing": "{{name}} n'existe plus sur {{host}} : choisissez une application",
+        "renamedConfirm": "Ce raccourci menait à « {{old}} ». Sur {{host}}, elle s’appelle maintenant « {{name}} ». Lancer « {{name}} » ?",
+        "launchNamed": "Lancer {{name}}",
+        "followFailed": "Le lien n'a pas pu être mis à jour"
+    },
     "login": {
         "connecting": "Connexion au serveur...",
         "serverSelection": "Choix du serveur",

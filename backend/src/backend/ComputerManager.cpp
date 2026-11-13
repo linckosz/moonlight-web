@@ -1283,6 +1283,7 @@ std::pair<int, QJsonObject> ComputerManager::handleDeleteHost(const QString& uui
     delete host;
     saveHosts(/*allowEmpty=*/true);
     emit hostsChanged();
+    emit hostForgotten(uuid);
 
     Logger::info(QString("Host removed: %1 (%2)").arg(name, uuid));
 
@@ -2114,6 +2115,7 @@ void ComputerManager::onPairCheckFinished()
         saveHosts();
         emit hostsChanged();
         Logger::info(QString("Pairing lost for host: %1").arg(host->name));
+        emit hostForgotten(host->uuid);
     }
 
     reply->deleteLater();
@@ -2444,6 +2446,7 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
                         host->serverCertPem.clear();
                         saveHosts();
                         emit hostsChanged();
+                        emit hostForgotten(uuid);
                         respond(HttpResponse::json(
                             {{"status", "error"},
                              {"message", "Host is no longer paired. Please pair again."}},
@@ -2496,7 +2499,10 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
                 return;
             }
 
+            const QVector<NvApp> previous = host->appList;
             host->appList = apps;
+            if (!apps.isEmpty() && !backend->capabilities().multiUser)
+                emit appListRefreshed(uuid, previous, apps);
 
             // A new app list is a new chance: box art that failed before may
             // now exist (the host restarted, the app was reinstalled).

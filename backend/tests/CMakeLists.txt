@@ -110,6 +110,7 @@ add_executable(run_tests
     test_tunnel_frame.cpp
     test_tunnel_peer_policy.cpp
     test_tunnel_diag.cpp
+    test_app_links.cpp
     test_app_manifest.cpp
     test_wolf_coop.cpp
     test_start_choice.cpp
@@ -249,6 +250,9 @@ add_executable(run_tests
     ${_src}/src/server/ConnectionGuard.cpp
     ${_src}/src/server/StaticFileHandler.cpp
     ${_src}/src/server/HomeScreenShell.cpp
+    # Links straight to one app (issue #63): the store and its routes.
+    ${_src}/src/server/AppLinks.cpp
+    ${_src}/src/server/routes/AppLinkRoutes.cpp
     ${_src}/src/server/HttpParser.cpp
     ${_src}/src/server/RequestGuard.cpp
     ${_src}/src/server/LanHttp.cpp

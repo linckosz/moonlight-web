@@ -23,6 +23,7 @@
 
 import {
     Tunnel,
+    appLinkFromLocation,
     hostIdFromLocation,
     hostKeyFromLocation,
     knownInstances,
@@ -1393,13 +1394,20 @@ async function main() {
     // not have to ask, because a token is only ever for the guest page and
     // landingPathFromLocation() reads that off it. Everything else asks for
     // nothing and lands at the root, which is what every link did before this.
+    //
+    // A link straight to one app (go=, issue #63) rides along too, for the same
+    // reason as the key: the fragment is the one part of an address the
+    // introduction server never sees. Not with an invitation: a guest's page
+    // opens what it was invited to and nothing else.
     const key = hostKeyFromLocation();
     const share = shareTokenFromLocation();
+    const appLink = share ? null : appLinkFromLocation();
     const landing = landingPathFromLocation() || '/';
     const target =
         `${landing}#${hostId}` +
         (key ? `&k=${encodeURIComponent(key)}` : '') +
-        (share ? `&t=${encodeURIComponent(share)}` : '');
+        (share ? `&t=${encodeURIComponent(share)}` : '') +
+        (appLink ? `&go=${appLink}` : '');
 
     // Handing over to an address that differs from this one only by its
     // fragment — or not at all — is not a navigation. It is a jump within the

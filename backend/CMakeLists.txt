@@ -352,6 +352,7 @@ add_executable(mw-server
     src/server/CertManager.cpp
     src/server/StaticFileHandler.cpp
     src/server/HomeScreenShell.cpp
+    src/server/AppLinks.cpp
     src/server/RestRouter.cpp
     src/server/ShareManager.cpp
     src/server/GuestProfile.cpp
@@ -366,6 +367,7 @@ add_executable(mw-server
     src/server/routes/PinProofRoutes.cpp
     src/server/routes/HostRoutes.cpp
     src/server/routes/HostAppRoutes.cpp
+    src/server/routes/AppLinkRoutes.cpp
     src/server/HostAppImage.cpp
     src/server/HostAppLauncher.cpp
     src/server/LauncherDetect.cpp

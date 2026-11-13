@@ -17,10 +17,13 @@
 
 #include "server/HomeScreenShell.h"
 
+#include "server/AppLinks.h"
+
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QStringList>
 #include <QUrl>
 
 namespace mw::homescreen {
@@ -64,7 +67,8 @@ QString shownMachineName(const QString& machineName, bool signedIn)
 }
 
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
-                    const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512)
+                    const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
+                    const QString& appLink)
 {
     QJsonParseError error;
     const QJsonDocument doc = QJsonDocument::fromJson(json, &error);
@@ -75,21 +79,32 @@ QByteArray manifest(const QByteArray& json, const QString& title, const QString&
         obj[QStringLiteral("name")] = title;
         obj[QStringLiteral("short_name")] = title;
     }
-    if (kHostId.match(hostId).hasMatch()) {
+    // Ten letters and digits, nothing to encode: checked here as well as by the
+    // caller, since it is written into an address.
+    const QString go = mw::applinks::validAlias(appLink) ? appLink : QString();
+    const bool throughRendezvous = kHostId.match(hostId).hasMatch();
+    if (throughRendezvous || !go.isEmpty()) {
         // The path form, the one people share: the entry page reads the machine
         // from it and needs nothing from storage. `id` follows, so two machines
         // installed side by side are two applications rather than one replaced.
+        // Off the tunnel, this origin is the machine, and its "/" the address.
         //
         // The key goes in the fragment, which no browser sends to the server it
         // fetched from: the entry page forwards #k= to the application, and the
         // introduction server never sees it. `id` stays bare, so a new key is
-        // the same application and not a second one.
-        const QString address = QLatin1Char('/') + hostId;
+        // the same application and not a second one. A link to one app goes in
+        // the fragment for the same reason, and it does change `id` — in a
+        // query, since an id drops its fragment: one shortcut per app.
+        const QString address = throughRendezvous ? QLatin1Char('/') + hostId : QStringLiteral("/");
+        QStringList fragment;
+        if (!go.isEmpty()) fragment << QStringLiteral("go=") + go;
+        if (throughRendezvous && !handoffKey.isEmpty())
+            fragment << QStringLiteral("k=") +
+                            QString::fromLatin1(QUrl::toPercentEncoding(handoffKey));
         obj[QStringLiteral("start_url")] =
-            handoffKey.isEmpty() ? address
-                                 : address + QStringLiteral("#k=") +
-                                       QString::fromLatin1(QUrl::toPercentEncoding(handoffKey));
-        obj[QStringLiteral("id")] = address;
+            fragment.isEmpty() ? address
+                               : address + QLatin1Char('#') + fragment.join(QLatin1Char('&'));
+        obj[QStringLiteral("id")] = go.isEmpty() ? address : address + QStringLiteral("?go=") + go;
     }
 
     QJsonArray icons = obj.value(QStringLiteral("icons")).toArray();

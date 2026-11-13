@@ -336,6 +336,25 @@ export class BackendClient {
     static async getAppList(hostId) {
         return this.get(`/api/hosts/${hostId}/apps`);
     }
+    /**
+     * The link straight to one app of a host (issue #63): `{ alias }`, the same
+     * alias each time the same app is asked for.
+     */
+    static async createAppLink(hostId, appId) {
+        return this.post('/api/app-links', { host_uuid: hostId, app_id: appId });
+    }
+    /**
+     * Where a link straight to an app points: `{ host_uuid, app_id, name,
+     * state }`, state being "present", "missing" or "confirm" (then with
+     * `candidate: { app_id, name }`, the app that may be it renamed).
+     */
+    static async getAppLink(alias) {
+        return this.get(`/api/app-links/${encodeURIComponent(alias)}`);
+    }
+    /** The person said yes: the link follows its candidate, @p appId. */
+    static async confirmAppLink(alias, appId) {
+        return this.post(`/api/app-links/${encodeURIComponent(alias)}/confirm`, { app_id: appId });
+    }
     /** Backend types this server can drive, so the UI never hardcodes them. */
     static async getBackendTypes() {
         return this.get('/api/backends');

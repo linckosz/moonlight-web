@@ -1352,6 +1352,34 @@ export function shareTokenFromLocation() {
     return null;
 }
 
+/**
+ * The link straight to one app this address carries (`go=`, issue #63), or
+ * null.
+ *
+ * A home-screen icon that opens one computer's Desktop in one tap: the alias
+ * names the app, the host this page reaches keeps what it points at. It is no
+ * key and opens nothing — the application still asks for the session, and
+ * launches only what a tap on the app's card would. It rides in the fragment
+ * for the reason everything here does: the introduction server is never told
+ * which app anyone opens.
+ *
+ * Read without decoding, against the exact shape the host mints (ten letters
+ * and digits): it goes back into the address handed to location.replace(), and
+ * anything else is simply not carried. Read apart from k= and t=: a bad one
+ * costs itself and nothing else.
+ */
+const APP_LINK_SHAPE = /^[A-Za-z0-9]{10}$/;
+
+export function appLinkFromLocation() {
+    for (const part of hashParts()) {
+        if (part.startsWith('go=')) {
+            const alias = part.slice(3);
+            if (APP_LINK_SHAPE.test(alias)) return alias;
+        }
+    }
+    return null;
+}
+
 export function hostIdFromLocation() {
     const fromPath = location.pathname.replace(/^\/+|\/+$/g, '');
     if (ID_SHAPE.test(fromPath)) return fromPath;

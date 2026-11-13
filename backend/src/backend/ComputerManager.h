@@ -188,6 +188,18 @@ signals:
     void scanCompleted();
     void hostAddCompleted(bool success, const QString& error, const QString& uuid);
 
+    // A host answered its whole list of apps, and it replaced @p previous
+    // (empty when none was known). Only where the list is the host's own —
+    // never a seat's on a multi-user backend, where two users' lists differ and
+    // one replacing the other would read as apps renamed. The links straight to
+    // an app (server/AppLinks.h) follow it here.
+    void appListRefreshed(const QString& uuid, const QVector<NvApp>& previous,
+                          const QVector<NvApp>& current);
+
+    // This server is done with a host: removed from the list, or no longer
+    // paired with it. What was kept for that host alone goes with it.
+    void hostForgotten(const QString& uuid);
+
 private slots:
     void onPollTick();
     void onPollReplyFinished();

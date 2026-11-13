@@ -49,6 +49,9 @@
 // carry leaves the address (net/linkKey.js). Nothing that follows — a request,
 // a socket, a module that writes the address into a log — ever sees it there.
 import { takeLinkKey, forgetLinkKey, putLinkKeyBack } from './net/linkKey.js';
+// And the link straight to one app it may carry (issue #63), off the address
+// before the page goes on: a reload or a Stop must never open the app again.
+import { pendingAppLink, appLinkAddress, splitAppLink, isAppLinkAlias } from './net/appLink.js';
 // Then, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
 import { keepClientLogOff, refreshClientLog } from './util/ClientLog.js';
@@ -72,6 +75,7 @@ import { lanHttpStatus } from './api/LanHttpApi.js';
 import { touchPadSettings } from './stream/TouchPadState.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
+import { showAppLinkShortcut, closeAppLinkShortcut } from './ui/AppLinkShortcut.js';
 import { DiscordLink } from './ui/DiscordLink.js';
 import * as RemoteNav from './ui/RemoteNav.js';
 import * as ViewHeaderScroll from './ui/ViewHeaderScroll.js';
@@ -90,6 +94,7 @@ import {
     IS_HANDHELD,
     IS_LOW_MEMORY,
     IS_TV,
+    IS_TOUCH_DEVICE,
     resolveTearing,
     hdrClientCapability,
     hdrLaunchCodec,
@@ -1146,6 +1151,7 @@ export const MoonlightApp = {
 
         this.hostListView = new HostListView(main, { plainHttp: this._plainHttpTv === true });
         this.hostListView.onLaunchApp = (host, app) => this.launchApp(host, app);
+        this.hostListView.onAppLink = (host, app) => this._shareAppLink(host, app);
         this.hostListView.memoryKey = currentInstanceRef(tunnelHostId()).id;
         this.hostListView.canAdminister = !!this._hasAdminAccess;
         bootMark('host-page');
@@ -1153,6 +1159,11 @@ export const MoonlightApp = {
         // A TV on plain HTTP: none of the banners below are its to read, and
         // their routes are not open to it.
         if (this._plainHttpTv) return;
+
+        // A link straight to one app (issue #63) this page was opened with:
+        // served once, by pressing that app's card.
+        const appLink = pendingAppLink();
+        if (appLink) this.hostListView.openAppLink(appLink);
 
         // Tell the user how OTHER PCs reach this server (host machine), and —
         // on every machine — what is missing or better than the address they
@@ -1773,7 +1784,7 @@ export const MoonlightApp = {
      * where there is nothing to prepare: no tunnel, or a shortcut. The console
      * says which of the first two it was.
      */
-    async _offerHomeScreenHandoff() {
+    async _offerHomeScreenHandoff(appLink = null) {
         try {
             localStorage.removeItem(SIDE_KEYS_STORE);
         } catch {
@@ -1781,8 +1792,16 @@ export const MoonlightApp = {
         }
         const ownId = tunnelHostId();
         if (!ownId || this._runsAsShortcut()) return null;
+        // A shortcut to one app (issue #63): the same manifest, opening the link.
+        // Through the tunnel, /api/ is only ever answered by the bootstrap's
+        // worker, over the connection this page holds (sw.js askThePage), with
+        // no way out to the network. A page that has lost its worker would send
+        // the request to the introduction server instead, alias and all: then
+        // the alias is not sent at all.
+        if (appLink && !pageCameThroughTunnel()) return 'failed';
+        const go = isAppLinkAlias(appLink) ? `&go=${appLink}` : '';
         try {
-            const fresh = await fetch(`/api/app/web-manifest?t=${Date.now()}`, {
+            const fresh = await fetch(`/api/app/web-manifest?t=${Date.now()}${go}`, {
                 cache: 'no-store',
             });
             if (!fresh.ok) {
@@ -1851,6 +1870,133 @@ export const MoonlightApp = {
         console.log('[MW] Reloading once so a home-screen shortcut takes the signed-in page');
         this._reloadPage();
         return true;
+    },
+
+    /**
+     * The link straight to one app of a host (issue #63), from its card's
+     * button: copied on a computer; on a phone or a tablet, this page made into
+     * that link until Done, so that "Add to Home Screen" makes an icon that
+     * opens the app in one tap.
+     */
+    async _shareAppLink(host, app) {
+        let alias = '';
+        try {
+            const made = await BackendClient.createAppLink(host.uuid, app.id);
+            alias = made && made.alias;
+        } catch (err) {
+            console.warn('[MW] Link straight to an app not made:', err);
+            const full = err && err.responseBody && err.responseBody.error === 'app_links_full';
+            Toast.error(t(full ? 'appLink.full' : 'appLink.makeFailed'));
+            return;
+        }
+        const url = appLinkAddress(alias, {
+            origin: window.location.origin,
+            tunnelId: tunnelHostId(),
+        });
+        if (!url) {
+            Toast.error(t('appLink.makeFailed'));
+            return;
+        }
+        const title = `${app.displayName} · ${host.displayName}`;
+
+        if (!IS_TOUCH_DEVICE) {
+            try {
+                await navigator.clipboard.writeText(url);
+                Toast.success(t('appLink.copied', { name: app.displayName }));
+            } catch (err) {
+                console.warn('[MW] Link straight to an app not copied:', err);
+                Toast.error(t('appLink.copyFailed'));
+            }
+            return;
+        }
+
+        // An installed shortcut has no browser around it to add to the home
+        // screen from: the system's share sheet is all there is.
+        if (this._runsAsShortcut()) {
+            if (typeof navigator.share === 'function') {
+                navigator.share({ title, url }).catch(() => {});
+            } else {
+                try {
+                    await navigator.clipboard.writeText(url);
+                    Toast.success(t('appLink.copied', { name: app.displayName }));
+                } catch {
+                    Toast.error(t('appLink.copyFailed'));
+                }
+            }
+            return;
+        }
+        await this._prepareAppShortcut(alias, url, title);
+    },
+
+    /**
+     * Makes this page the link straight to one app while the banner is up: the
+     * address, the manifest and the title a phone makes its icon from. The
+     * manifest names no app (the server keeps app names to the session); the
+     * title is this page's own, and it is what names the icon.
+     */
+    async _prepareAppShortcut(alias, url, title) {
+        closeAppLinkShortcut();
+        const before = {
+            title: document.title,
+            hash: window.location.hash,
+            appleTitle: null,
+            manifestHref: null,
+        };
+        const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+        const manifestLink = document.querySelector('link[rel="manifest"]');
+        if (appleTitle) before.appleTitle = appleTitle.getAttribute('content');
+        if (manifestLink) before.manifestHref = manifestLink.getAttribute('href');
+
+        // The address: this page's own, the link added to its fragment.
+        const rest = splitAppLink(window.location.hash).hash.replace(/^#/, '');
+        const linked = '#' + (rest ? rest + '&' : '') + 'go=' + alias;
+        const address = () =>
+            window.location.pathname + window.location.search + window.location.hash;
+        try {
+            history.replaceState(
+                history.state,
+                '',
+                window.location.pathname + window.location.search + linked,
+            );
+        } catch {
+            /* the address stays; the manifest still carries the link */
+        }
+
+        // The manifest: through the tunnel the one the bootstrap's cache
+        // answers with, as for the machine's own shortcut; here, the route.
+        const throughTunnel = !!tunnelHostId();
+        if (throughTunnel) await this._offerHomeScreenHandoff(alias);
+        else if (manifestLink)
+            manifestLink.setAttribute('href', `/api/app/web-manifest?go=${alias}`);
+
+        // The title, set after the manifest: the handoff writes its own.
+        document.title = title;
+        if (appleTitle) appleTitle.setAttribute('content', title);
+
+        const linkedAddress = address();
+        showAppLinkShortcut({
+            title,
+            url,
+            onDone: () => {
+                document.title = before.title;
+                if (appleTitle && before.appleTitle !== null)
+                    appleTitle.setAttribute('content', before.appleTitle);
+                if (address() === linkedAddress) {
+                    try {
+                        history.replaceState(
+                            history.state,
+                            '',
+                            window.location.pathname + window.location.search + before.hash,
+                        );
+                    } catch {
+                        /* left as it is */
+                    }
+                }
+                if (throughTunnel) this._offerHomeScreenHandoff();
+                else if (manifestLink && before.manifestHref !== null)
+                    manifestLink.setAttribute('href', before.manifestHref);
+            },
+        });
     },
 
     /** Whether this page IS an installed shortcut rather than a browser tab. */

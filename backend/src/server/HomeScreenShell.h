@@ -61,9 +61,17 @@ QString shownMachineName(const QString& machineName, bool signedIn);
 /// opens (only when @p hostId is a rendezvous identifier) — carrying
 /// @p handoffKey in its fragment when there is one — and each icon whose bytes
 /// are given inlined. Returned unchanged if it is not a JSON object.
+///
+/// With @p appLink, an alias of a link straight to one app (server/AppLinks.h),
+/// the address also carries `go=<alias>` in its fragment, and the application's
+/// `id` names it in a query: a shortcut to one app is an application of its
+/// own, not the machine's front door replaced. Without a rendezvous identifier
+/// that address is this origin's own "/". The alias is written only when it has
+/// an alias's shape, and nothing about what it points at is: not its app's
+/// name, not its icon — a manifest is fetched without the session.
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
-                    const QString& handoffKey, const QByteArray& icon192,
-                    const QByteArray& icon512);
+                    const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
+                    const QString& appLink = QString());
 
 /// The shell with @p title as its apple-mobile-web-app-title and @p icon180
 /// inlined as its apple-touch-icon. Anything it does not find is left as it is.

@@ -39,6 +39,8 @@ import { Icons } from './icons.js';
 import { appPlaceholderHtml } from './AppPlaceholder.js';
 import { hostArtHtml } from './HostArt.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { IS_TOUCH_DEVICE, IS_TV } from '../util/BrowserDetect.js';
+import { forgetAppLink } from '../net/appLink.js';
 import {
     loadCachedApps,
     saveCachedApps,
@@ -129,6 +131,9 @@ export class HostListView {
         this.pollTimer = null;
         this.eventsBound = false;
         this.onLaunchApp = null; // called with (host, app) when an app card is clicked
+        // Called with (host, app) when a card's link button is pressed (issue
+        // #63); without it, the cards carry no link button.
+        this.onAppLink = null;
         // Per-host app state. `apps` is what the grid paints, and it can be on
         // screen while a fetch is still in flight — that is the whole point of
         // the remembered list:
@@ -434,6 +439,27 @@ export class HostListView {
                 return;
             }
 
+            // ── The link straight to an app (issue #63) ─────────────────────
+            // Its own button on the card: it copies or shares, and never
+            // launches what the card would.
+            const linkBtn = e.target.closest('.app-card-link');
+            if (linkBtn) {
+                e.preventDefault();
+                const hostCard = linkBtn.closest('.host-card');
+                const uuid = hostCard && hostCard.dataset.uuid;
+                const host = this.hosts.find((h) => h.uuid === uuid);
+                const entry = this.appsByHost[uuid];
+                const appId = parseInt(linkBtn.dataset.appId, 10);
+                const app = entry && entry.apps && entry.apps.find((a) => a.id === appId);
+                if (host && app && this.onAppLink) {
+                    linkBtn.disabled = true;
+                    Promise.resolve(this.onAppLink(host, app)).finally(() => {
+                        if (linkBtn.isConnected) linkBtn.disabled = false;
+                    });
+                }
+                return;
+            }
+
             // The GPU list on the virtual display's card is its own control.
             if (e.target.closest('.app-card-gpu--choice')) return;
 
@@ -478,6 +504,8 @@ export class HostListView {
             if (e.key !== 'Enter' && e.key !== ' ') return;
             // The Quit button of a running app is a real <button>: let it act.
             if (e.target.closest && e.target.closest('.app-card-quit')) return;
+            // So is the link button (issue #63).
+            if (e.target.closest && e.target.closest('.app-card-link')) return;
             // So is the GPU list: Enter and Space open it, never the stream.
             if (e.target.closest && e.target.closest('.app-card-gpu--choice')) return;
             const appCard = e.target.closest && e.target.closest('.app-card');
@@ -1567,7 +1595,8 @@ export class HostListView {
         const devices = apps.map((a) => a.device).filter(Boolean);
         const host = this.hosts.find((h) => h.uuid === uuid);
         const runningId = host && host.resumableApps ? host.currentGameId : 0;
-        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a, devices, runningId)).join('')}</div>`;
+        const linkable = this._offersAppLinks(host);
+        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a, devices, runningId, linkable)).join('')}</div>`;
         this._wireBoxArt(cont, uuid);
     }
 
@@ -1652,7 +1681,7 @@ export class HostListView {
         });
     }
 
-    renderApp(app, devices = [], runningId = 0) {
+    renderApp(app, devices = [], runningId = 0, linkable = false) {
         // The whole card is the launch action. role/tabindex keep it
         // keyboard-accessible (Enter/Space handled by the keydown delegate).
         //
@@ -1685,6 +1714,7 @@ export class HostListView {
                  aria-label="${this.esc(aria)}">
                 <div class="app-card-image${drawsMachine ? ' app-card-image--host' : ''}">
                     ${image}
+                    ${linkable && !off ? this._appLinkButton(app) : ''}
                     ${running && !off ? `<span class="app-card-badge">${this.esc(t('apps.running'))}</span>` : ''}
                     ${off ? `<span class="app-card-off-note">${this.esc(t('apps.displayOff'))}</span>` : ''}
                 </div>
@@ -1698,6 +1728,154 @@ export class HostListView {
                 }
             </div>
         `;
+    }
+
+    /**
+     * Whether the cards of @p host carry the link straight to their app (issue
+     * #63). Not where the server would refuse one: in a booth (--noadmin), and
+     * on a multi-user backend, whose apps are a seat's rather than the host's.
+     * Not on a TV, whose remote has nothing to copy to and no home screen to
+     * add to. And only when the page around this view knows what to do with it.
+     */
+    _offersAppLinks(host) {
+        if (!host || typeof this.onAppLink !== 'function') return false;
+        if (IS_TV || BackendClient.adminLocked) return false;
+        return host.backendType !== 'wolf' && host.backendType !== 'multiseat';
+    }
+
+    /**
+     * The link button of a card, top left of its image: copy on a computer,
+     * share on a phone or a tablet, where the point is a home-screen icon.
+     */
+    _appLinkButton(app) {
+        const share = IS_TOUCH_DEVICE;
+        const label = t(share ? 'appLink.shareAria' : 'appLink.copyAria', {
+            name: app.displayName,
+        });
+        return `<button type="button" class="app-card-link" data-app-id="${app.id}"
+                        aria-label="${this.esc(label)}" title="${this.esc(label)}"
+                        >${share ? Icons.share : Icons.link}</button>`;
+    }
+
+    /**
+     * Open the link straight to one app this page was opened with (issue #63,
+     * net/appLink.js): find where it points now, ask first if the host's list
+     * says the app may have been renamed, and then press that app's card — the
+     * card itself, so the link does nothing a tap on it would not: the same
+     * checks, the same question when another app is running, the same launch.
+     *
+     * Served once, whatever the outcome: a reload, or a Stop that comes back
+     * here, never opens it again. A server that does not answer at all is the
+     * one case left for later — the page that comes back with it tries again.
+     */
+    async openAppLink(alias) {
+        const ask = async () => {
+            try {
+                return await BackendClient.getAppLink(alias);
+            } catch (err) {
+                if (err && err.statusCode === 404) return null;
+                throw err;
+            }
+        };
+
+        let where;
+        try {
+            where = await ask();
+            if (!where) {
+                forgetAppLink();
+                Toast.warning(t('appLink.gone'));
+                return;
+            }
+            // The list of hosts first: the card to press is on it.
+            await this._hostsArrived();
+            if (this._destroyed) return;
+            const host = this.hosts.find((h) => h.uuid === where.host_uuid);
+            if (!host) {
+                forgetAppLink();
+                Toast.warning(t('appLink.gone'));
+                return;
+            }
+            // A fresh list from the host: the server follows its apps on that
+            // answer, so where the link points is asked again behind it.
+            const entry = await this._refreshApps(host.uuid);
+            if (this._destroyed) return;
+            if (!entry || !entry.apps) {
+                forgetAppLink();
+                Toast.warning(t('appLink.hostUnavailable', { host: host.displayName }));
+                this._showHostCard(host.uuid);
+                return;
+            }
+            where = (await ask()) || where;
+        } catch (err) {
+            console.warn('[MW] Link straight to an app not opened yet:', err);
+            return;
+        }
+        forgetAppLink();
+        if (this._destroyed) return;
+        const host = this.hosts.find((h) => h.uuid === where.host_uuid);
+        const hostName = host ? host.displayName : '';
+
+        let appId = Number(where.app_id) || 0;
+        if (where.state === 'confirm' && where.candidate) {
+            const candidate = String(where.candidate.name || '');
+            const yes = await confirmAction(
+                t('appLink.renamedConfirm', { old: where.name, host: hostName, name: candidate }),
+                { confirmLabel: t('appLink.launchNamed', { name: candidate }), inPage: true },
+            );
+            if (!yes || this._destroyed) {
+                this._showHostCard(where.host_uuid);
+                return;
+            }
+            try {
+                const followed = await BackendClient.confirmAppLink(
+                    alias,
+                    Number(where.candidate.app_id),
+                );
+                appId = Number(followed && followed.app_id) || 0;
+            } catch (err) {
+                console.warn('[MW] Link straight to an app not followed:', err);
+                Toast.error(t('appLink.followFailed'));
+                this._showHostCard(where.host_uuid);
+                return;
+            }
+        } else if (where.state !== 'present') {
+            Toast.info(t('appLink.missing', { name: where.name, host: hostName }));
+            this._showHostCard(where.host_uuid);
+            return;
+        }
+
+        const card = this._appCardFor(where.host_uuid, appId);
+        if (!card || card.classList.contains('app-card--off')) {
+            Toast.info(t('appLink.missing', { name: where.name, host: hostName }));
+            this._showHostCard(where.host_uuid);
+            return;
+        }
+        card.scrollIntoView({ block: 'center' });
+        card.click();
+    }
+
+    /** Resolves once the machine has sent its list of hosts, or after 15 s. */
+    async _hostsArrived() {
+        const until = Date.now() + 15000;
+        while (!this._hostsLoaded && !this._destroyed && Date.now() < until)
+            await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    /** The card of app @p appId on host @p uuid, painted if it is not yet. */
+    _appCardFor(uuid, appId) {
+        const selector = `.host-card[data-uuid="${CSS.escape(uuid)}"] .app-card[data-app-id="${Number(appId)}"]`;
+        let card = this.container.querySelector(selector);
+        if (!card) {
+            this.renderList();
+            card = this.container.querySelector(selector);
+        }
+        return card;
+    }
+
+    /** Brings the card of host @p uuid into view: where the person picks. */
+    _showHostCard(uuid) {
+        const card = this.container.querySelector(`.host-card[data-uuid="${CSS.escape(uuid)}"]`);
+        if (card) card.scrollIntoView({ block: 'start' });
     }
 
     /**

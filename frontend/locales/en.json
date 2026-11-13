@@ -368,6 +368,23 @@
         "gpuChoiceHint": "Used from the virtual display's next start",
         "gpuSaveFailed": "Could not change the virtual display's GPU."
     },
+    "appLink": {
+        "copyAria": "Copy the link to {{name}}",
+        "shareAria": "Share a link to {{name}}",
+        "copied": "Link to {{name}} copied",
+        "copyFailed": "The link could not be copied",
+        "makeFailed": "The link could not be made",
+        "full": "This server already keeps 500 links: no more can be made",
+        "homeScreenHint": "Tap Share, then “Add to Home Screen”",
+        "shareNow": "Share the link",
+        "done": "Done",
+        "gone": "This link no longer leads anywhere",
+        "hostUnavailable": "{{host}} is not answering right now",
+        "missing": "{{name}} no longer exists on {{host}}: pick an app",
+        "renamedConfirm": "This shortcut led to “{{old}}”. On {{host}}, it is now called “{{name}}”. Launch “{{name}}”?",
+        "launchNamed": "Launch {{name}}",
+        "followFailed": "The link could not be updated"
+    },
     "login": {
         "connecting": "Connecting to server...",
         "serverSelection": "Server selection",

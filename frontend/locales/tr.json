@@ -368,6 +368,23 @@
         "gpuChoiceHint": "Sanal ekranın bir sonraki başlatılmasından itibaren kullanılır",
         "gpuSaveFailed": "Sanal ekranın GPU'su değiştirilemedi."
     },
+    "appLink": {
+        "copyAria": "{{name}} bağlantısını kopyala",
+        "shareAria": "{{name}} için bir bağlantı paylaş",
+        "copied": "{{name}} bağlantısı kopyalandı",
+        "copyFailed": "Bağlantı kopyalanamadı",
+        "makeFailed": "Bağlantı oluşturulamadı",
+        "full": "Bu sunucu zaten 500 bağlantı tutuyor: yenisi oluşturulamaz",
+        "homeScreenHint": "Paylaş’a, ardından “Ana Ekrana Ekle”ye dokunun",
+        "shareNow": "Bağlantıyı paylaş",
+        "done": "Bitti",
+        "gone": "Bu bağlantı artık hiçbir yere götürmüyor",
+        "hostUnavailable": "{{host}} şu anda yanıt vermiyor",
+        "missing": "{{name}} artık {{host}} üzerinde yok: bir uygulama seçin",
+        "renamedConfirm": "Bu kısayol “{{old}}” uygulamasını açıyordu. {{host}} üzerinde artık adı “{{name}}”. “{{name}}” başlatılsın mı?",
+        "launchNamed": "{{name}} başlat",
+        "followFailed": "Bağlantı güncellenemedi"
+    },
     "login": {
         "connecting": "Sunucuya bağlanılıyor...",
         "serverSelection": "Sunucu seçimi",

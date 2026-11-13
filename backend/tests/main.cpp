@@ -27,6 +27,7 @@ void run_auth_manager_tests();
 void run_connection_guard_tests();
 void run_static_files_tests();
 void run_home_screen_shell_tests();
+void run_app_links_tests();
 void run_http_parser_tests();
 void run_request_guard_tests();
 void run_api_csrf_tests();
@@ -202,6 +203,7 @@ int main(int argc, char** argv)
     run_connection_guard_tests();
     run_static_files_tests();
     run_home_screen_shell_tests();
+    run_app_links_tests();
     run_http_parser_tests();
     run_request_guard_tests();
     run_api_csrf_tests();

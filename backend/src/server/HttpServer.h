@@ -380,9 +380,15 @@ private:
     void applyPublicSslConfig();
 
     /// Rewrite a shell or manifest @p resp for a home-screen shortcut and answer
-    /// @p ifNoneMatch against the rewritten bytes. See HomeScreenShell.h.
+    /// @p ifNoneMatch against the rewritten bytes. See HomeScreenShell.h. A
+    /// manifest opens the link straight to one app @p appLink, when given.
     void personaliseForHomeScreen(const HttpRequest& req, HttpResponse& resp,
-                                  const QString& ifNoneMatch) const;
+                                  const QString& ifNoneMatch,
+                                  const QString& appLink = QString()) const;
+
+    /// The bytes of a file this server serves, for an icon a home-screen
+    /// shortcut carries inlined; empty when there is no such file.
+    QByteArray homeScreenIcon(const char* path) const;
 
     QTcpServer* m_HttpServer;
     QTcpServer* m_HttpsServer;

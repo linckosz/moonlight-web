@@ -33,11 +33,14 @@ import * as RemoteNav from './RemoteNav.js';
 
 /**
  * @param {string} message
- * @param {{ confirmLabel?: string, danger?: boolean }} [opts]
+ * @param {{ confirmLabel?: string, danger?: boolean, inPage?: boolean }} [opts]
  * @returns {Promise<boolean>} whether the user confirmed
  */
 export function confirmAction(message, opts = {}) {
-    if (!RemoteNav.isActive()) return Promise.resolve(window.confirm(message));
+    // `inPage` asks in the page's own dialog everywhere: where the answer's
+    // words matter ("Launch Bureau" rather than OK), which the browser's own
+    // confirm cannot say.
+    if (!RemoteNav.isActive() && !opts.inPage) return Promise.resolve(window.confirm(message));
     return new Promise((resolve) => {
         const el = document.createElement('div');
         el.className = 'share-popin-overlay mw-confirm-overlay';

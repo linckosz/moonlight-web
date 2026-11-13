@@ -23,6 +23,7 @@
 #include "RestRouter.h"
 #include "StaticFileHandler.h"
 #include "server/AuthManager.h"
+#include "server/AppLinks.h"
 #include "server/HomeScreenShell.h"
 #include "server/LanHttp.h"
 #include "server/LocalChannel.h"
@@ -802,21 +803,24 @@ QMap<QString, QString> HttpServer::securityHeaders(const QString& hostHeader)
     return headers;
 }
 
+QByteArray HttpServer::homeScreenIcon(const char* path) const
+{
+    // The served copies, so a DEV identity's shortcut wears its blue icons.
+    const HttpResponse file = m_StaticFiles->serveFile(QString::fromLatin1(path));
+    return file.statusCode == 200 ? file.body : QByteArray();
+}
+
 void HttpServer::personaliseForHomeScreen(const HttpRequest& req, HttpResponse& resp,
-                                          const QString& ifNoneMatch) const
+                                          const QString& ifNoneMatch, const QString& appLink) const
 {
     const HomeScreenIdentity who = m_HomeScreenIdentity(req);
     const QString title = mw::homescreen::title(mw::edition::displayName(), who.machineName);
-    // The served copies, so a DEV identity's shortcut wears its blue icons.
-    const auto icon = [this](const char* path) {
-        const HttpResponse file = m_StaticFiles->serveFile(QString::fromLatin1(path));
-        return file.statusCode == 200 ? file.body : QByteArray();
-    };
+    const auto icon = [this](const char* path) { return homeScreenIcon(path); };
 
     if (resp.contentType.startsWith(QLatin1String("application/manifest+json")))
-        resp.body =
-            mw::homescreen::manifest(resp.body, title, who.hostId, who.handoffKey,
-                                     icon("/assets/icon-192.png"), icon("/assets/icon-512.png"));
+        resp.body = mw::homescreen::manifest(resp.body, title, who.hostId, who.handoffKey,
+                                             icon("/assets/icon-192.png"),
+                                             icon("/assets/icon-512.png"), appLink);
     else if (resp.contentType.startsWith(QLatin1String("text/html")))
         // The manifest link is left on the file. The phone reads the manifest
         // while its share sheet is up, with the page's scripts paused behind
@@ -1485,13 +1489,37 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     // because a page that is not signed in still gets a shortcut — one that asks
     // for the PIN — and nothing in this answer is sensitive but the key, which
     // only a signed-in session's own request is given.
+    //
+    // ?go=<alias> makes it the manifest of a link straight to one app (issue
+    // #63), on the tunnel and off it. The alias is checked for its shape and
+    // for nothing else: whether it exists is not this answer's to say, and the
+    // answer is the same either way. It names no app and shows no app's icon —
+    // the browser fetches a manifest without the session.
     if (req.path == QLatin1String("/api/app/web-manifest")) {
-        if (!viaTunnel || !m_HomeScreenIdentity || req.method != QLatin1String("GET")) {
+        const bool linkAsked = req.queryParams.contains(QStringLiteral("go"));
+        const QString appLink = req.queryParams.value(QStringLiteral("go"));
+        if (req.method != QLatin1String("GET") ||
+            (!linkAsked && (!viaTunnel || !m_HomeScreenIdentity))) {
             respond(HttpResponse::error(404, "Not Found"));
             return;
         }
+        if (linkAsked && !mw::applinks::validAlias(appLink)) {
+            respond(HttpResponse::error(400, "Bad Request"));
+            return;
+        }
         HttpResponse resp = m_StaticFiles->serveFile(QStringLiteral("/manifest.webmanifest"));
-        if (resp.statusCode == 200) personaliseForHomeScreen(req, resp, QString());
+        if (resp.statusCode == 200) {
+            if (viaTunnel && m_HomeScreenIdentity)
+                personaliseForHomeScreen(req, resp, QString(), appLink);
+            else
+                // This origin is the machine: its own "/", the link, the icons
+                // inlined (relative to this route they would point nowhere),
+                // and the edition's name — no machine's, no app's.
+                resp.body =
+                    mw::homescreen::manifest(resp.body, QString(), QString(), QString(),
+                                             homeScreenIcon("/assets/icon-192.png"),
+                                             homeScreenIcon("/assets/icon-512.png"), appLink);
+        }
         resp.headers.remove("ETag");
         resp.headers.remove("Last-Modified");
         resp.headers["Cache-Control"] = "no-store";

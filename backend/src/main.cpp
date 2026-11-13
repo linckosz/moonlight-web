@@ -104,6 +104,8 @@
 #include "server/SingleSessionHosts.h"
 #include "server/SlotPortPlan.h"
 #include "server/StreamActivity.h"
+#include "server/AppLinks.h"
+#include "server/routes/AppLinkRoutes.h"
 #include "server/routes/AuthRoutes.h"
 #include "server/routes/BoothRoutes.h"
 #include "server/routes/HostRoutes.h"
@@ -3994,6 +3996,31 @@ int main(int argc, char* argv[])
 
     registerHostRoutes(server, computerManager);
     registerHostAppRoutes(server, appSettings);
+
+    // Links straight to one app of one host (issue #63): kept beside
+    // settings.json, so a --dev instance keeps its own.
+    AppLinkStore appLinks(QFileInfo(appSettings.filePath()).absolutePath() + QLatin1Char('/') +
+                          AppLinkStore::fileName());
+    appLinks.load();
+    registerAppLinkRoutes(*server.router(), appLinks,
+                          {[&computerManager](const QString& uuid) {
+                               std::optional<QVector<NvApp>> apps;
+                               if (NvComputer* host = computerManager.getHost(uuid))
+                                   apps = host->appList;
+                               return apps;
+                           },
+                           [&computerManager](const QString& uuid) {
+                               const std::unique_ptr<IStreamBackend> backend =
+                                   computerManager.backendForHost(uuid);
+                               return !backend || backend->capabilities().multiUser;
+                           }});
+    QObject::connect(&computerManager, &ComputerManager::appListRefreshed, &app,
+                     [&appLinks](const QString& uuid, const QVector<NvApp>& previous,
+                                 const QVector<NvApp>& current) {
+                         appLinks.reconcile(uuid, previous, current);
+                     });
+    QObject::connect(&computerManager, &ComputerManager::hostForgotten, &app,
+                     [&appLinks](const QString& uuid) { appLinks.purgeHost(uuid); });
     // The game launchers installed on this PC get a card each, the first start
     // after an install or an update (as Sunshine's installer gives Steam one).
     seedDetectedLaunchers(appSettings);

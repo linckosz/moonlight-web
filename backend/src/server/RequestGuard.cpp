@@ -434,6 +434,9 @@ bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllow
     // The tray's Disconnect (issue #42): the icon greys it under --noadmin,
     // and the channel that carries it is refused it as well.
     if (path == QLatin1String("/api/server/stream-disconnect")) return true;
+    // A link straight to an app (issue #63) is kept on this machine for good:
+    // not a booth visitor's to make. Following one is a read, and stays open.
+    if (area == QLatin1String("app-links")) return true;
     if (area == QLatin1String("auth")) {
         static const QStringList doors = {QStringLiteral("validate"),
                                           QStringLiteral("admin-unlock"),

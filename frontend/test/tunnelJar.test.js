@@ -331,4 +331,52 @@ describe('which machine a page talks to', () => {
             }
         });
     });
+
+    // And a fifth: a link straight to one app (issue #63), the home-screen icon
+    // that opens a computer's Desktop in one tap. An alias the host minted,
+    // nothing more: no key, no door.
+    describe('and the link straight to one app it may carry', () => {
+        const ALIAS = 'x7Kq2AbC90';
+
+        it('reads the alias, before the handover and after it', () => {
+            at(`/${A}`, `#go=${ALIAS}`);
+            expect(tunnelModule.appLinkFromLocation()).toBe(ALIAS);
+            at('/', `#${A}&go=${ALIAS}&k=SEKRIT`);
+            expect(tunnelModule.appLinkFromLocation()).toBe(ALIAS);
+            // The key next to it is read apart, and the page is not changed.
+            expect(tunnelModule.hostKeyFromLocation()).toBe('SEKRIT');
+            expect(tunnelModule.landingPathFromLocation()).toBeNull();
+        });
+
+        // It goes back into the address handed to location.replace(), so only
+        // the shape the host mints is ever carried.
+        it('refuses anything the host could not have minted', () => {
+            for (const bad of [
+                '',
+                'short',
+                `${ALIAS}x`,
+                '..%2F..%2Fx1',
+                'x7Kq2AbC9-',
+                'x7Kq2AbC9%30',
+            ]) {
+                at(`/${A}`, `#go=${bad}`);
+                expect(tunnelModule.appLinkFromLocation()).toBeNull();
+            }
+            // A bad one costs itself, not the key beside it.
+            at(`/${A}`, '#go=short&k=SEKRIT');
+            expect(tunnelModule.appLinkFromLocation()).toBeNull();
+            expect(tunnelModule.hostKeyFromLocation()).toBe('SEKRIT');
+        });
+
+        it('never reads it out of the query, which the server would have seen', () => {
+            at('/', '');
+            vi.stubGlobal('location', {
+                pathname: `/${A}`,
+                hash: '',
+                search: `?go=${ALIAS}`,
+                origin: 'https://example.test',
+            });
+            expect(tunnelModule.appLinkFromLocation()).toBeNull();
+        });
+    });
 });
