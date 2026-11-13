@@ -176,8 +176,9 @@ public:
     /// unless @p current (the host's list now) still has it.
     ConfirmResult confirm(const QString& alias, int candidateId, const QVector<NvApp>& current);
 
-    /// Drops every link to the host @p hostUuid: removed from this server, or no
-    /// longer paired with it. Returns how many went.
+    /// Drops every link to the host @p hostUuid, removed from this server.
+    /// Returns how many went. A pairing lost is no reason: paired again, the
+    /// same host is the same uuid, and its links find their apps again.
     int purgeHost(const QString& hostUuid);
 
     int size() const { return static_cast<int>(m_Links.size()); }

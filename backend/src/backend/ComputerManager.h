@@ -196,8 +196,9 @@ signals:
     void appListRefreshed(const QString& uuid, const QVector<NvApp>& previous,
                           const QVector<NvApp>& current);
 
-    // This server is done with a host: removed from the list, or no longer
-    // paired with it. What was kept for that host alone goes with it.
+    // This server is done with a host: removed from its list. What was kept
+    // for that host alone goes with it. Not a pairing lost: the same host,
+    // paired again, is the same uuid, and what was kept for it still holds.
     void hostForgotten(const QString& uuid);
 
 private slots:

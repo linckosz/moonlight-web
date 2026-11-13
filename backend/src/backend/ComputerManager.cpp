@@ -2115,7 +2115,6 @@ void ComputerManager::onPairCheckFinished()
         saveHosts();
         emit hostsChanged();
         Logger::info(QString("Pairing lost for host: %1").arg(host->name));
-        emit hostForgotten(host->uuid);
     }
 
     reply->deleteLater();
@@ -2446,7 +2445,6 @@ void ComputerManager::handleGetAppList(const QString& uuid, const QString& devic
                         host->serverCertPem.clear();
                         saveHosts();
                         emit hostsChanged();
-                        emit hostForgotten(uuid);
                         respond(HttpResponse::json(
                             {{"status", "error"},
                              {"message", "Host is no longer paired. Please pair again."}},

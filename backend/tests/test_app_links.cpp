@@ -251,7 +251,7 @@ void run_app_links_tests()
         CHECK_EQ(reread.find(steam)->appId, 606);
     }
 
-    SECTION("app links — a host removed or unpaired takes its links along");
+    SECTION("app links — a host removed takes its links along");
     {
         QTemporaryDir tmp;
         AppLinkStore store(tmp.path() + QStringLiteral("/app-links.json"));
