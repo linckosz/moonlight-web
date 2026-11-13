@@ -54,6 +54,7 @@ export default defineConfig({
                 'js/stream/CrashRelaunch.js',
                 'js/stream/GamepadManager.js',
                 'js/stream/TouchPadState.js',
+                'js/stream/WheelSource.js',
                 'js/stream/gamepadMapping.js',
                 'js/util/gamepadMappingsStore.js',
                 'js/stream/renderers/createRenderer.js',
