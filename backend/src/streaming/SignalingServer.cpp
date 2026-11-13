@@ -403,16 +403,19 @@ void SignalingServer::onNewWsConnection()
     rtc::Configuration config =
         buildIceConfig(isInternet, mapped, m_MediaPort, lanOnly ? QString() : m_StunServerUrl,
                        m_ForceIceTcp, m_IceTcpPassive);
-    // The server's shared UDP ports instead of a socket of our own, when it
-    // gave this worker some. UDP only for now: a rung that also needs TCP keeps
-    // its own socket, which is what its listener sits on.
+    // The server's shared ports instead of a socket of our own, when it gave
+    // this worker some. A rung that also listens in TCP goes there when the
+    // server listens for it and can hand this worker what it takes; otherwise
+    // it keeps its own socket, which is what its listener sits on.
     bool muxed = false;
-    if (!m_ForceIceTcp && mw::icemuxclient::available()) {
-        if (auto shared = mw::icemuxclient::openAgent()) {
+    const bool muxTcp = m_ForceIceTcp && m_IceTcpPassive && mw::icemuxclient::tcpAvailable();
+    if ((!m_ForceIceTcp || muxTcp) && mw::icemuxclient::available()) {
+        if (auto shared = mw::icemuxclient::openAgent(muxTcp)) {
             config.iceSharedSockets = std::move(*shared);
             muxed = true;
-            qInfo() << "[SignalingServer] ICE on the server's shared UDP port(s): the media port"
-                    << "named above is not bound";
+            qInfo() << "[SignalingServer] ICE on the server's shared"
+                    << (muxTcp ? "UDP and TCP" : "UDP")
+                    << "port(s): the media port named above is not bound";
         }
     }
     if (m_DebugIceDropUdp)
@@ -427,7 +430,7 @@ void SignalingServer::onNewWsConnection()
     if (muxed) {
         const mw::icemuxclient::Public forwarded = mw::icemuxclient::publicPorts();
         const bool any = !forwarded.ip.empty() && !forwarded.ports.empty();
-        if (any) m_Relay->setSharedPublicPorts(forwarded.ip, forwarded.ports);
+        if (any) m_Relay->setSharedPublicPorts(forwarded.ip, forwarded.ports, forwarded.tcpPorts);
         m_Relay->setForceHostCandidatePublic(any);
         m_Relay->setSuppressIPv6Candidates(any);
         m_Relay->setEmitLanHostCandidate(any && clientIsLocal);
@@ -468,6 +471,16 @@ void SignalingServer::onNewWsConnection()
         }
         emit sessionEnded();
         return;
+    }
+
+    // The connections the server takes for this agent reach it through its
+    // PeerConnection, which exists from here on
+    if (muxed && muxTcp) {
+        const std::weak_ptr<rtc::PeerConnection> agent = m_Relay->peerConnection();
+        mw::icemuxclient::setAgentOffer([agent](uintptr_t socket, const char* frame, size_t size) {
+            const auto pc = agent.lock();
+            return pc && pc->offerIceTcp(socket, frame, size);
+        });
     }
 
     qInfo() << "[SignalingServer] Client connected, waiting for SDP offer from libdatachannel";

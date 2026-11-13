@@ -159,6 +159,12 @@ size_t Router::provisionalCount(uint32_t feed) const noexcept
     return agent == m_Agents.end() ? 0 : agent->second.provisional;
 }
 
+std::string_view Router::ufragOf(uint32_t feed) const noexcept
+{
+    const auto agent = m_Agents.find(feed);
+    return agent == m_Agents.end() ? std::string_view() : std::string_view(agent->second.ufrag);
+}
+
 /// The follower at `index` leaves the entry, which goes with its last one:
 /// true when it did, and `entry` is then no more.
 bool Router::leave(ProvisionalMap::iterator entry, size_t index)

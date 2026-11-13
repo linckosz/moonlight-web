@@ -229,7 +229,9 @@ IceMuxPorts::Announced IceMuxPorts::announced() const
         // The hole and the port that serves are one number, or the hole is
         // not this port's: nothing is announced on a guess.
         const uint16_t port = m_Router.hole(which);
-        if (port != 0 && port == m_Mux.port(which)) out.ports.append(port);
+        if (port == 0 || port != m_Mux.port(which)) continue;
+        out.ports.append(port);
+        if (m_Router.holeTcp(which)) out.tcpPorts.append(port);
     }
     return out;
 }

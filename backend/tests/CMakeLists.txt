@@ -135,6 +135,8 @@ add_executable(run_tests
     test_port_identity.cpp
     test_ice_mux_core.cpp
     test_ice_mux_sockets.cpp
+    test_ice_mux_tcp_core.cpp
+    test_ice_mux_tcp.cpp
     test_ice_mux_ports.cpp
     test_ice_mux_handles.cpp
     test_owner_account.cpp
@@ -166,6 +168,9 @@ add_executable(run_tests
     # Which stream worker a datagram on a shared UDP port goes to.
     ${_src}/src/network/IceMuxCore.cpp
     ${_src}/src/network/IceMux.cpp
+    # TCP on the shared ports: the connections the server takes for a stream.
+    ${_src}/src/network/IceMuxTcpCore.cpp
+    ${_src}/src/network/IceMuxTcp.cpp
     # Which ports the streams share, and which the router forwards.
     ${_src}/src/network/IceMuxPorts.cpp
     # A worker above the server takes the shared sockets out of it.

@@ -892,6 +892,10 @@ int runStreamWorker(QCoreApplication& app)
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("sessionEnded")) {
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(3); }, Qt::QueuedConnection);
+            } else if (cmd == QLatin1String("iceMuxTcp")) {
+                // A TCP connection the server took for this stream on a
+                // shared port: to the agent it is for, here and now
+                mw::icemuxclient::takeConnection(msg);
             } else if (cmd == QLatin1String("setPolicy") &&
                        mw::native::NativeHost::signInScreenOnly()) {
                 // The sign-in screen's policy is fixed at the start, and can

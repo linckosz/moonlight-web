@@ -24,6 +24,7 @@
 #include "StreamEnds.h"
 #include "WorkerService.h"
 #include "common/Edition.h"
+#include "common/LaunchLock.h"
 #include "common/LinuxCapabilities.h"
 #include "common/RunFlags.h"
 #include "mw/native/MouseKeys.h"
@@ -31,11 +32,18 @@
 #include "server/AppSettings.h"
 
 #include <QCoreApplication>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QDebug>
+
+#include <mutex>
+
+#ifndef Q_OS_WIN
+#include <unistd.h>
+#endif
 
 StreamWorkerHost::StreamWorkerHost(QObject* parent)
     : QObject(parent)
@@ -246,7 +254,12 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
         });
 #endif
 
-    m_Proc->start();
+    {
+        // Under the lock a stream worker is started under: nothing that must
+        // not reach it is being made on another thread (common/LaunchLock.h)
+        const std::lock_guard<std::mutex> launch(mw::launch::lock());
+        m_Proc->start();
+    }
     if (!m_Proc->waitForStarted(5000)) {
         qWarning() << "[StreamWorkerHost] Failed to spawn worker:" << m_Proc->errorString();
         // Nothing runs that could hold them: what was taken for it is given back
@@ -255,6 +268,13 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
         m_Proc = nullptr;
         return false;
     }
+#ifndef Q_OS_WIN
+    // Started: the child's end of the channel is the child's alone
+    if (m_MuxChannelWorkerEnd >= 0) {
+        ::close(m_MuxChannelWorkerEnd);
+        m_MuxChannelWorkerEnd = -1;
+    }
+#endif
 
 #ifdef Q_OS_WIN
     // The UDP ports every stream shares, as this child alone can open them:
@@ -283,6 +303,8 @@ static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Plain, 
 static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::SignInScreen, false) ==
                   StreamWorkerHost::MuxHandover::Taken,
               "the sign-in screen's worker takes the shared sockets, as the service's other one");
+static_assert(!StreamWorkerHost::tcpHandoverFor(StreamWorkerHost::Launch::ConsoleAsUser, false),
+              "a console worker that is not the owner's must not be handed a connection");
 
 QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Launch how,
                                                bool ownerAccount, qint64 pid,
@@ -365,6 +387,38 @@ QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Lau
         shared[QStringLiteral("sockets")] = sockets;
     }
 #endif
+    // TCP on those ports: the server takes the connections of a stream that
+    // listens in TCP, and hands each to this worker while it streams. Told to
+    // a worker there is a way to hand them to, and to no other.
+    m_MuxHandover = handover;
+    if (config[QStringLiteral("iceMuxTcp")].toBool() && tcpHandoverFor(how, ownerAccount)) {
+#ifdef Q_OS_WIN
+        // A worker that takes copies each out of this process, as it does the
+        // UDP sockets. One that is handed gets each described for its
+        // process: held from now, while its launcher still holds it too, so
+        // that what a description is made for is that process and no other.
+        if (!workerTakes) m_MuxChild = IceMuxTcp::holdProcess(static_cast<unsigned long>(pid));
+        m_MuxTcp = workerTakes || m_MuxChild != nullptr;
+#else
+        // Each crosses as one message of a channel made now, for this start
+        // alone: its other end goes to the child with the sockets, and to no
+        // other process this one starts.
+        int mine = -1, its = -1;
+        if (mw::icemuxhandles::makeChannel(&mine, &its)) {
+            if (its > 2) {
+                m_MuxChannel = mine;
+                m_MuxChannelWorkerEnd = its;
+                acrossStart->push_back(its);
+                shared[QStringLiteral("channel")] = its;
+                m_MuxTcp = true;
+            } else {
+                ::close(mine);
+                ::close(its);
+            }
+        }
+#endif
+        if (m_MuxTcp) shared[QStringLiteral("tcp")] = true;
+    }
     config[QStringLiteral("iceMux")] = shared;
     // Which of the mux's sockets those are: what its agents register with.
     // The mux keeps them for this worker until it is gone (onFinished()).
@@ -607,6 +661,14 @@ QString& audioFocusSlot()
     static QString app;
     return app;
 }
+
+/// The workers whose agent expects a TCP connection on the shared ports, by
+/// that agent's number in the mux. On the main thread, like the above.
+QHash<quint32, StreamWorkerHost*>& muxTcpHosts()
+{
+    static QHash<quint32, StreamWorkerHost*> hosts;
+    return hosts;
+}
 } // namespace
 
 QString StreamWorkerHost::audioFocusApp()
@@ -668,8 +730,100 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
 void StreamWorkerHost::dropMuxAgent()
 {
     if (!m_MuxFeed) return;
+    // No connection for it from here on: removed, an agent expects none
+    muxTcpHosts().remove(m_MuxFeed);
     if (IceMux* mux = IceMux::shared()) mux->removeAgent(m_MuxFeed);
     m_MuxFeed = 0;
+    m_MuxFeedPort = 0;
+}
+
+quint32 StreamWorkerHost::nextMuxOwner()
+{
+    // On the main thread, where every one of these objects is made
+    static quint32 last = 0;
+    if (++last == 0) last = 1;
+    return last;
+}
+
+void StreamWorkerHost::closeMuxChannel()
+{
+#ifdef Q_OS_WIN
+    if (m_MuxChild) IceMuxTcp::letGoOfProcess(m_MuxChild);
+    m_MuxChild = nullptr;
+#else
+    if (m_MuxChannel >= 0) ::close(m_MuxChannel);
+    if (m_MuxChannelWorkerEnd >= 0) ::close(m_MuxChannelWorkerEnd);
+    m_MuxChannel = -1;
+    m_MuxChannelWorkerEnd = -1;
+#endif
+}
+
+void StreamWorkerHost::handMuxConnection(quint32 feed, quint32 number)
+{
+    StreamWorkerHost* host = muxTcpHosts().value(feed, nullptr);
+    if (host && host->m_MuxFeed == feed) {
+        host->handConnection(number);
+        return;
+    }
+    // Its agent is gone, or connected, since the connection named it
+    if (IceMux* mux = IceMux::shared()) mux->tcp().letGo(number);
+}
+
+void StreamWorkerHost::handConnection(quint32 number)
+{
+    IceMux* mux = IceMux::shared();
+    if (!mux) return;
+    const quint32 feed = m_MuxFeed;
+    bool handed = false;
+#ifdef Q_OS_WIN
+    // In a command, with the agent it is for and its first frame: described
+    // for this worker's process, or named for the worker to copy
+    QJsonObject command{{QStringLiteral("cmd"), QStringLiteral("iceMuxTcp")},
+                        {QStringLiteral("n"), static_cast<double>(number)},
+                        {QStringLiteral("feed"), static_cast<int>(m_MuxFeedPort)}};
+    const auto base64 = [](const std::vector<uint8_t>& bytes) {
+        return QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(bytes.data()),
+                                              static_cast<qsizetype>(bytes.size()))
+                                       .toBase64());
+    };
+    std::vector<uint8_t> frame;
+    if (m_MuxTcp && m_MuxHandover == MuxHandover::Handed) {
+        std::vector<uint8_t> description;
+        handed = mux->tcp().describeFor(feed, number, m_MuxChild, &description, &frame);
+        if (handed) command[QStringLiteral("socket")] = base64(description);
+    } else if (m_MuxTcp && m_MuxHandover == MuxHandover::Taken) {
+        // Named: kept from here on until this worker answers for it or is
+        // gone, whatever becomes of its agent. With the connection's two
+        // ports, for the worker to hold its copy against.
+        uint64_t handle = 0;
+        uint16_t local = 0, remote = 0;
+        handed = mux->tcp().nameFor(feed, number, &handle, &frame, &local, &remote);
+        if (handed) {
+            command[QStringLiteral("handle")] = QString::number(handle);
+            command[QStringLiteral("lport")] = static_cast<int>(local);
+            command[QStringLiteral("rport")] = static_cast<int>(remote);
+        }
+    }
+    if (handed) {
+        command[QStringLiteral("frame")] = base64(frame);
+        sendJson(command);
+    }
+#else
+    // As one message of this worker's channel: the connection itself
+    const int channel = m_MuxChannel;
+    const quint32 agent = m_MuxFeedPort;
+    handed = m_MuxTcp && channel >= 0 &&
+             mux->tcp().use(feed, number,
+                            [channel, agent](uintptr_t socket, const uint8_t* frame, size_t size) {
+                                return mw::icemuxhandles::sendConnection(
+                                    channel, static_cast<int>(socket), agent,
+                                    reinterpret_cast<const char*>(frame), size);
+                            });
+#endif
+    // Not handed: this process's end goes at once. Handed: when the worker
+    // says it has its own; or after two seconds, unless it was named
+    // (IceMuxTcp).
+    if (!handed) mux->tcp().letGo(number);
 }
 
 void StreamWorkerHost::releaseMuxSockets()
@@ -677,6 +831,12 @@ void StreamWorkerHost::releaseMuxSockets()
     dropMuxAgent();
     // No agent of this worker from here on, whatever it still says
     m_MuxSockets.clear();
+    // Nor any way to hand it a connection: what the mux kept for it, named
+    // or not, is let go, since no process is left to copy it
+    m_MuxTcp = false;
+    m_MuxHandover = MuxHandover::None;
+    closeMuxChannel();
+    if (IceMux* mux = IceMux::shared()) mux->tcp().release(m_MuxOwner);
     if (!m_MuxLease) return;
     if (IceMux* mux = IceMux::shared()) mux->release(m_MuxLease);
     m_MuxLease = 0;
@@ -702,12 +862,37 @@ void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
         }
         mux->setFeedPort(m_MuxFeed, static_cast<uint16_t>(feedPort));
         qInfo() << "[IceMux] agent" << m_MuxFeed << "registered for the worker";
+        // One that listens in TCP: the server listens for it from now on, on
+        // the ports and under the fragment it has just been registered with.
+        // Only for a worker that was told it could be handed what comes.
+        if (event["tcp"].toBool() && m_MuxTcp) {
+            m_MuxFeedPort = static_cast<quint16>(feedPort);
+            if (mux->expectTcp(m_MuxFeed, m_MuxOwner)) {
+                muxTcpHosts().insert(m_MuxFeed, this);
+                qInfo() << "[IceMux] agent" << m_MuxFeed
+                        << "expects a TCP connection on the shared port(s)";
+            } else {
+                qWarning() << "[IceMux] no shared port can be listened on in TCP for agent"
+                           << m_MuxFeed << "— it is reached over UDP alone";
+            }
+        }
     } else if (op == QLatin1String("confirmed")) {
         if (!m_MuxFeed) return;
+        // Connected: it expects no connection any more, whichever way it is
+        muxTcpHosts().remove(m_MuxFeed);
+        mux->tcp().close(m_MuxFeed);
         const int port = event["port"].toInt();
         if (port <= 0 || port > 65535) return;
         mux->confirm(m_MuxFeed, event["address"].toString().toStdString(),
                      static_cast<uint16_t>(port));
+    } else if (op == QLatin1String("tcpGot")) {
+        // The worker has its own end of a connection it was handed, or will
+        // not have it: either way this process lets go of its own. A worker
+        // answers for what it was handed and nothing of another's, and may
+        // do so after its agent is gone.
+        const double told = event["n"].toDouble();
+        mux->tcp().answered(m_MuxOwner,
+                            told >= 1 && told <= 4294967295.0 ? static_cast<uint32_t>(told) : 0u);
     } else if (op == QLatin1String("gone")) {
         dropMuxAgent();
     }

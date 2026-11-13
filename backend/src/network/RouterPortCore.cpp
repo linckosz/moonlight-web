@@ -138,9 +138,10 @@ RouterPortCore::Request RouterPortCore::muxRequest(bool devInstance, int which,
     Request request;
     request.purpose = Purpose::Mux;
     request.slot = which;
-    // The shared ports are read in UDP alone: no TCP hole to a port nothing
-    // listens on.
-    request.tcp = false;
+    // The server listens on a shared port in TCP too, for a stream that has
+    // to connect that way (IceMuxTcp): its TCP hole comes alongside. Whoever
+    // asks takes it off where nothing will listen (ice_tcp_passive off).
+    request.tcp = true;
     for (const uint16_t p : remembered)
         if (muxPortAllowed(devInstance, which, p)) request.remembered.append(p);
 

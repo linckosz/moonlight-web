@@ -139,6 +139,22 @@ public:
         return muxHandoverFor(how, ownerAtConsole) != MuxHandover::None;
     }
 
+    /// Whether a worker started that way can be handed, while it streams, the
+    /// TCP connections the server takes for it on the shared ports
+    /// (network/IceMuxTcp): exactly when it has the shared ports themselves.
+    /// A worker in the console session on another account than the owner's
+    /// has no channel for them, and no connection ever reaches it.
+    static constexpr bool tcpHandoverFor(Launch how, bool ownerAccount)
+    {
+        return muxHandoverFor(how, ownerAccount) != MuxHandover::None;
+    }
+
+    /// A TCP connection the server took on a shared port for the agent
+    /// `feed`, kept there under `number`: handed to the worker that agent is
+    /// of, if it still is some worker's; let go of otherwise. On the main
+    /// thread.
+    static void handMuxConnection(quint32 feed, quint32 number);
+
     /// Spawn the worker and hand it the session config. Returns false when the
     /// process could not be started (caller falls back to in-process mode).
     bool start(const QJsonObject& config);
@@ -279,7 +295,32 @@ private:
     /// worker is given them until it is gone: the mux keeps them bound and
     /// read meanwhile, whatever port replaces them. 0 when it was handed none.
     uint32_t m_MuxLease = 0;
+    /// This worker, to the mux's TCP side (network/IceMuxTcp): what is kept
+    /// for it there is kept under this number, and let go of when it answers
+    /// for it or is gone. One for each of these objects, never 0.
+    static quint32 nextMuxOwner();
+    const quint32 m_MuxOwner = nextMuxOwner();
+    /// How this worker was given those sockets; None when it was given none.
+    MuxHandover m_MuxHandover = MuxHandover::None;
+    /// The server takes its TCP connections on the shared ports, and there is
+    /// a way to hand them to it: it was told so with the sockets.
+    bool m_MuxTcp = false;
+    /// The 127.0.0.1 port of its agent's feed, which is what a connection
+    /// handed to it names the agent by; 0 without an agent that expects one.
+    quint16 m_MuxFeedPort = 0;
+    /// Windows, a worker this process hands its sockets to: this process's
+    /// own handle on that process (IceMuxTcp::holdProcess), taken while its
+    /// launcher still held it. What a connection is described for is the
+    /// process this handle names, never a number.
+    void* m_MuxChild = nullptr;
+    /// Elsewhere: this process's end of the channel its connections cross on
+    /// (IceMuxHandles::makeChannel), and the worker's end until the worker
+    /// has started with it; -1 without one.
+    int m_MuxChannel = -1;
+    int m_MuxChannelWorkerEnd = -1;
     void onMuxEvent(const QJsonObject& event);
+    void handConnection(quint32 number);
+    void closeMuxChannel();
     void dropMuxAgent();
     /// The worker is gone, or is about to be started again: its agent goes,
     /// and what the mux kept for it is given back.

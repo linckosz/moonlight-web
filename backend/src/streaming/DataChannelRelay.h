@@ -97,7 +97,7 @@ public:
     ~DataChannelRelay() override;
 
     // PeerConnection access (not part of RelayBase interface)
-    std::shared_ptr<rtc::PeerConnection> peerConnection() const { return m_Pc; }
+    std::shared_ptr<rtc::PeerConnection> peerConnection() const override { return m_Pc; }
 
     // ── RelayBase interface ─────────────────────────────────────────────────
 

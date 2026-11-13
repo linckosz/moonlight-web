@@ -622,6 +622,9 @@ void RouterPortAllocator::claimMuxPort(int which, uint16_t current,
     }
     request.hold = std::move(hold);
     request.drop = std::move(drop);
+    // Where no stream listens in TCP there is no TCP hole: it would lead to
+    // whichever program binds the number next
+    request.tcp = request.tcp && m_Settings->iceTcpPassive();
     submit(std::move(request), context, std::move(callback));
 }
 

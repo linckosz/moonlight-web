@@ -525,8 +525,8 @@ void run_router_sweep_tests()
         CHECK(b.record.find(mw::routerports::kMediaBasePort, false, line));
         CHECK(line.kind == Kind::Streams && line.slot == -1 &&
               line.internal == mw::routerports::kMediaBasePort);
-        // A shared port has no TCP hole, and no TCP line
-        CHECK(!b.record.has(mw::routerports::kMediaBasePort, true));
+        // Its TCP hole alongside, and its line
+        CHECK(shared.claim.tcp && b.record.has(mw::routerports::kMediaBasePort, true));
         CHECK(b.gw.table[udp(mw::routerports::kMediaBasePort)].description ==
               QStringLiteral("MoonlightWeb streams a3f9c1"));
         // Every line the policy notes is one this kind of instance may have
@@ -669,11 +669,12 @@ void run_router_sweep_tests()
         CHECK(b.gw.table.contains(tcp(3478)));
         CHECK(b.record.has(3478, true));
     }
-    // A shared port has no TCP entry: nothing is asked to go
+    // A hole asked for in UDP alone has no TCP entry: nothing is asked to go
     {
         Bench b;
-        const auto shared =
-            b.core.claim(RouterPortCore::muxRequest(false, RouterPortCore::kMuxBlock, {}));
+        auto udpAlone = RouterPortCore::muxRequest(false, RouterPortCore::kMuxBlock, {});
+        udpAlone.tcp = false;
+        const auto shared = b.core.claim(udpAlone);
         CHECK(shared.ok && !shared.claim.tcp);
         b.gw.keepsForeign = true;
         b.gw.table[udp(shared.claim.external)].client = kNeighbour;

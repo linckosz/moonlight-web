@@ -19,6 +19,7 @@
 
 #include "WorkerService.h"
 #include "common/Edition.h"
+#include "common/LaunchLock.h"
 #include "common/OwnerAccount.h"
 
 #include <QCoreApplication>
@@ -785,14 +786,20 @@ bool ConsoleProcess::start(const QString& program, const QStringList& args, QStr
 
     PROCESS_INFORMATION pi = {};
     BOOL created;
-    if (token) {
-        created = ::CreateProcessAsUserW(token, app.c_str(), cmd.data(), nullptr, nullptr, TRUE,
-                                         flags, env, cwd.c_str(), &si.StartupInfo, &pi);
-    } else {
-        created = ::CreateProcessW(app.c_str(), cmd.data(), nullptr, nullptr, TRUE, flags, env,
-                                   cwd.c_str(), &si.StartupInfo, &pi);
+    DWORD createError = 0;
+    {
+        // Under the lock a stream worker is started under: nothing that must
+        // not reach it is being made on another thread (common/LaunchLock.h)
+        const std::lock_guard<std::mutex> launch(mw::launch::lock());
+        if (token) {
+            created = ::CreateProcessAsUserW(token, app.c_str(), cmd.data(), nullptr, nullptr, TRUE,
+                                             flags, env, cwd.c_str(), &si.StartupInfo, &pi);
+        } else {
+            created = ::CreateProcessW(app.c_str(), cmd.data(), nullptr, nullptr, TRUE, flags, env,
+                                       cwd.c_str(), &si.StartupInfo, &pi);
+        }
+        createError = created ? 0 : ::GetLastError();
     }
-    const DWORD createError = created ? 0 : ::GetLastError();
 
     if (env) ::DestroyEnvironmentBlock(env);
     if (attrsOk) ::DeleteProcThreadAttributeList(attrs);

@@ -534,6 +534,17 @@ void unclaimed()
     CHECK(to(r, far, response, 500'000).empty());
 }
 
+void fragments()
+{
+    SECTION("IceMuxCore: the fragment an agent is known by");
+    Router r;
+    CHECK(r.addAgent(1, "hostAAAA1234", 0));
+    CHECK(r.ufragOf(1) == "hostAAAA1234");
+    CHECK(r.ufragOf(2).empty());
+    r.removeAgent(1);
+    CHECK(r.ufragOf(1).empty());
+}
+
 } // namespace
 
 void run_ice_mux_core_tests()
@@ -548,4 +559,5 @@ void run_ice_mux_core_tests()
     shares();
     sharedResponses();
     unclaimed();
+    fragments();
 }

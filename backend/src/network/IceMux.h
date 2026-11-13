@@ -18,6 +18,7 @@
 #pragma once
 
 #include "IceMuxCore.h"
+#include "IceMuxTcp.h"
 
 #include <array>
 #include <atomic>
@@ -145,6 +146,21 @@ public:
     void confirm(uint32_t feed, const std::string& address, uint16_t port);
     void removeAgent(uint32_t feed);
 
+    /// TCP on these ports (IceMuxTcp): what listens there while an agent
+    /// expects a connection, and keeps each connection for its worker.
+    /// Started and stopped with the mux.
+    IceMuxTcp& tcp() { return m_Tcp; }
+    /// The agent `feed` expects a TCP connection from now on, on the ports
+    /// it was registered with and under the fragment it was registered by:
+    /// both are this object's word, not its worker's. `owner` says whose
+    /// worker the agent is (IceMuxTcp::open()). False when it is not
+    /// registered, or none of its ports can be listened on. It expects none
+    /// any more once it is removed, or tcp().close() says so.
+    bool expectTcp(uint32_t feed, uint32_t owner);
+    /// Whether a stream that has to connect over TCP can be reached on the
+    /// ports that serve: one of them at least can be listened on.
+    bool tcpReady();
+
     /// What a stream worker gets: the sockets that serve, the preferred first.
     struct Share
     {
@@ -251,6 +267,10 @@ private:
     mw::icemux::Router m_Router;
     std::unordered_map<uint32_t, Feed> m_Feeds;
     uint32_t m_NextFeed = 1;
+
+    /// Its own lock and its own thread; never called with one of the locks
+    /// above held
+    IceMuxTcp m_Tcp;
 
     std::atomic<uint64_t> m_Read{0}, m_Passed{0}, m_Dropped{0}, m_Lost{0}, m_Faults{0};
     std::function<void(const std::string&)> m_Report;

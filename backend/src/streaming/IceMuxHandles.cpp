@@ -397,6 +397,32 @@ bool connectionChecked(uintptr_t socket, const std::vector<uint16_t>& ports, QSt
     return true;
 }
 
+bool connectionPorts(uintptr_t socket, uint16_t* local, uint16_t* remote)
+{
+    if (socket == kNoSocket || !local || !remote) return false;
+    const auto portOf = [](const sockaddr_storage& name) -> uint16_t {
+        if (name.ss_family == AF_INET6)
+            return ntohs(reinterpret_cast<const sockaddr_in6*>(&name)->sin6_port);
+        if (name.ss_family == AF_INET)
+            return ntohs(reinterpret_cast<const sockaddr_in*>(&name)->sin_port);
+        return 0;
+    };
+    sockaddr_storage here{}, there{};
+#ifdef _WIN32
+    int hereLength = sizeof(here), thereLength = sizeof(there);
+    const SOCKET s = static_cast<SOCKET>(socket);
+#else
+    socklen_t hereLength = sizeof(here), thereLength = sizeof(there);
+    const int s = static_cast<int>(socket);
+#endif
+    if (::getsockname(s, reinterpret_cast<sockaddr*>(&here), &hereLength) != 0 ||
+        ::getpeername(s, reinterpret_cast<sockaddr*>(&there), &thereLength) != 0)
+        return false;
+    *local = portOf(here);
+    *remote = portOf(there);
+    return *local != 0 && *remote != 0;
+}
+
 uintptr_t openConnection(const std::vector<uint8_t>& description,
                          const std::vector<uint16_t>& ports, QString* why)
 {
@@ -569,6 +595,43 @@ bool makeChannel(int* serverEnd, int* workerEnd)
     *serverEnd = ends[0];
     *workerEnd = ends[1];
     return true;
+#endif
+}
+
+int channelInherited(uint64_t number, QString* why)
+{
+    const auto fail = [why](const QString& reason) {
+        if (why) *why = reason;
+        return -1;
+    };
+#ifdef _WIN32
+    Q_UNUSED(number);
+    return fail(QStringLiteral("not on this system"));
+#else
+    if (!handedNumber(number))
+        return fail(QStringLiteral("a channel without a number a server hands"));
+    const int fd = static_cast<int>(number);
+    // First, whatever else is true of it: it goes to no process this one
+    // starts. Harmless on a number that turns out to be something else.
+    ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+#ifdef __linux__
+    const int kind = SOCK_SEQPACKET;
+#else
+    const int kind = SOCK_DGRAM;
+#endif
+    int type = 0;
+    socklen_t typeLen = sizeof(type);
+    sockaddr_storage local{};
+    socklen_t localLen = sizeof(local);
+    // A pair's end has no name: what the system says of it is its family, or
+    // nothing at all
+    if (::getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &typeLen) != 0 || type != kind ||
+        ::getsockname(fd, reinterpret_cast<sockaddr*>(&local), &localLen) != 0 ||
+        (localLen > 0 && local.ss_family != AF_UNIX))
+        return fail(QStringLiteral("what this process was started with is not the server's "
+                                   "channel"));
+    if (!keptAndNonBlocking(fd)) return fail(QStringLiteral("the channel cannot be set up"));
+    return fd;
 #endif
 }
 

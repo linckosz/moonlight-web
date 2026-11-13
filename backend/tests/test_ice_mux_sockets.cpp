@@ -161,6 +161,46 @@ bool letsGo(const IceMux& mux, uint16_t port)
     return !mux.holds(port);
 }
 
+/// The mux's TCP side, as far as the mux decides it: whose fragment and whose
+/// ports an agent is expected on. The sockets are test_ice_mux_tcp.cpp's.
+void tcpForItsAgents()
+{
+    SECTION("IceMux: an agent expects a TCP connection on its own ports, by its own fragment");
+    const std::vector<uint16_t> two = freeBlockPorts(2);
+    CHECK(two.size() == 2);
+    if (two.size() < 2) return;
+    IceMux mux;
+    mux.tcp().keepToLoopback();
+    std::string why;
+    CHECK(mux.start(&why));
+    if (!mux.running()) return;
+    // No port serves: no stream can be told to do without a TCP port of its own
+    CHECK(!mux.tcpReady());
+    CHECK(mux.hold(two[0]) == Held::NewlyBound && mux.serve(IceMux::kBlock, two[0]));
+    CHECK(mux.tcpReady());
+    const uint32_t feed = mux.addAgent("hostAAAA1234", mux.serving());
+    CHECK(feed != 0);
+    // An agent nobody registered expects nothing, nor one of nobody's worker
+    CHECK(!mux.expectTcp(feed + 1, 5));
+    CHECK(!mux.expectTcp(feed, 0));
+    CHECK(!mux.tcp().expects(feed));
+    CHECK(mux.expectTcp(feed, 5));
+    CHECK(mux.tcp().expects(feed));
+    CHECK(!mux.expectTcp(feed, 5)); // once
+    // On its port, and on that one alone
+    CHECK(mux.tcp().canListen({two[0]}));
+    CHECK(mux.hold(two[1]) == Held::NewlyBound && mux.serve(IceMux::kStandard, two[1]));
+    const uint32_t later = mux.addAgent("hostBBBB1234", mux.serving());
+    CHECK(later != 0 && mux.expectTcp(later, 6));
+    // Removed, it expects none any more; the other still does
+    mux.removeAgent(feed);
+    CHECK(!mux.tcp().expects(feed) && mux.tcp().expects(later));
+    // And none once the mux has stopped
+    mux.stop();
+    CHECK(!mux.tcp().running() && !mux.tcp().expects(later));
+    CHECK(!mux.tcpReady());
+}
+
 } // namespace
 
 void run_ice_mux_socket_tests()
@@ -170,6 +210,8 @@ void run_ice_mux_socket_tests()
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
 #endif
+    tcpForItsAgents();
+    SECTION("IceMux: datagrams on the shared ports reach their agent's feed");
     const std::vector<uint16_t> two = freeBlockPorts(2);
     CHECK(two.size() == 2);
     if (two.size() < 2) return;

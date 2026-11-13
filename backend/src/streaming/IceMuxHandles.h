@@ -162,6 +162,11 @@ inline constexpr int kCopiesPerWindow = 32;
 /// socket by whoever uses it, never told.
 bool connectionChecked(uintptr_t socket, const std::vector<uint16_t>& ports, QString* why);
 
+/// The two ports of the connection `socket`: this machine's, and its peer's.
+/// False when it has not both. What a worker that copied a connection holds
+/// its copy against: the server says which two it means.
+bool connectionPorts(uintptr_t socket, uint16_t* local, uint16_t* remote);
+
 /// A connection opened in this process from the description the server made
 /// of it for this process alone, and checked. kNoSocket otherwise, with the
 /// reason in `why` and nothing left open. Winsock must be started. The caller
@@ -236,6 +241,15 @@ enum class Receipt
 /// launch it is for, so that no other start falls in that instant. False on
 /// Windows.
 bool makeChannel(int* serverEnd, int* workerEnd);
+
+/// The worker's side, as it starts: its end of the channel, by the number
+/// the server left it open under across this process's start. Like the
+/// sockets (inherited()), it is kept from whatever this process starts before
+/// anything else is asked of it, then checked to be a local socket of the
+/// channel's kind, and made non-blocking. -1, with the reason in `why`, when
+/// it is not: a number that is not such a socket is left as it is, since it is
+/// then some other descriptor of this process. -1 on Windows.
+int channelInherited(uint64_t number, QString* why);
 
 /// The server's side: one connection, for the agent of `feed`, with its
 /// first frame. False when it did not go whole; the connection stays the

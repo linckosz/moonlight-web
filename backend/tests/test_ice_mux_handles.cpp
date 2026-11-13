@@ -34,6 +34,7 @@
 
 #include <QString>
 
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -67,6 +68,18 @@ void whoGetsTheSockets()
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::TaskElevated, true) == Handover::Taken);
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::ServiceAsSystem, true) == Handover::Taken);
     CHECK(StreamWorkerHost::muxHandoverFor(Launch::SignInScreen, true) == Handover::Taken);
+
+    // A worker is handed the TCP connections the server takes for it exactly
+    // when it has the shared ports: no channel for one in the console session
+    // on another account than the owner's, and no connection ever reaches it
+    CHECK(!StreamWorkerHost::tcpHandoverFor(Launch::ConsoleAsUser, false));
+    CHECK(StreamWorkerHost::tcpHandoverFor(Launch::ConsoleAsUser, true));
+    for (const bool owner : {false, true}) {
+        CHECK(StreamWorkerHost::tcpHandoverFor(Launch::Plain, owner));
+        CHECK(StreamWorkerHost::tcpHandoverFor(Launch::TaskElevated, owner));
+        CHECK(StreamWorkerHost::tcpHandoverFor(Launch::ServiceAsSystem, owner));
+        CHECK(StreamWorkerHost::tcpHandoverFor(Launch::SignInScreen, owner));
+    }
 
     SECTION("IceMux: which stream is counted on the shared ports before it starts");
     // What the server asks before it decides whether a stream needs a router
@@ -298,6 +311,19 @@ void theConnections()
     const auto handed = static_cast<uintptr_t>(c.accepted);
     // On one of the ports this worker shares
     CHECK(connectionChecked(handed, {static_cast<uint16_t>(c.port + 1), c.port}, &why));
+    // Its two ports, as both of its ends know them
+    {
+        using mw::icemuxhandles::connectionPorts;
+        uint16_t here = 0, there = 0;
+        CHECK(connectionPorts(handed, &here, &there));
+        uint16_t itsOwn = 0, itsPeer = 0;
+        CHECK(connectionPorts(static_cast<uintptr_t>(c.dialled), &itsOwn, &itsPeer));
+        CHECK(here == c.port && itsPeer == c.port && there == itsOwn && there != 0);
+        // Not of what is no connection
+        CHECK(!connectionPorts(static_cast<uintptr_t>(c.listener), &here, &there));
+        CHECK(!connectionPorts(kNoSocket, &here, &there));
+        CHECK(!connectionPorts(handed, nullptr, &there));
+    }
     // Kept from what this process starts, and never a call that waits
 #ifdef _WIN32
     DWORD flags = HANDLE_FLAG_INHERIT;
@@ -422,6 +448,41 @@ void theConnections()
 #endif
         close(workerEnd);
         one.closeAll();
+    }
+
+    SECTION("IceMuxHandles: the worker's end of the channel, as it was left open for it");
+    {
+        using mw::icemuxhandles::channelInherited;
+        int serverEnd = -1, workerEnd = -1;
+        CHECK(makeChannel(&serverEnd, &workerEnd));
+        // As it reaches the worker: open across the start, and so it would be
+        // across whatever the worker starts
+        fcntl(workerEnd, F_SETFD, 0);
+        QString whyNot;
+        CHECK(channelInherited(static_cast<uint64_t>(workerEnd), &whyNot) == workerEnd);
+        CHECK((fcntl(workerEnd, F_GETFD) & FD_CLOEXEC) != 0);
+        CHECK((fcntl(workerEnd, F_GETFL) & O_NONBLOCK) != 0);
+        // And still the channel it was
+        Connection crossing;
+        CHECK(crossing.make());
+        CHECK(sendConnection(serverEnd, crossing.accepted, 7, frame, kFrameMin));
+        Received got;
+        CHECK(receiveConnection(workerEnd, {crossing.port}, &got, &whyNot) == Receipt::Connection);
+        CHECK(got.feed == 7);
+        close(static_cast<int>(got.socket));
+        crossing.closeAll();
+        // No number a server hands; a socket of another kind; no descriptor
+        // at all. Each is left as it is.
+        CHECK(channelInherited(0, &whyNot) == -1 && channelInherited(2, &whyNot) == -1);
+        CHECK(!whyNot.isEmpty());
+        uint16_t otherPort = 0;
+        const int other = plainUdp(&otherPort);
+        CHECK(channelInherited(static_cast<uint64_t>(other), &whyNot) == -1);
+        CHECK(fcntl(other, F_GETFD) != -1);
+        closeNative(other);
+        CHECK(channelInherited(static_cast<uint64_t>(other), &whyNot) == -1);
+        close(serverEnd);
+        close(workerEnd);
     }
 
     SECTION("IceMuxHandles: a worker that is gone costs a failed send, and nothing else");
@@ -653,6 +714,198 @@ DWORD secondProcess(const std::wstring& arguments, bool withHandles)
     return code;
 }
 
+/// A TCP connection as the server holds one for an agent: taken on a shared
+/// port by an IceMuxTcp, its first frame read, kept under a number. `peer` is
+/// its far end.
+struct KeptForAnAgent
+{
+    IceMuxTcp tcp;
+    std::atomic<uint32_t> number{0};
+    uint16_t port = 0;
+    SOCKET peer = INVALID_SOCKET;
+
+    ~KeptForAnAgent()
+    {
+        if (peer != INVALID_SOCKET) closesocket(peer);
+    }
+
+    bool make(uint32_t feed, uint32_t owner)
+    {
+        tcp.keepToLoopback();
+        tcp.setDeliver([this](uint32_t, uint32_t kept) { number = kept; });
+        if (!tcp.start()) return false;
+        // A loopback TCP port nobody listens on
+        closesocket(boundSocket(SOCK_STREAM, &port));
+        if (!tcp.open(feed, "hostAAAA1234", {port}, owner)) return false;
+        peer = socket(AF_INET, SOCK_STREAM, 0);
+        const sockaddr_in to = loopback(port);
+        if (connect(peer, reinterpret_cast<const sockaddr*>(&to), sizeof(to)) != 0) return false;
+        // A Binding request that names the agent, behind its length (RFC 4571)
+        const char username[] = "hostAAAA1234:peer";
+        const size_t named = sizeof(username) - 1;
+        const size_t padded = (named + 3) & ~size_t(3);
+        std::vector<char> wire(2 + 24 + padded, 0);
+        wire[1] = static_cast<char>(24 + padded);
+        char* message = wire.data() + 2;
+        message[1] = 1;
+        message[3] = static_cast<char>(4 + padded);
+        message[4] = 0x21;
+        message[5] = 0x12;
+        message[6] = static_cast<char>(0xA4);
+        message[7] = 0x42;
+        message[21] = 6;
+        message[23] = static_cast<char>(named);
+        std::memcpy(message + 24, username, named);
+        const int size = static_cast<int>(wire.size());
+        if (send(peer, wire.data(), size, 0) != size) return false;
+        for (int i = 0; i < 500 && number == 0; ++i)
+            Sleep(10);
+        return number != 0;
+    }
+};
+
+/// One round with whoever holds the other end: "ping" out, "pong" back.
+bool answersPing(SOCKET peer)
+{
+    char got[8];
+    return send(peer, "ping", 4, 0) == 4 && readWithin(peer, got, sizeof(got), 20000) == 4 &&
+           std::memcmp(got, "pong", 4) == 0;
+}
+
+/// This test started again as `arguments`, with no window and none of this
+/// process's handles, and not waited for.
+bool startSecondProcess(const std::wstring& arguments, PROCESS_INFORMATION* child)
+{
+    const std::wstring quote(1, static_cast<wchar_t>(34));
+    const std::wstring command = quote + ownImage().toStdWString() + quote + L" " + arguments;
+    std::vector<wchar_t> line(command.begin(), command.end());
+    line.push_back(0);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    return CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                          nullptr, &startup, child) != 0;
+}
+
+/// Its exit code; 99 when it did not end in time, and is then ended.
+DWORD endOf(PROCESS_INFORMATION& child)
+{
+    DWORD code = 99;
+    if (WaitForSingleObject(child.hProcess, 30000) == WAIT_OBJECT_0)
+        GetExitCodeProcess(child.hProcess, &code);
+    else
+        TerminateProcess(child.hProcess, 98);
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    return code;
+}
+
+/// The two ways a connection the server took reaches a worker on Windows, for
+/// real: between this process, which holds it as the server does, and a
+/// second one, which gets it as a worker does and answers on it.
+void theConnectionsAcrossProcesses()
+{
+    const auto still = [](uintptr_t, const uint8_t*, size_t) { return true; };
+
+    SECTION("IceMuxHandles: a connection described for a second process, which answers on it");
+    {
+        KeptForAnAgent kept;
+        CHECK(kept.make(1, 11));
+        // Where the description will be: it can only be made once the second
+        // process exists, which waits for it there
+        wchar_t folder[MAX_PATH] = {};
+        GetTempPathW(MAX_PATH, folder);
+        const std::wstring file = std::wstring(folder) + L"mw-tnr-" +
+                                  std::to_wstring(GetCurrentProcessId()) + L"-" +
+                                  std::to_wstring(GetTickCount64()) + L".hex";
+        PROCESS_INFORMATION child{};
+        const bool started =
+            kept.number != 0 && startSecondProcess(L"--takes-connection described " +
+                                                       std::to_wstring(kept.port) + L" " + file,
+                                                   &child);
+        CHECK(started);
+        if (started) {
+            // Described for that process, by a handle held on it, as the
+            // server does for a worker it started
+            void* held = IceMuxTcp::holdProcess(child.dwProcessId);
+            std::vector<uint8_t> description, frame;
+            CHECK(kept.tcp.describeFor(1, kept.number, held, &description, &frame));
+            IceMuxTcp::letGoOfProcess(held);
+            std::string hex;
+            for (const uint8_t byte : description) {
+                char two[3] = {};
+                std::snprintf(two, sizeof(two), "%02x", static_cast<unsigned>(byte));
+                hex += two;
+            }
+            // Whole under another name first: the second process never
+            // reads part of it
+            const std::wstring part = file + L".part";
+            const HANDLE out = CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                                           FILE_ATTRIBUTE_NORMAL, nullptr);
+            CHECK(out != INVALID_HANDLE_VALUE);
+            if (out != INVALID_HANDLE_VALUE) {
+                DWORD written = 0;
+                CHECK(WriteFile(out, hex.data(), static_cast<DWORD>(hex.size()), &written,
+                                nullptr) != 0);
+                CloseHandle(out);
+                CHECK(MoveFileW(part.c_str(), file.c_str()) != 0);
+            }
+            // The second process has its own end, and answers on it
+            CHECK(answersPing(kept.peer));
+            // It says so: this process lets go of its end, and the connection
+            // lives on in the other
+            kept.tcp.answered(11, kept.number);
+            Sleep(300);
+            CHECK(!kept.tcp.use(1, kept.number, still));
+            CHECK(answersPing(kept.peer));
+            CHECK(endOf(child) == 0);
+            DeleteFileW(file.c_str());
+        }
+    }
+
+    SECTION("IceMuxHandles: a connection named to a second process, which copies it out");
+    {
+        KeptForAnAgent kept;
+        CHECK(kept.make(2, 12));
+        uint64_t handle = 0;
+        std::vector<uint8_t> frame;
+        uint16_t local = 0, remote = 0;
+        const bool named =
+            kept.number != 0 && kept.tcp.nameFor(2, kept.number, &handle, &frame, &local, &remote);
+        CHECK(named);
+        const auto copying = [&](uint16_t saidRemote) {
+            return L"--takes-connection copied " + std::to_wstring(GetCurrentProcessId()) + L" " +
+                   std::to_wstring(handle) + L" " + std::to_wstring(kept.port) + L" " +
+                   std::to_wstring(local) + L" " + std::to_wstring(saidRemote);
+        };
+        if (named) {
+            // Told other ports than the connection's: it copies, finds the
+            // copy is not what was named, closes it and says so. The server's
+            // own end is as it was.
+            PROCESS_INFORMATION wrong{};
+            const bool refused =
+                startSecondProcess(copying(static_cast<uint16_t>(remote + 1)), &wrong);
+            CHECK(refused);
+            if (refused) CHECK(endOf(wrong) == 6);
+            CHECK(kept.tcp.use(2, kept.number, still));
+
+            // Told the connection's own: it has it, and answers on it
+            PROCESS_INFORMATION child{};
+            const bool started = startSecondProcess(copying(remote), &child);
+            CHECK(started);
+            if (started) {
+                CHECK(answersPing(kept.peer));
+                // Named, the connection waited for that process's word and
+                // for nothing else: now this one lets go, and it lives on
+                kept.tcp.answered(12, kept.number);
+                Sleep(300);
+                CHECK(!kept.tcp.use(2, kept.number, still));
+                CHECK(answersPing(kept.peer));
+                CHECK(endOf(child) == 0);
+            }
+        }
+    }
+}
+
 } // namespace
 
 /// The second process of the test below: `run_tests --adopt-socket <pid>
@@ -678,6 +931,88 @@ int run_ice_mux_adopt_child(int argc, char** argv)
                             reinterpret_cast<const sockaddr*>(&to), sizeof(to));
     closesocket(static_cast<SOCKET>(got[0]));
     return sent == 5 ? 0 : 5;
+}
+
+/// The second process of theConnectionsAcrossProcesses(): `run_tests
+/// --takes-connection described <port> <file>` or `... copied <pid> <handle>
+/// <port> <local> <remote>`. It gets one TCP connection as a worker gets it,
+/// from the description the first made for it or by copying it out of the
+/// first, and answers "pong" to "ping" on it, twice. 0 when it did; 6 when
+/// what it copied is not the connection it was told of; 9 when it held a
+/// socket under the first's number before it copied anything.
+int run_ice_mux_connection_child(int argc, char** argv)
+{
+    using mw::icemuxhandles::kNoSocket;
+    if (argc < 5) return 2;
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 3;
+    const std::string how = argv[2];
+    QString why;
+    uintptr_t taken = kNoSocket;
+    if (how == "described" && argc == 5) {
+        const auto port = static_cast<uint16_t>(std::strtoul(argv[3], nullptr, 10));
+        // Written once this process exists: waited for
+        std::vector<uint8_t> description;
+        for (int i = 0; i < 2000 && description.empty(); ++i) {
+            const HANDLE in = CreateFileA(argv[4], GENERIC_READ, FILE_SHARE_READ, nullptr,
+                                          OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (in == INVALID_HANDLE_VALUE) {
+                Sleep(10);
+                continue;
+            }
+            char hex[4096] = {};
+            DWORD got = 0;
+            ReadFile(in, hex, sizeof(hex), &got, nullptr);
+            CloseHandle(in);
+            for (DWORD at = 0; at + 1 < got; at += 2) {
+                const char two[3] = {hex[at], hex[at + 1], 0};
+                description.push_back(static_cast<uint8_t>(std::strtoul(two, nullptr, 16)));
+            }
+        }
+        taken = mw::icemuxhandles::openConnection(description, {port}, &why);
+    } else if (how == "copied" && argc == 8) {
+        const auto pid = static_cast<uint32_t>(std::strtoul(argv[3], nullptr, 10));
+        const uint64_t handle = std::strtoull(argv[4], nullptr, 10);
+        const auto port = static_cast<uint16_t>(std::strtoul(argv[5], nullptr, 10));
+        const auto local = static_cast<uint16_t>(std::strtoul(argv[6], nullptr, 10));
+        const auto remote = static_cast<uint16_t>(std::strtoul(argv[7], nullptr, 10));
+        // Started with none of the first's handles: the number it was told
+        // names no socket in this process, until it has copied one
+        int type = 0;
+        int typeLength = sizeof(type);
+        if (getsockopt(static_cast<SOCKET>(handle), SOL_SOCKET, SO_TYPE,
+                       reinterpret_cast<char*>(&type), &typeLength) == 0)
+            return 9;
+        const auto server = mw::icemuxhandles::Server::open(pid, isThisTest, &why);
+        if (!server) {
+            std::fprintf(stderr, "  (child: %s)%c", why.toUtf8().constData(), 10);
+            return 4;
+        }
+        server->windowOpened();
+        taken = server->copyConnection(handle, {port}, &why);
+        // Held against the two ports it was told, as a worker does
+        uint16_t here = 0, there = 0;
+        if (taken != kNoSocket && (!mw::icemuxhandles::connectionPorts(taken, &here, &there) ||
+                                   here != local || there != remote)) {
+            closesocket(static_cast<SOCKET>(taken));
+            return 6;
+        }
+    } else {
+        return 2;
+    }
+    if (taken == kNoSocket) {
+        std::fprintf(stderr, "  (child: %s)%c", why.toUtf8().constData(), 10);
+        return 5;
+    }
+    const SOCKET s = static_cast<SOCKET>(taken);
+    for (int round = 0; round < 2; ++round) {
+        char got[8];
+        if (readWithin(s, got, sizeof(got), 30000) != 4 || std::memcmp(got, "ping", 4) != 0)
+            return 7;
+        if (send(s, "pong", 4, 0) != 4) return 8;
+    }
+    closesocket(s);
+    return 0;
 }
 
 /// Another second process: `run_tests --inherited-socket <handle> <port>`,
@@ -719,6 +1054,7 @@ void run_ice_mux_handles_tests()
     theFeed();
     theConnections();
     theConnectionsTaken();
+    theConnectionsAcrossProcesses();
     const uint32_t self = GetCurrentProcessId();
     QString why;
     // Descriptors left open across a start are another system's way
@@ -955,6 +1291,11 @@ void run_ice_mux_handles_tests()
 #else
 
 int run_ice_mux_adopt_child(int, char**)
+{
+    return 2;
+}
+
+int run_ice_mux_connection_child(int, char**)
 {
     return 2;
 }

@@ -1619,29 +1619,40 @@ static quint16 slotMediaPort(int slot)
 static IceMuxPorts* g_StreamMuxPorts = nullptr;
 
 // Whether the stream this config starts goes on the server's shared ports
-// rather than on a socket of its own: the mux is in use and reads well, the
-// worker is one that gets the shared sockets, and the connection is not one
-// that also listens in TCP (that rung's listener sits on a socket of its own).
-// Such a stream asks the router for no hole of its own: the shared ports have
-// theirs, and a hole to a port nothing binds would lead nowhere.
+// rather than on a socket of its own: the mux is in use and reads well, and
+// the worker is one that gets the shared sockets. A connection that also
+// listens in TCP goes there when the server may listen for it
+// (ice_tcp_passive) and one of the shared ports can be listened on
+// (IceMuxTcp); otherwise that one keeps a socket of its own, which is what
+// its listener sits on. A stream on the shared ports asks the router for no
+// hole of its own: the shared ports have theirs, and a hole to a port nothing
+// binds would lead nowhere.
 static bool streamSharesPorts(const QJsonObject& cfg)
 {
-    const IceMux* mux = IceMux::shared();
-    return g_StreamMuxInUse && mux && mux->running() && mux->healthy() && !cfg["iceTcp"].toBool() &&
-           StreamWorkerHost::getsSharedPorts(cfg);
+    IceMux* mux = IceMux::shared();
+    if (!g_StreamMuxInUse || !mux || !mux->running() || !mux->healthy() ||
+        !StreamWorkerHost::getsSharedPorts(cfg))
+        return false;
+    return !cfg["iceTcp"].toBool() || (AppSettings().iceTcpPassive() && mux->tcpReady());
 }
 
 // That stream's config, with what it may announce at the public address: the
 // shared ports the router forwards here, as of now.
 static QJsonObject withSharedPortsAnnounced(QJsonObject cfg)
 {
+    // A connection that listens in TCP: the server does so for it, and its
+    // worker is told (StreamWorkerHost::withSharedSockets)
+    if (cfg["iceTcp"].toBool()) cfg["iceMuxTcp"] = true;
     if (!g_StreamMuxPorts) return cfg;
     const IceMuxPorts::Announced announced = g_StreamMuxPorts->announced();
     if (announced.ports.isEmpty()) return cfg;
-    QJsonArray ports;
+    QJsonArray ports, tcpPorts;
     for (const uint16_t port : announced.ports)
         ports.append(static_cast<int>(port));
-    cfg["iceMuxPublic"] = QJsonObject{{"ip", announced.publicIp}, {"ports", ports}};
+    for (const uint16_t port : announced.tcpPorts)
+        tcpPorts.append(static_cast<int>(port));
+    cfg["iceMuxPublic"] =
+        QJsonObject{{"ip", announced.publicIp}, {"ports", ports}, {"tcpPorts", tcpPorts}};
     return cfg;
 }
 
@@ -3100,6 +3111,23 @@ int main(int argc, char* argv[])
     if (appSettings.iceUdpMux()) {
         g_IceMux.setReporter([](const std::string& what) {
             qWarning().noquote() << "[IceMux]" << QString::fromStdString(what);
+        });
+        g_IceMux.tcp().setReporter(
+            [](const std::string& what) {
+                qWarning().noquote() << "[IceMux]" << QString::fromStdString(what);
+            },
+            [](const std::string& what) {
+                qInfo().noquote() << "[IceMux]" << QString::fromStdString(what);
+            });
+        // A TCP connection for a stream's agent, from the thread that listens:
+        // handed to that stream's worker on this one. The mux and its threads
+        // are gone before the application is.
+        g_IceMux.tcp().setDeliver([](uint32_t feed, uint32_t number) {
+            QCoreApplication* here = QCoreApplication::instance();
+            if (!here) return;
+            QMetaObject::invokeMethod(
+                here, [feed, number]() { StreamWorkerHost::handMuxConnection(feed, number); },
+                Qt::QueuedConnection);
         });
         QString why;
         if (muxPorts.start(&why)) {

@@ -79,6 +79,8 @@ public:
         virtual Gateway gateway() const = 0;
         /// The port whose hole is held for that role, 0 when none is.
         virtual uint16_t hole(int which) const = 0;
+        /// Whether the router forwards that port in TCP too.
+        virtual bool holeTcp(int which) const = 0;
         /// This host's address as the router reports it; empty when it does
         /// not, or before it was found.
         virtual QString publicIp() const = 0;
@@ -128,6 +130,8 @@ public:
         /// another machine, is not among them: nothing at the public address
         /// leads to it.
         QList<uint16_t> ports;
+        /// Of those, the ones the router forwards in TCP too.
+        QList<uint16_t> tcpPorts;
     };
     /// As of now: asked when a stream starts. No port when the router
     /// forwards none, or its public address is not known.

@@ -89,16 +89,19 @@ void RelayBase::setPublicAddress(const std::string& publicIP, uint16_t publicPor
     m_PublicPort = publicPort;
     m_OnSharedPorts = false;
     m_SharedHoles.clear();
+    m_SharedTcpHoles.clear();
     qInfo() << "[Relay] UPnP public address set:" << QString::fromStdString(publicIP) << ":"
             << publicPort;
 }
 
-void RelayBase::setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports)
+void RelayBase::setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports,
+                                     std::vector<uint16_t> tcpPorts)
 {
     m_PublicIP = publicIP;
     m_PublicPort = 0;
     m_OnSharedPorts = true;
     m_SharedHoles = std::move(ports);
+    m_SharedTcpHoles = std::move(tcpPorts);
     QStringList list;
     for (const uint16_t port : m_SharedHoles)
         list << QString::number(port);
@@ -181,9 +184,14 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
     // through the UPnP-opened router port. On the server's shared ports there
     // are several, and each has its copy on its own number, when the router
     // forwards it.
-    const bool hasHole = m_OnSharedPorts ? !m_SharedHoles.empty() : m_PublicPort > 0;
-    const uint16_t publicPort = mw::ice::publicPortFor(
-        candidate.port().value_or(0), m_OnSharedPorts, m_PublicPort, m_SharedHoles);
+    // On the shared ports a TCP candidate has its copy where the router
+    // forwards the port in TCP, which it may not where it forwards it in UDP.
+    const bool overTcp = candidate.transportType() != rtc::Candidate::TransportType::Udp;
+    const std::vector<uint16_t>& holes = overTcp ? m_SharedTcpHoles : m_SharedHoles;
+    const bool hasHole =
+        m_OnSharedPorts ? !m_SharedHoles.empty() || !m_SharedTcpHoles.empty() : m_PublicPort > 0;
+    const uint16_t publicPort =
+        mw::ice::publicPortFor(candidate.port().value_or(0), m_OnSharedPorts, m_PublicPort, holes);
     if (m_ForceHostPublic && !m_PublicIP.empty() && hasHole &&
         candidate.type() == rtc::Candidate::Type::Host) {
         if (kind == NetClassify::Kind::Tunnel) {

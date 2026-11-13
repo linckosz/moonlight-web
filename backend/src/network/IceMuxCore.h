@@ -132,6 +132,9 @@ public:
     bool addAgent(uint32_t feed, std::string_view ufrag, uint64_t nowMs);
     void removeAgent(uint32_t feed);
     bool hasAgents() const noexcept { return !m_Agents.empty(); }
+    /// The user fragment the agent `feed` is known by; empty when it is not
+    /// known.
+    std::string_view ufragOf(uint32_t feed) const noexcept;
 
     /// The agent says: this peer passed my integrity check. A peer that
     /// another agent confirmed, and that still sends that agent something

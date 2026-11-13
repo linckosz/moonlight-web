@@ -153,7 +153,9 @@ public:
     /// announced at the public address, on that port. One on a shared port the
     /// router does not forward has no such copy: it goes to a peer of our own
     /// network only (setEmitLanHostCandidate), like any internal address.
-    void setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports);
+    /// A TCP candidate is judged by `tcpPorts`, the ones forwarded in TCP.
+    void setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports,
+                              std::vector<uint16_t> tcpPorts = {});
     void setForceHostCandidatePublic(bool force) { m_ForceHostPublic = force; }
     void setSuppressIPv6Candidates(bool suppress) { m_SuppressIPv6 = suppress; }
     // When host candidates are rewritten to the public IP, also advertise the
@@ -173,6 +175,9 @@ public:
     /// whether the frames come from a remote GameStream host or from this
     /// machine's own screen is not its concern.
     virtual IMediaEngine* mediaEngine() const = 0;
+
+    /// The connection to the browser, once prepare() made it.
+    virtual std::shared_ptr<rtc::PeerConnection> peerConnection() const = 0;
 
 signals:
     /// Local SDP description (offer) ready to send to the browser.
@@ -275,6 +280,7 @@ protected:
     /// forwards. m_PublicPort is not used then.
     bool m_OnSharedPorts = false;
     std::vector<uint16_t> m_SharedHoles;
+    std::vector<uint16_t> m_SharedTcpHoles;
     bool m_ForceHostPublic = false;
     ///< Withhold NON-GLOBAL IPv6 candidates (ULA, mesh VPN, link-local) when
     ///< UPnP is active. A global IPv6 address goes out: it is public anyway, and

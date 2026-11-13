@@ -189,10 +189,12 @@ half, and no hole is made at all to a port the mux is bound to.
 
 When a stream starts, the server decides where it goes before it asks the
 router for anything (`main.cpp`, `streamSharesPorts`): on the shared ports when
-the mux is in use and reads well, the worker is one that gets the shared
-sockets, and the connection is not one that also listens in TCP. Such a stream
-asks for no hole of its own. Any other stream binds its slot's own port and
-asks for that port's hole, as without the mux.
+the mux is in use and reads well, and the worker is one that gets the shared
+sockets. A connection that also listens in TCP goes there too when
+`ice_tcp_passive` is on and one of the shared ports can be listened on in TCP
+(« TCP on the shared ports », below). Such a stream asks for no hole of its
+own. Any other stream binds its slot's own port and asks for that port's hole,
+as without the mux.
 
 A stream on the shared ports is told, in its config line, the router's public
 address and which of the shared ports the router forwards right then
@@ -212,6 +214,11 @@ interface, and the relay does with each what it does with a stream's own port
 
 When the router forwards none of the shared ports, the candidates go out as
 they are, as for a stream without a hole.
+
+A passive TCP candidate is treated the same way, by the ports the router
+forwards in TCP, which the config line names apart: a shared port whose TCP
+forward is a neighbour's has its UDP copy at the public address and no TCP
+one.
 
 ## Whose datagram it is
 
@@ -243,6 +250,77 @@ every request, as it always did. The reader of the STUN header and USERNAME
 allocates nothing and stays inside the datagram
 (`tests/test_ice_mux_core.cpp`, `tests/fuzz/fuzz_ice_mux.cpp`).
 
+## TCP on the shared ports
+
+A browser that cannot send UDP dials a TCP port (`ice-tcp-passive.md`). On the
+shared ports that port is the server's: the same numbers as the UDP ones,
+listened on by the server process and by no worker (`network/IceMuxTcp`).
+
+**When.** A port is listened on while an agent expects a connection there, and
+no longer. A worker says so with its agent (`"op":"agent"` with
+`"tcp": true`), and the server opens that agent's window on the ports and
+under the fragment it has just registered the agent with: a worker opens a
+window for its own agent and for no other. The listeners are bound before the
+worker's line is done with, so that a port answers by the time the browser
+learns of it. The window ends when the agent is connected or gone, when its
+worker is gone, or after 45 seconds, whichever comes first. Between two
+windows nothing of MoonlightWeb listens there: the router's TCP hole on the
+number then leads to a closed port, or to another program of this machine
+that takes the number meanwhile.
+
+**What the server reads.** Of each connection, its first frame (RFC 4571: two
+bytes of length, then a STUN message of 20 to 1024 bytes) and never a byte
+more: it asks the socket for exactly what the frame still lacks. The frame
+must be a Binding request whose USERNAME starts with the fragment of an agent
+that expects a connection on the very port this one came in on
+(`IceMuxCore::readStun`, the reader of the UDP side). The server writes
+nothing on a connection and checks no integrity: it has no password. It
+routes; the agent admits.
+
+**What that costs is bounded** (`network/IceMuxTcpCore`, a fixed table):
+
+- 8 connections wait for their frame at once, 2 of them from one source (an
+  IPv4 address, an IPv6 /64). A third from a source takes the place of that
+  source's oldest; a full table gives its oldest place, whatever that
+  connection has sent;
+- a frame has 2 seconds from the accept;
+- an agent is handed at most 2 connections its worker has not answered for,
+  and 32 in the life of its window: a fragment travels in the clear with every
+  check, so anyone can name it;
+- everything else is closed at once, by a reset.
+
+**The hand-over.** Unlike the UDP sockets, these arrive while the stream runs,
+one at a time. The server keeps its end of a connection until the worker says
+it has its own, or will not have it (`"op":"tcpGot"`), or for 2 seconds; it
+reads nothing of it meanwhile. A connection is kept from child processes from
+the instant it is accepted on Linux; elsewhere by the line after the accept,
+under the lock a stream worker is started under (`common/LaunchLock.h`).
+
+| Worker | How the connection reaches it |
+|---|---|
+| Handed its sockets (a plain child, or the console session on the owner's account) | A command on its standard input carries a description of the socket made for that process alone (`WSADuplicateSocket`). Which process that is, is read off a handle the server took on the child it started, which must still run: never a number it was told. |
+| Takes its sockets (launcher service, elevated task, sign-in screen) | The command names the server's handle, and the two ports of the connection. The worker copies it through the handle it holds on the server for the stream's life, opened and checked as for the UDP sockets (`IceMuxHandles::Server`), 32 copies at most per window, counted from the worker's own agent and nothing the server says. It copies only while its agent still expects a connection, and holds its copy against those two ports. A handle the server let go of before the worker copied it could be another one's number by then: so a connection that was named is kept until that worker answers for it or is gone, whatever becomes of its agent and however long that takes, four such at most for one worker. |
+| Linux, macOS | One message of a channel made for that worker's start, whose other end crosses the start as the shared sockets do: the descriptor itself (`SCM_RIGHTS`), with the agent it is for and the frame. |
+
+A worker in the console session on another account than the owner's has no
+shared sockets and no channel, and is handed nothing.
+
+The worker checks what it got before it uses it
+(`IceMuxHandles::connectionChecked`): a stream socket, connected, that listens
+for nothing, on one of the shared ports this worker holds, and kept from
+whatever the worker starts. Then the agent takes it
+(`juice_tcp_passive_offer`, in `libjuice-ice-mux.patch`). From there nothing
+is new: the connection goes through the agent's own gate, the one a connection
+to its own listener goes through, on that first frame: a Binding request for
+this agent, whose integrity holds under its password, while it still checks.
+
+**The router.** The claim of a shared port asks for the TCP hole on the same
+number (`RouterPortCore::muxRequest`), under the tunnel's rule: an entry that
+is free or this host's, read back, noted in the record with its tag. A
+neighbour's TCP forward on the number is left alone, and the port is then
+announced for UDP only. With `ice_tcp_passive` off, no TCP hole is asked for
+and nothing listens.
+
 ## When it is not used
 
 Every one of these leaves the stream on a socket of its own, as without the
@@ -256,14 +334,16 @@ mux:
   service) as another account than the one the installation was made by;
 - the sockets cannot be handed to the worker, or the worker cannot open them or
   make its feed;
-- a connection that also needs TCP (the TCP rungs keep their own socket, which
-  is what their listener sits on).
+- a connection that also listens in TCP, when `ice_tcp_passive` is off, when
+  no shared port can be listened on in TCP as the stream starts, or when the
+  worker cannot be handed the connections (that rung then keeps its own
+  socket, which is what its listener sits on).
 
 ## Not there yet
 
 - Without a hole, the public address of the block port: an agent asks the STUN
   server from its first shared port only.
-- TCP on the shared ports, and TCP 443.
+- TCP 443.
 - A switch in the environment serves the latency bench and nothing else:
   `MW_ICEMUX_STATS=1` (every ten seconds the server logs its counters and its
   CPU time, and each worker the delay between the server's read of a datagram

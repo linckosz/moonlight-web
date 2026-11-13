@@ -92,9 +92,12 @@ void run_kms_helper_protocol_tests();
 void run_remote_desktop_return_tests();
 void run_ice_mux_core_tests();
 void run_ice_mux_socket_tests();
+void run_ice_mux_tcp_core_tests();
+void run_ice_mux_tcp_tests();
 void run_ice_mux_ports_tests();
 void run_ice_mux_handles_tests();
 int run_ice_mux_adopt_child(int argc, char** argv);
+int run_ice_mux_connection_child(int argc, char** argv);
 int run_ice_mux_inherit_child(int argc, char** argv);
 int run_ice_mux_started_child(int argc, char** argv);
 int run_ice_mux_holds_child(int argc, char** argv);
@@ -133,6 +136,10 @@ int main(int argc, char** argv)
     // suite.
     if (argc > 1 && std::strcmp(argv[1], "--adopt-socket") == 0)
         return run_ice_mux_adopt_child(argc, argv);
+    // Another: it gets one TCP connection from the first, as a worker does,
+    // and answers on it.
+    if (argc > 1 && std::strcmp(argv[1], "--takes-connection") == 0)
+        return run_ice_mux_connection_child(argc, argv);
     // Another: started with what can be inherited, it says whether it got a socket.
     if (argc > 1 && std::strcmp(argv[1], "--inherited-socket") == 0)
         return run_ice_mux_inherit_child(argc, argv);
@@ -227,6 +234,8 @@ int main(int argc, char** argv)
     run_remote_desktop_return_tests();
     run_ice_mux_core_tests();
     run_ice_mux_socket_tests();
+    run_ice_mux_tcp_core_tests();
+    run_ice_mux_tcp_tests();
     run_ice_mux_ports_tests();
     run_ice_mux_handles_tests();
     run_owner_account_tests();

@@ -43,6 +43,7 @@ struct ScriptedRouter : IceMuxPorts::Router
     Gateway state = Gateway::Looking;
     int looks = 0, claims = 0, releases = 0;
     uint16_t holes[IceMux::kRoles] = {0, 0};
+    bool tcpHoles[IceMux::kRoles] = {true, true};
     QString ip = QStringLiteral("203.0.113.7");
     std::set<uint16_t> neighbours;
     std::set<uint16_t> refused;
@@ -62,6 +63,7 @@ struct ScriptedRouter : IceMuxPorts::Router
     void look() override { ++looks; }
     Gateway gateway() const override { return state; }
     uint16_t hole(int which) const override { return holes[which]; }
+    bool holeTcp(int which) const override { return holes[which] != 0 && tcpHoles[which]; }
     QString publicIp() const override { return ip; }
     void claim(int which, uint16_t current, std::function<Hold(uint16_t)> hold,
                std::function<void(uint16_t)> drop,
@@ -325,6 +327,13 @@ void run_ice_mux_ports_tests()
         r.router.answer();
         // Both, the conferencing port first
         CHECK(r.ports.announced().ports == (QList<uint16_t>{s1, b1}));
+        // And in TCP those the router forwards in TCP: a port whose TCP side
+        // is a neighbour's is announced for UDP alone
+        CHECK(r.ports.announced().tcpPorts == (QList<uint16_t>{s1, b1}));
+        r.router.tcpHoles[kStandard] = false;
+        CHECK(r.ports.announced().tcpPorts == QList<uint16_t>{b1});
+        CHECK(r.ports.announced().ports == (QList<uint16_t>{s1, b1}));
+        r.router.tcpHoles[kStandard] = true;
         // A router that does not say its public address: nothing to announce
         r.router.ip.clear();
         CHECK(r.ports.announced().ports.isEmpty());

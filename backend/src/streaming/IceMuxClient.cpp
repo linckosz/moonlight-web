@@ -19,15 +19,18 @@
 #include "IceMuxHandles.h"
 
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QList>
 #include <QRandomGenerator>
+#include <QSocketNotifier>
 #include <QStringList>
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <vector>
 
@@ -51,6 +54,19 @@ struct State
     quint16 hopPort = 0;
     bool agentOpen = false;
     Public announced; // what the router forwards of them, see setPublic()
+
+    // TCP on the shared ports: the server takes the connections, and this
+    // worker is handed them
+    bool tcp = false;
+    /// Windows, a worker above the server: the server, to copy them out of
+    std::unique_ptr<mw::icemuxhandles::Server> server;
+    /// Elsewhere: this worker's end of the channel they cross on
+    int channel = -1;
+    /// The agent open now: its feed's port, which is what a connection names
+    /// it by; whether it expects one; and how it is given one
+    quint16 agentFeedPort = 0;
+    bool agentTcp = false;
+    TcpOffer offer;
 };
 
 State& state()
@@ -149,6 +165,40 @@ void closeShared(uintptr_t socket)
 #endif
 }
 
+/// The connection goes to the agent it came for, if that agent is still the
+/// one open and still expects one: true when the agent has it. Closed here
+/// otherwise. What admits it is the agent's own gate, on its first frame.
+bool give(uintptr_t socket, quint32 feed, const char* frame, size_t size)
+{
+    TcpOffer offer;
+    {
+        State& s = state();
+        const std::lock_guard<std::mutex> lock(s.lock);
+        if (s.agentOpen && s.agentTcp && feed == s.agentFeedPort) offer = s.offer;
+    }
+    // Outside the lock: the agent's own thread may be asking for it
+    if (offer && offer(socket, frame, size)) return true;
+    closeShared(socket);
+    return false;
+}
+
+/// The server is told what became of a connection it handed, so that it lets
+/// go of its own end: `number` as it named it, 0 where it names none.
+void answer(quint32 number, bool taken)
+{
+    Emit tell;
+    {
+        State& s = state();
+        const std::lock_guard<std::mutex> lock(s.lock);
+        tell = s.tell;
+    }
+    if (!tell) return;
+    tell({{QStringLiteral("event"), QStringLiteral("iceMux")},
+          {QStringLiteral("op"), QStringLiteral("tcpGot")},
+          {QStringLiteral("n"), static_cast<double>(number)},
+          {QStringLiteral("ok"), taken}});
+}
+
 #ifndef _WIN32
 /// A whole number of the config line, 0 for anything that is not one.
 quint64 wholeNumber(const QJsonValue& value)
@@ -158,6 +208,51 @@ quint64 wholeNumber(const QJsonValue& value)
     if (!(d >= 1 && d <= 2147483647.0)) return 0;
     const auto n = static_cast<quint64>(d);
     return static_cast<double>(n) == d ? n : 0;
+}
+
+/// What the channel holds now: each message is one connection, checked as it
+/// is read (IceMuxHandles::receiveConnection) and answered for. False when
+/// the server's end is gone.
+bool readChannel()
+{
+    State& s = state();
+    // So many a turn: the rest waits for the next
+    for (int n = 0; n < 8; ++n) {
+        int channel = -1;
+        std::vector<uint16_t> ports;
+        {
+            const std::lock_guard<std::mutex> lock(s.lock);
+            channel = s.channel;
+            ports = s.ports;
+        }
+        if (channel < 0) return false;
+        mw::icemuxhandles::Received got;
+        QString why;
+        const mw::icemuxhandles::Receipt receipt =
+            mw::icemuxhandles::receiveConnection(channel, ports, &got, &why);
+        if (receipt == mw::icemuxhandles::Receipt::Nothing) return true;
+        if (receipt == mw::icemuxhandles::Receipt::Closed) return false;
+        bool taken = false;
+        if (receipt == mw::icemuxhandles::Receipt::Connection)
+            taken = give(got.socket, got.feed, got.frame.data(), got.frame.size());
+        else
+            qWarning().noquote() << "[IceMux] what the server sent is no connection for this "
+                                    "stream:"
+                                 << why;
+        answer(0, taken);
+    }
+    return true;
+}
+
+/// Read on the thread this is called on, the worker's main one, as messages
+/// come: never from a thread of its own.
+void watchChannel(int channel)
+{
+    auto* notifier =
+        new QSocketNotifier(channel, QSocketNotifier::Read, QCoreApplication::instance());
+    QObject::connect(notifier, &QSocketNotifier::activated, notifier, [notifier]() {
+        if (!readChannel()) notifier->setEnabled(false);
+    });
 }
 #endif
 
@@ -173,9 +268,30 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
     const QJsonArray handles = mux.value(QStringLiteral("handles")).toArray();
     const QJsonArray fds = mux.value(QStringLiteral("fds")).toArray();
     const QJsonArray ports = mux.value(QStringLiteral("ports")).toArray();
+    // Whether the server also takes this stream's TCP connections there
+    const bool tcpTold = mux.value(QStringLiteral("tcp")).toBool();
 
     std::vector<uintptr_t> opened;
 #ifndef _WIN32
+    // The channel those cross on was left open across this process's start
+    // like the sockets: kept from whatever this process starts before
+    // anything else, then checked. Closed again if nothing comes of the rest.
+    struct Channel
+    {
+        int fd = -1;
+        ~Channel()
+        {
+            if (fd >= 0) ::close(fd);
+        }
+    } channel;
+    if (mux.contains(QStringLiteral("channel"))) {
+        QString whyNot;
+        channel.fd = mw::icemuxhandles::channelInherited(
+            wholeNumber(mux.value(QStringLiteral("channel"))), &whyNot);
+        if (channel.fd < 0)
+            qWarning().noquote() << "[IceMux] no channel for this stream's TCP connections:"
+                                 << whyNot;
+    }
     // Outside Windows the server left the sockets open across this process's
     // start, and names their descriptors. They are kept from whatever this
     // process starts, and checked, before anything else of the config is
@@ -273,6 +389,38 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
         list << QString::number(port);
     qInfo().noquote() << "[IceMux] worker on shared UDP port" << list.join(QStringLiteral(", "))
                       << how;
+
+    // TCP there too, when the server says it takes the connections and there
+    // is a way for them to reach this process
+    s.tcp = false;
+    s.server.reset();
+#ifdef _WIN32
+    if (tcpTold && handed) {
+        // Each comes described for this process, in a command
+        s.tcp = true;
+    } else if (tcpTold) {
+        // Each is copied out of the server, as the UDP sockets just were:
+        // through a handle on it kept for the stream's life, and checked as
+        // that one was
+        QString whyNot;
+        s.server = mw::icemuxhandles::Server::open(serverPid, isServer, &whyNot);
+        s.tcp = s.server != nullptr;
+        if (!s.tcp)
+            qWarning().noquote() << "[IceMux] no TCP connection can be taken from the server:"
+                                 << whyNot;
+    }
+#else
+    if (tcpTold && channel.fd >= 0) {
+        s.channel = channel.fd;
+        channel.fd = -1;
+        s.tcp = true;
+        watchChannel(s.channel);
+    }
+#endif
+    if (s.tcp)
+        qInfo() << "[IceMux] the server takes this stream's TCP connections on the shared port(s)";
+    else if (tcpTold)
+        qWarning() << "[IceMux] a connection that listens in TCP takes a socket of its own";
     return true;
 }
 
@@ -281,6 +429,13 @@ bool available()
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
     return !s.shared.empty();
+}
+
+bool tcpAvailable()
+{
+    State& s = state();
+    const std::lock_guard<std::mutex> lock(s.lock);
+    return !s.shared.empty() && s.tcp;
 }
 
 void setPublic(const QJsonObject& announced)
@@ -294,17 +449,25 @@ void setPublic(const QJsonObject& announced)
     QHostAddress address;
     if (!address.setAddress(ip) || address.protocol() != QAbstractSocket::IPv4Protocol) return;
     Public out;
-    for (const QJsonValue& v : announced.value(QStringLiteral("ports")).toArray()) {
-        const int port = v.toInt();
-        if (port <= 0 || port > 65535) continue;
-        // Only a port this worker sends from can be one of its candidates
-        const auto mine = static_cast<uint16_t>(port);
-        const bool has = std::find(s.ports.cbegin(), s.ports.cend(), mine) != s.ports.cend();
-        const bool twice =
-            std::find(out.ports.cbegin(), out.ports.cend(), mine) != out.ports.cend();
-        if (has && !twice) out.ports.push_back(mine);
-    }
+    // Only a port this worker sends from can be one of its candidates
+    const auto mine = [&s](const QJsonValue& list) {
+        std::vector<uint16_t> kept;
+        for (const QJsonValue& v : list.toArray()) {
+            const int port = v.toInt();
+            if (port <= 0 || port > 65535) continue;
+            const auto one = static_cast<uint16_t>(port);
+            const bool has = std::find(s.ports.cbegin(), s.ports.cend(), one) != s.ports.cend();
+            const bool twice = std::find(kept.cbegin(), kept.cend(), one) != kept.cend();
+            if (has && !twice) kept.push_back(one);
+        }
+        return kept;
+    };
+    out.ports = mine(announced.value(QStringLiteral("ports")));
     if (out.ports.empty()) return;
+    // In TCP, a port the router forwards in UDP too and no other
+    for (const uint16_t port : mine(announced.value(QStringLiteral("tcpPorts"))))
+        if (std::find(out.ports.cbegin(), out.ports.cend(), port) != out.ports.cend())
+            out.tcpPorts.push_back(port);
     out.ip = address.toString().toStdString();
     s.announced = std::move(out);
 }
@@ -316,7 +479,7 @@ Public publicPorts()
     return s.announced;
 }
 
-std::optional<rtc::IceSharedSockets> openAgent()
+std::optional<rtc::IceSharedSockets> openAgent(bool tcp)
 {
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
@@ -335,18 +498,121 @@ std::optional<rtc::IceSharedSockets> openAgent()
     out.ufrag = randomIceString(12);
     out.pwd = randomIceString(24);
     if (qEnvironmentVariableIntValue("MW_ICEMUX_STATS") > 0) out.feedTimestamp = &onFeedTimestamp;
+    // An agent that listens in TCP: the server does so for it, and it offers
+    // its passive candidates on the shared ports though it listens nowhere
+    const bool expects = tcp && s.tcp;
+    out.tcp = expects;
     s.agentOpen = true;
-    s.tell({{QStringLiteral("event"), QStringLiteral("iceMux")},
-            {QStringLiteral("op"), QStringLiteral("agent")},
-            {QStringLiteral("ufrag"), QString::fromStdString(out.ufrag)},
-            {QStringLiteral("feedPort"), static_cast<int>(feedPort)}});
+    s.agentTcp = expects;
+    s.agentFeedPort = feedPort;
+    s.offer = nullptr;
+    // A window opens, by this worker's own agent and nothing the server
+    // says: the copies it may make of the server's handles are counted anew
+    if (expects && s.server) s.server->windowOpened();
+    QJsonObject event{{QStringLiteral("event"), QStringLiteral("iceMux")},
+                      {QStringLiteral("op"), QStringLiteral("agent")},
+                      {QStringLiteral("ufrag"), QString::fromStdString(out.ufrag)},
+                      {QStringLiteral("feedPort"), static_cast<int>(feedPort)}};
+    if (expects) event[QStringLiteral("tcp")] = true;
+    s.tell(event);
     return out;
+}
+
+void setAgentOffer(TcpOffer offer)
+{
+    State& s = state();
+    const std::lock_guard<std::mutex> lock(s.lock);
+    if (s.agentOpen && s.agentTcp) s.offer = std::move(offer);
+}
+
+void takeConnection(const QJsonObject& command)
+{
+#ifdef _WIN32
+    const double told = command.value(QStringLiteral("n")).toDouble();
+    const quint32 number =
+        told >= 1 && told <= 4294967295.0 ? static_cast<quint32>(told) : quint32{0};
+    const int feed = command.value(QStringLiteral("feed")).toInt();
+    const QByteArray frame =
+        QByteArray::fromBase64(command.value(QStringLiteral("frame")).toString().toLatin1());
+    const QByteArray info =
+        QByteArray::fromBase64(command.value(QStringLiteral("socket")).toString().toLatin1());
+    const bool wellFormed = feed > 0 && feed <= 65535 &&
+                            frame.size() >= static_cast<qsizetype>(mw::icemuxhandles::kFrameMin) &&
+                            frame.size() <= static_cast<qsizetype>(mw::icemuxhandles::kFrameMax);
+    uintptr_t socket = mw::icemuxhandles::kNoSocket;
+    QString why;
+    {
+        State& s = state();
+        std::unique_lock<std::mutex> lock(s.lock);
+        // Asked before anything is opened or copied: whether the agent it is
+        // for is still the one open, and still expects a connection
+        const bool expected = wellFormed && s.tcp && s.agentOpen && s.agentTcp &&
+                              feed == static_cast<int>(s.agentFeedPort);
+        const std::vector<uint16_t> ports = expected ? s.ports : std::vector<uint16_t>();
+        if (!s.server) {
+            lock.unlock();
+            // Described for this process: the system put this process's own
+            // handle on the connection in the description when the server
+            // made it. So it is opened whatever else is true, and one this
+            // worker will not have is closed here, not left in it: without
+            // the ports to hold it against, the check below refuses it.
+            if (!info.isEmpty())
+                socket = mw::icemuxhandles::openConnection(
+                    std::vector<uint8_t>(info.cbegin(), info.cend()), ports, &why);
+            else
+                why = QStringLiteral("no connection described");
+        } else if (expected) {
+            // Copied out of the server, by the number it names. Under the
+            // lock: the count of copies is the window's.
+            bool isNumber = false;
+            const quint64 handle =
+                command.value(QStringLiteral("handle")).toString().toULongLong(&isNumber);
+            const int local = command.value(QStringLiteral("lport")).toInt();
+            const int remote = command.value(QStringLiteral("rport")).toInt();
+            if (!isNumber || handle == 0 || local <= 0 || local > 65535 || remote <= 0 ||
+                remote > 65535) {
+                why = QStringLiteral("no connection named");
+            } else {
+                socket = s.server->copyConnection(handle, ports, &why);
+                // The copy must be the very connection the server spoke of:
+                // its two ports, which the server gives for this and for
+                // nothing else. What is not is closed, and never used.
+                uint16_t here = 0, there = 0;
+                if (socket != mw::icemuxhandles::kNoSocket &&
+                    (!mw::icemuxhandles::connectionPorts(socket, &here, &there) || here != local ||
+                     there != remote)) {
+                    closeShared(socket);
+                    socket = mw::icemuxhandles::kNoSocket;
+                    why = QStringLiteral("what was copied is not the connection the server named");
+                }
+            }
+        }
+        // Not expected: nothing of the server's is copied at all
+        if (!expected)
+            why = wellFormed ? QStringLiteral("its agent expects no connection")
+                             : QStringLiteral("not a connection as the server hands one");
+    }
+    bool taken = false;
+    if (socket != mw::icemuxhandles::kNoSocket)
+        taken = give(socket, static_cast<quint32>(feed), frame.constData(),
+                     static_cast<size_t>(frame.size()));
+    else
+        qWarning().noquote() << "[IceMux] a connection the server handed is not taken:" << why;
+    // At once, taken or not: the server keeps its end until it hears
+    answer(number, taken);
+#else
+    // Connections cross on the channel here, never in a command
+    Q_UNUSED(command);
+#endif
 }
 
 void confirmed(const rtc::Candidate& candidate)
 {
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
+    // Connected: it expects no connection any more
+    s.agentTcp = false;
+    s.offer = nullptr;
     if (!s.agentOpen || !candidate.isResolved()) return;
     const auto address = candidate.address();
     const auto port = candidate.port();
@@ -363,6 +629,8 @@ void closeAgent()
     const std::lock_guard<std::mutex> lock(s.lock);
     if (!s.agentOpen) return;
     s.agentOpen = false;
+    s.agentTcp = false;
+    s.offer = nullptr;
     s.tell({{QStringLiteral("event"), QStringLiteral("iceMux")},
             {QStringLiteral("op"), QStringLiteral("gone")}});
 }

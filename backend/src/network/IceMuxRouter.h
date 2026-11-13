@@ -57,6 +57,12 @@ public:
         return held ? held->external : uint16_t{0};
     }
 
+    bool holeTcp(int which) const override
+    {
+        const auto held = m_Allocator->heldMuxPort(which);
+        return held && held->tcp;
+    }
+
     QString publicIp() const override { return m_Allocator->publicIp(); }
 
     void claim(int which, uint16_t current, std::function<IceMuxPorts::Hold(uint16_t)> hold,

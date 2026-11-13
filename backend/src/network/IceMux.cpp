@@ -261,6 +261,7 @@ bool IceMux::start(std::string* why)
     m_Stop = false;
     m_Running = true;
     m_Thread = std::thread([this] { run(); });
+    m_Tcp.start();
     return true;
 }
 
@@ -272,6 +273,8 @@ void IceMux::stop()
         if (!m_Running) return;
         m_Running = false;
     }
+    // Its listeners first: no connection is taken for a mux that stops
+    m_Tcp.stop();
     m_Stop = true;
     m_Thread.join();
     {
@@ -467,6 +470,8 @@ void IceMux::confirm(uint32_t feed, const std::string& address, uint16_t port)
 
 void IceMux::removeAgent(uint32_t feed)
 {
+    // An agent that is no more expects no connection
+    m_Tcp.close(feed);
     {
         const std::lock_guard<std::mutex> lock(m_Lock);
         m_Router.removeAgent(feed);
@@ -474,6 +479,35 @@ void IceMux::removeAgent(uint32_t feed)
     }
     // It may have been the last on a replaced port: the reading thread looks
     ++m_PortsVersion;
+}
+
+bool IceMux::expectTcp(uint32_t feed, uint32_t owner)
+{
+    std::string ufrag;
+    std::vector<uint16_t> ports;
+    {
+        // The sockets' lock first, as wherever both are taken
+        const std::lock_guard<std::mutex> sockets(m_PortsLock);
+        const std::lock_guard<std::mutex> lock(m_Lock);
+        const auto it = m_Feeds.find(feed);
+        if (it == m_Feeds.end()) return false;
+        ufrag = std::string(m_Router.ufragOf(feed));
+        for (size_t id = 0; id < kSocketsMax; ++id)
+            if (it->second.via[id] != kNotIts && m_Slots[id].state != State::Free)
+                ports.push_back(m_Slots[id].port);
+    }
+    return !ufrag.empty() && !ports.empty() && m_Tcp.open(feed, ufrag, ports, owner);
+}
+
+bool IceMux::tcpReady()
+{
+    std::vector<uint16_t> ports;
+    {
+        const std::lock_guard<std::mutex> lock(m_PortsLock);
+        for (const int id : m_Serving)
+            if (id >= 0) ports.push_back(m_Slots[static_cast<size_t>(id)].port);
+    }
+    return !ports.empty() && m_Tcp.canListen(ports);
 }
 
 IceMux::Share IceMux::shareByHandle()
