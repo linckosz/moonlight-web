@@ -492,6 +492,18 @@ def main():
     finally:
         for g in list(guests.values()):
             warnings += g.leave(d)
+        # The owner's session ends with the run, as the page ends it (the host
+        # revokes it): the PIN pairing of this run would otherwise stay in the
+        # host's list of sessions. After the guests, whose slots it closes.
+        try:
+            import owner_kiosk
+            ended = owner_kiosk.logout(run.DEBUG_PORT)
+        except Exception:
+            ended = False
+        print("owner session ended by the page: %s" % ended, flush=True)
+        if not ended:
+            warnings.append("the owner session could not be ended by the page: "
+                            "revoke it in Active Sessions")
         try:
             d.stop()
         except Exception:
