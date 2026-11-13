@@ -616,7 +616,7 @@
         "touchPadEditorSize": "大小",
         "touchPadEditorReset": "重置",
         "touchPadEditorCancel": "取消",
-        "touchPadEditorDone": "完成"
+        "touchPadEditorDone": "完成",
         "hideFsHandle": "隐藏全屏手柄",
         "hideFsHandleDesc": "在手机或平板横屏全屏时，隐藏图像顶部用于调出控制栏的半透明小标签。三指轻点仍可调出控制栏。"
     },
