@@ -435,6 +435,26 @@
         "decided": "Bu istek zaten yanıtlandı.",
         "failed": "İstek yanıtlanamadı: {{message}}"
     },
+    "tvSignIn": {
+        "title": "Telefonunuzla oturum açın",
+        "scan": "Bu kodu MoonlightWeb'de oturumu zaten açık olan bir telefon veya bilgisayarla tarayın, ardından aşağıdaki kodu o cihaza yazın.",
+        "qrLabel": "Onay sayfasının QR kodu",
+        "openAddress": "MoonlightWeb'de oturumu zaten açık olan bir telefon veya bilgisayarda bu adresi açın, ardından aşağıdaki kodu oraya yazın:",
+        "waiting": "Onay bekleniyor… ({{time}} içinde sona erer)",
+        "refused": "Bu istek reddedildi.",
+        "askAgain": "Yeniden iste",
+        "busy": "Şu anda başka cihazlar katılmak istiyor. Birazdan yeniden denenecek…",
+        "unreachable": "Sunucu yanıt vermedi. Yeniden deneniyor…"
+    },
+    "tvPairing": {
+        "browserAt": "{{address}} adresindeki tarayıcı",
+        "plainHttp": "Yerel ağınızda şifresiz HTTP kullanır: yayın yapabilir, asla yönetemez.",
+        "hint": "Oturumu, Etkin Oturumlar bölümünden iptal edilebilir.",
+        "approved": "Onaylandı. Cihaz kendi başına oturum açar.",
+        "wrongCode": "Bu, bu cihazın gösterdiği kod değil.",
+        "gone": "Bu isteğin süresi doldu veya zaten yanıtlandı. Cihaz kendiliğinden yeni bir kod gösterir: onu yeniden tarayın.",
+        "notAllowed": "Bu cihazı yalnızca yönetici içeri alabilir."
+    },
     "settings": {
         "title": "Yayın Ayarları",
         "video": "Görüntü",
@@ -653,6 +673,12 @@
         "pairRequestInternetOff": "İnternetten QR kod istekleri devre dışı bırakıldı",
         "activeSessions": "Etkin Oturumlar",
         "activeSessionsDesc": "Şu anda bu sunucuya bağlı uzak kullanıcılar.",
+        "connectionHistory": "Bağlantı geçmişini indir",
+        "connectionHistoryScope": "(CSV, son 90 gün)",
+        "connectionHistoryHint": "Son 90 günün her yayını, cihazın adı ve tam IP adresiyle; bir paylaşımın konukları da dahil.",
+        "connectionHistoryFailed": "Bağlantı geçmişi indirilemedi.",
+        "plainHttp": "Şifresiz HTTP",
+        "plainHttpTitle": "Yerel ağda şifresiz HTTP üzerinden oturum açıldı",
         "sessionCount": "{{count}} etkin oturum",
         "noActiveSessions": "Etkin oturum yok",
         "streamNotifications": "Birisi bu ekranı yayınladığında bana bildir",
