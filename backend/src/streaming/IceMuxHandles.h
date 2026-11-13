@@ -94,6 +94,15 @@ uintptr_t open(const std::vector<uint8_t>& description, uint16_t port, QString* 
 /// the server alone, and it is never shut down. Empty on Windows.
 std::vector<uintptr_t> inherited(const std::vector<Wanted>& told, QString* why);
 
+/// The server's side, before it starts a worker outside Windows: the
+/// descriptors of that worker's share (IceMux::shareByHandle(), this
+/// process's own numbers) as the config line names them and as
+/// leaveOpenAcrossExec() takes them. Empty, and then the worker is started
+/// with none, when one is none inherited() accepts: 0 to 2, which are the
+/// child's own standard channels by the time it starts; a number beyond a
+/// descriptor's; the same twice; none, or more than kMax. Empty on Windows.
+std::vector<int> descriptorsToHand(const std::vector<uint64_t>& handles);
+
 /// The server's side of inherited(), outside Windows: called in the process
 /// a worker is being started in, between its fork and its exec, with the
 /// descriptors of that worker's share. They alone then cross the exec; in

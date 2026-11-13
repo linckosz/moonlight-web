@@ -1,8 +1,8 @@
 # The ports every stream shares (ICE mux)
 
 Status: prototype, behind `"ice_udp_mux": true` in settings.json (default false,
-not seeded). UDP only, Windows, workers started as plain children. The rest of
-this note says what exists; the last section says what does not yet.
+not seeded). UDP only. The rest of this note says what exists; the last section
+says what does not yet.
 
 ## Why
 
@@ -62,9 +62,17 @@ It depends on whose process the worker is, which the way it is started says
 (`StreamWorkerHost::muxHandoverFor`):
 
 - **A plain child of the server**: the server's own account, at its own level.
-  The server hands the sockets over: it makes a description of each for that
-  process alone (`WSADuplicateSocket`), and the descriptions travel in the
-  config line.
+  The server hands the sockets over. On Windows it makes a description of each
+  for that process alone (`WSADuplicateSocket`), and the descriptions travel in
+  the config line. On Linux and macOS, where every worker is such a child, the
+  worker is started with them: the server's sockets are closed in every process
+  it starts (close-on-exec), and the server lets them through in that one child
+  alone, between its fork and its exec, then names their descriptors in the
+  config line. They cross the package's launcher the same way when the native
+  worker is started through it, which opens and closes nothing. The share is
+  taken before the start, so no socket of it is closed, and no number of theirs
+  given to something else, before the child has them. The worker, as the first
+  thing it does with its config, closes them to whatever it starts in turn.
 - **A worker a server that is a service puts in the console session** runs as
   the user sitting there. That user may be another account than the one the
   installation was made by, and a socket in a process of theirs is theirs to
@@ -246,7 +254,6 @@ mux:
 
 ## Not there yet
 
-- Linux and macOS: every stream binds its own port.
 - Without a hole, the public address of the block port: an agent asks the STUN
   server from its first shared port only.
 - TCP on the shared ports, and TCP 443.

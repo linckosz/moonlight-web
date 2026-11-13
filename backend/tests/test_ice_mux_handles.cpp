@@ -86,6 +86,28 @@ void whoGetsTheSockets()
     // A service's worker in the console session: the owner's account alone
     CHECK(!shares(false, false, true, false));
     CHECK(shares(false, false, true, true));
+
+    SECTION("IceMuxHandles: the descriptors a server starts a worker with");
+    using mw::icemuxhandles::descriptorsToHand;
+#ifdef _WIN32
+    // Nothing is handed that way on Windows
+    CHECK(descriptorsToHand({5, 7}).empty());
+#else
+    CHECK(descriptorsToHand({5, 7}) == std::vector<int>({5, 7}));
+    CHECK(descriptorsToHand({3, 4, 5, 6}) == std::vector<int>({3, 4, 5, 6}));
+    // None, or more than a worker takes
+    CHECK(descriptorsToHand({}).empty());
+    CHECK(descriptorsToHand({3, 4, 5, 6, 7}).empty());
+    // The child's own standard channels by the time it starts
+    for (const uint64_t standard : {uint64_t(0), uint64_t(1), uint64_t(2)}) {
+        CHECK(descriptorsToHand({standard}).empty());
+        CHECK(descriptorsToHand({5, standard}).empty());
+    }
+    // No descriptor's number, and the same twice: none of the lot
+    CHECK(descriptorsToHand({5, uint64_t(1) << 31}).empty());
+    CHECK(descriptorsToHand({~uint64_t(0), 5}).empty());
+    CHECK(descriptorsToHand({5, 6, 5}).empty());
+#endif
 }
 
 #ifdef _WIN32
@@ -613,17 +635,33 @@ bool holdsUdpOn(int fd, uint16_t port)
 }
 
 #ifdef __linux__
+/// The package's launcher as the tests build it, next to this runner and
+/// made to start it (tests/CMakeLists.txt): empty when it cannot be found.
+std::string launcherOfThisRunner()
+{
+    char self[4096];
+    const ssize_t length = readlink("/proc/self/exe", self, sizeof(self) - 1);
+    if (length <= 0) return {};
+    self[length] = '\0';
+    const std::string launcher = std::string(self) + "-launch";
+    return access(launcher.c_str(), X_OK) == 0 ? launcher : std::string();
+}
+
 /// This test, started again as `arguments`, the way a server starts a worker:
 /// the descriptors in `handed` are left open across the start, and no other.
-/// Its exit code, 99 when it did not run.
-int startedAgain(const std::vector<std::string>& arguments, const std::vector<int>& handed)
+/// `through`: the program started, which starts this test in turn (the
+/// package's launcher), this test itself when empty. Its exit code, 99 when
+/// it did not run.
+int startedAgain(const std::vector<std::string>& arguments, const std::vector<int>& handed,
+                 const std::string& through = {})
 {
     char self[4096];
     const ssize_t length = readlink("/proc/self/exe", self, sizeof(self) - 1);
     if (length <= 0) return 99;
     self[length] = '\0';
+    const char* program = through.empty() ? self : through.c_str();
     std::vector<char*> argv;
-    argv.push_back(self);
+    argv.push_back(const_cast<char*>(program));
     for (const std::string& argument : arguments)
         argv.push_back(const_cast<char*>(argument.c_str()));
     argv.push_back(nullptr);
@@ -631,7 +669,7 @@ int startedAgain(const std::vector<std::string>& arguments, const std::vector<in
     if (child < 0) return 99;
     if (child == 0) {
         mw::icemuxhandles::leaveOpenAcrossExec(handed.data(), handed.size());
-        execv(self, argv.data());
+        execv(program, argv.data());
         _exit(98);
     }
     int status = 0;
@@ -885,6 +923,34 @@ void run_ice_mux_handles_tests()
             CHECK(startedAgain({"--started-with-sockets", text(sinkPort), text(share.handles[0]),
                                 text(held[1]), text(share.handles[1]), text(held[0])},
                                fds) == 4);
+
+            // Through the package's launcher, which is how a native worker is
+            // started: the same. Run as root the launcher hands its
+            // capability over and starts the worker from a known environment;
+            // run as anyone else it starts it as it was asked. Either way
+            // what was left open reaches the worker, and nothing else does.
+            const std::string launcher = launcherOfThisRunner();
+            CHECK(!launcher.empty());
+            if (!launcher.empty()) {
+                CHECK(startedAgain({"--holds-socket", text(share.handles[0]), text(held[0])}, {},
+                                   launcher) == 0);
+                CHECK(startedAgain({"--holds-socket", text(share.handles[0]), text(held[0])}, fds,
+                                   launcher) == 7);
+                // …in the mode it starts a worker in
+                CHECK(startedAgain({"--stream-worker", "--holds-socket", text(share.handles[1]),
+                                    text(held[1])},
+                                   {}, launcher) == 0);
+                CHECK(startedAgain({"--stream-worker", "--holds-socket", text(share.handles[1]),
+                                    text(held[1])},
+                                   {fds[1]}, launcher) == 7);
+                CHECK(startedAgain({"--stream-worker", "--started-with-sockets", text(sinkPort),
+                                    text(share.handles[0]), text(held[0]), text(share.handles[1]),
+                                    text(held[1])},
+                                   fds, launcher) == 0);
+                from = 0;
+                CHECK(firstByteWithin(sink, 5000, &from) == 't');
+                CHECK(from == held[0]);
+            }
 
             // The server's own are as they were: kept from every other start,
             // and the mux reads on

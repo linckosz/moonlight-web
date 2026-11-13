@@ -120,6 +120,12 @@ void run_local_request_tests();
 
 int main(int argc, char** argv)
 {
+    // As the package's launcher starts a native worker: that mode first,
+    // then what the second process is to do (test_ice_mux_handles.cpp).
+    if (argc > 2 && std::strcmp(argv[1], "--stream-worker") == 0) {
+        ++argv;
+        --argc;
+    }
     // The second process of the IceMuxHandles test, started by the test
     // itself: it takes one socket out of the first and ends. Not a run of the
     // suite.

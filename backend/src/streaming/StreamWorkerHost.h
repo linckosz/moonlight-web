@@ -22,6 +22,8 @@
 #include <QJsonObject>
 #include <QList>
 
+#include <vector>
+
 /**
  * Parent-side handle for one `MoonlightWeb --stream-worker` child process.
  *
@@ -231,8 +233,15 @@ private:
     /// its process `pid` alone, or named for it to copy out of this process
     /// itself. The line as it was when the worker gets none, or nothing can
     /// be shared: it binds a port of its own.
+    ///
+    /// Outside Windows a worker is this process's own child, and gets them
+    /// by being started with them: this is then called before the start,
+    /// `pid` is not looked at, and `acrossStart` receives the descriptors
+    /// the line names, for the child to leave open across its exec
+    /// (IceMuxHandles::leaveOpenAcrossExec). Without `acrossStart` nothing is
+    /// shared there.
     QByteArray withSharedSockets(const QByteArray& configLine, Launch how, bool ownerAccount,
-                                 qint64 pid);
+                                 qint64 pid, std::vector<int>* acrossStart = nullptr);
     void onStdoutData(const QByteArray& data);
     void onStderrData(const QByteArray& data);
     void onStdout();

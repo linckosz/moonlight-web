@@ -63,6 +63,13 @@
  * it and hands the capture each framebuffer it asks for
  * (native-host/src/capture/linux/KmsHelperClient.h).
  *
+ * Descriptors. This program opens none and closes none, and both execs below
+ * keep whatever its caller left open across its own. The app counts on it: it
+ * starts its native worker with the UDP sockets its streams share
+ * (streaming/IceMuxHandles.h), and they reach the worker through here. Whatever
+ * is added to this program keeps that: nothing of the caller's is closed, and
+ * nothing opened here is left open.
+ *
  * The package sets `cap_sys_nice+p` (permitted only, like Sunshine): the
  * ambient raise needs a capability permitted and inheritable, not effective,
  * and a launcher that never holds it effective has nothing to misuse.

@@ -51,6 +51,7 @@
 
 // isatty(): the operator CLI prompts for consent only when a human can answer.
 #include <cstdio>
+#include <ctime>
 #ifdef Q_OS_WIN
 #define NOMINMAX
 #include <windows.h>
@@ -2305,6 +2306,10 @@ int main(int argc, char* argv[])
     // interleave. stdout carries the worker's JSON event protocol — Logger
     // writes to file/stderr only.
     if (parser.isSet(streamWorkerOption)) {
+        // Nothing between the first line of main() and runStreamWorker starts
+        // a process, the crash handler included: a worker may have been
+        // started with sockets it keeps from its own children only once it
+        // has read its config (runStreamWorker).
         // Before anything else runs, and for good: nothing later leaves it.
         if (parser.isSet(signInScreenOption) && !mw::native::NativeHost::enterSignInScreenOnly()) {
             Logger::error("[StreamWorker] the sign-in screen mode does not exist on this platform");
@@ -3085,7 +3090,6 @@ int main(int argc, char* argv[])
         ~MuxPortsForgotten() { g_StreamMuxPorts = nullptr; }
     } muxPortsForgotten;
     if (appSettings.iceUdpMux()) {
-#ifdef Q_OS_WIN
         g_IceMux.setReporter([](const std::string& what) {
             qWarning().noquote() << "[IceMux]" << QString::fromStdString(what);
         });
@@ -3105,6 +3109,7 @@ int main(int argc, char* argv[])
                 QObject::connect(every, &QTimer::timeout, &app, [&g_IceMux] {
                     const IceMux::Counters c = g_IceMux.counters();
                     qint64 cpuMs = -1;
+#ifdef Q_OS_WIN
                     FILETIME made, ended, kernel, user;
                     if (GetProcessTimes(GetCurrentProcess(), &made, &ended, &kernel, &user)) {
                         const auto ticks = [](const FILETIME& t) {
@@ -3112,6 +3117,11 @@ int main(int argc, char* argv[])
                         };
                         cpuMs = static_cast<qint64>((ticks(kernel) + ticks(user)) / 10000);
                     }
+#else
+                    // The processor time of this process, as POSIX counts it
+                    if (const std::clock_t used = std::clock(); used != std::clock_t(-1))
+                        cpuMs = static_cast<qint64>(used / (CLOCKS_PER_SEC / 1000));
+#endif
                     qInfo().noquote()
                         << QStringLiteral("[IceMux] stats read=%1 passed=%2 dropped=%3 lost=%4 "
                                           "faults=%5 cpu=%6ms")
@@ -3128,10 +3138,6 @@ int main(int argc, char* argv[])
             qWarning().noquote() << "[IceMux] the streams share no port:" << why
                                  << "— each stream binds its own";
         }
-#else
-        qWarning() << "[IceMux] ice_udp_mux: the streams' shared ports are not on this system"
-                      " yet — each stream binds its own";
-#endif
     }
     GeoIpService geoIpService(&appSettings);
     UpdateChecker updateChecker(QCoreApplication::applicationVersion(),

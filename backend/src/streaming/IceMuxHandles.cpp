@@ -293,6 +293,24 @@ std::vector<uintptr_t> inherited(const std::vector<Wanted>& told, QString* why)
 #endif
 }
 
+std::vector<int> descriptorsToHand(const std::vector<uint64_t>& handles)
+{
+    std::vector<int> descriptors;
+#ifdef _WIN32
+    (void)handles;
+#else
+    if (handles.size() > kMax) return {};
+    for (const uint64_t handle : handles) {
+        if (!handedNumber(handle)) return {};
+        const int fd = static_cast<int>(handle);
+        for (const int earlier : descriptors)
+            if (earlier == fd) return {};
+        descriptors.push_back(fd);
+    }
+#endif
+    return descriptors;
+}
+
 void leaveOpenAcrossExec(const int* descriptors, size_t count) noexcept
 {
 #ifdef _WIN32

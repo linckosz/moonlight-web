@@ -326,6 +326,18 @@ elseif(UNIX AND NOT APPLE)
     target_link_libraries(run_tests PRIVATE pthread dl)
 endif()
 
+# The package's launcher, built to start this runner: a native worker is started
+# through it, and the sockets the streams share have to cross it as they cross a
+# plain start (test_ice_mux_handles.cpp). Next to the runner, under its name.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(run_tests-launch ${_src}/packaging/linux/moonlightweb-launch.c)
+    target_compile_options(run_tests-launch PRIVATE -Wall -Wextra)
+    target_compile_definitions(run_tests-launch PRIVATE MW_LAUNCH_TARGET="run_tests")
+    set_target_properties(run_tests-launch PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:run_tests>")
+    add_dependencies(run_tests run_tests-launch)
+endif()
+
 # ── Passive ICE-TCP and shared sockets: our patches on libjuice ────────────
 # A runner of its own, in C against libjuice itself: the patches live in the
 # library, below anything run_tests links. The backend's configure applies them
