@@ -47,6 +47,9 @@ namespace mw::native::input {
 /// capabilities at main() (common/LinuxCapabilities.h), so an exec of a binary
 /// without file capabilities starts with none, and the child gets /dev/null and
 /// a pipe, nothing else. The path is fixed, never looked up in PATH.
+/// Never as root nor set-uid: there the exec would give the child every
+/// capability back, and the modules gsettings loads are the environment's
+/// choice. The wheel is then left as it is.
 ///
 /// Read once when the session starts, then again, at most every two seconds,
 /// when the wheel is used: a switch flipped mid-stream is followed from the

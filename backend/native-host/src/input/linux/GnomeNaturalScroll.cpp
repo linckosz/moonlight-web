@@ -110,6 +110,14 @@ void GnomeNaturalScroll::start()
 {
     if (m_Thread.joinable()) return;
     if (!desktopIsGnome(std::getenv("XDG_CURRENT_DESKTOP"))) return;
+    // XDG_CURRENT_DESKTOP is only an environment variable. Run as root, or
+    // set-uid, the exec would hand gsettings every capability back, and the
+    // GIO and dconf modules it loads are chosen by that same environment.
+    if (!mayAskGsettings(::getuid(), ::geteuid())) {
+        log::info("[native] input: GNOME's natural scrolling is not read as root — the wheel "
+                  "goes as the client sends it");
+        return;
+    }
     if (::access(kGsettings, X_OK) != 0) {
         log::info("[native] input: GNOME without /usr/bin/gsettings — its natural scrolling "
                   "setting cannot be read, the wheel goes as the client sends it");

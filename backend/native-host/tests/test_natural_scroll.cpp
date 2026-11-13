@@ -34,6 +34,14 @@ void run_natural_scroll_tests()
     CHECK(!desktopIsGnome(":"));
     CHECK(!desktopIsGnome(nullptr));
 
+    SECTION("Natural scroll — gsettings is never run as root or set-uid");
+
+    CHECK(mayAskGsettings(1000, 1000));
+    CHECK(!mayAskGsettings(0, 0));
+    CHECK(!mayAskGsettings(1000, 0));
+    CHECK(!mayAskGsettings(0, 1000));
+    CHECK(!mayAskGsettings(1000, 1001));
+
     SECTION("Natural scroll — only \"true\" or \"false\" is an answer");
 
     CHECK(parseGsettingsBool("true\n") == std::optional<bool>(true));

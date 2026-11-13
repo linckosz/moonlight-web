@@ -54,6 +54,15 @@ inline bool desktopIsGnome(const char* xdgCurrentDesktop)
     return false;
 }
 
+/// Whether this process may run gsettings at all: never as root and never
+/// set-uid (real and effective users differ). Under root the exec gives the
+/// child every capability back, and gsettings loads GIO and dconf modules the
+/// environment chooses; the wheel is not worth that.
+inline bool mayAskGsettings(unsigned long uid, unsigned long euid)
+{
+    return uid != 0 && euid != 0 && uid == euid;
+}
+
 /// What `gsettings get … natural-scroll` printed: "true" or "false", with the
 /// trailing newline or spaces it may carry. Anything else (an error message, a
 /// missing schema, nothing at all) is no answer, never a guess.
