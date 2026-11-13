@@ -100,6 +100,7 @@ describe('SettingsView on-screen controller section', () => {
             opacity: 0.45,
             vibrate: false,
             outside: 'ignore',
+            layout: { preset: 'default', landscape: {}, portrait: {} },
         });
     });
 

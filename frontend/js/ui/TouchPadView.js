@@ -29,7 +29,13 @@
  * to take it too (`ignoreOutside`). The stream still sees those fingers in the
  * touches of its own events, hence withoutOwnFingers.
  */
-import { PAD, buttonsAt, layoutTouchPad, stickAt } from '../stream/TouchPadState.js';
+import {
+    PAD,
+    buttonsAt,
+    layoutOrientation,
+    layoutTouchPad,
+    stickAt,
+} from '../stream/TouchPadState.js';
 
 /** Fingers down, at most this long, that are a tap of the whole hand. */
 const FOUR_FINGER_TAP_MS = 600;
@@ -69,6 +75,7 @@ export class TouchPadView {
      * @param {HTMLElement} parent the positioned element it covers.
      * @param {import('../stream/TouchPadState.js').TouchPadState} state
      * @param {{ scale?: number, opacity?: number, ignoreOutside?: boolean,
+     *           layout?: {preset: string, landscape: object, portrait: object}|null,
      *           onChanged?: () => void, onTouch?: () => void,
      *           onFourFingerTap?: () => void, onLaidOut?: () => void }} [options]
      *   `onChanged` is told when a touch event changed what is held, once that
@@ -77,6 +84,8 @@ export class TouchPadView {
      *   `onFourFingerTap`: a tap of four fingers, most of them landing here when
      *   the controller covers the screen.
      *   `onLaidOut`: the controls have just moved, and with them toggleRect.
+     *   `layout`: this viewer's own arrangement (setLayout); the orientation the
+     *   layer has when it is laid out picks which of the two saves applies.
      */
     constructor(parent, state, options = {}) {
         this._parent = parent;
@@ -84,6 +93,7 @@ export class TouchPadView {
         this._scale = options.scale || 1;
         this._opacity = options.opacity === undefined ? 1 : options.opacity;
         this._ignoreOutside = options.ignoreOutside === true;
+        this._layout = options.layout || null;
         this._onChanged = options.onChanged || null;
         this._onTouch = options.onTouch || null;
         this._onFourFingerTap = options.onFourFingerTap || null;
@@ -159,6 +169,19 @@ export class TouchPadView {
         return this._toggle;
     }
 
+    /**
+     * Take the viewer's own arrangement, or give the controls back to the
+     * layout: the layer lays itself out again at once.
+     * @param {{preset: string, landscape: object, portrait: object}|null} layout
+     */
+    setLayout(layout) {
+        const next = layout || null;
+        if (next === this._layout) return;
+        this._layout = next;
+        this._laidOutFor = '';
+        this.relayout();
+    }
+
     /** Let go of every control: its fingers are forgotten until they come down again. */
     releaseAll() {
         const held = this._fingers.size > 0;
@@ -204,13 +227,24 @@ export class TouchPadView {
         const { width, height } = this._rect;
         if (!width || !height) return;
         const insets = this._insets();
+        const preset = this._layout ? this._layout.preset : 'default';
+        const overrides = this._layout
+            ? this._layout[layoutOrientation(width, height)] || null
+            : null;
         // Asked more often than anything changes, and a finger may be down.
-        const laidOutFor = JSON.stringify([width, height, insets]);
+        const laidOutFor = JSON.stringify([width, height, insets, preset, overrides]);
         if (laidOutFor === this._laidOutFor) return;
         this._laidOutFor = laidOutFor;
         // A rotation under a finger: the controls move, the finger does not.
         this.releaseAll();
-        const layout = layoutTouchPad({ width, height, scale: this._scale, insets });
+        const layout = layoutTouchPad({
+            width,
+            height,
+            scale: this._scale,
+            insets,
+            preset,
+            overrides,
+        });
         this._controls = layout.controls;
         this._toggle = layout.toggle;
         this._draw(layout);

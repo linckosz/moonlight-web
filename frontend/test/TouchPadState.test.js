@@ -6,8 +6,11 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
     PAD,
     TOUCH_PAD_ID,
+    TOUCH_PAD_PRESETS,
     TouchPadState,
     buttonsAt,
+    layoutOrientation,
+    touchPadLayouts,
     touchPadSettings,
     layoutTouchPad,
     rumblePattern,
@@ -344,6 +347,8 @@ describe('TouchPadState', () => {
 });
 
 describe('touchPadSettings', () => {
+    const defaultLayout = { preset: 'default', landscape: {}, portrait: {} };
+
     it('gives the defaults of a viewer who never opened them', () => {
         expect(touchPadSettings()).toEqual({
             mode: 'auto',
@@ -351,6 +356,7 @@ describe('touchPadSettings', () => {
             opacity: 1,
             vibrate: true,
             outside: 'mouse',
+            layout: defaultLayout,
         });
     });
 
@@ -363,7 +369,14 @@ describe('touchPadSettings', () => {
                 touch_pad_vibrate: false,
                 touch_pad_outside: 'ignore',
             }),
-        ).toEqual({ mode: 'never', scale: 1.4, opacity: 0.2, vibrate: false, outside: 'ignore' });
+        ).toEqual({
+            mode: 'never',
+            scale: 1.4,
+            opacity: 0.2,
+            vibrate: false,
+            outside: 'ignore',
+            layout: defaultLayout,
+        });
     });
 
     it('refuses what no setting could have saved', () => {
@@ -635,5 +648,262 @@ describe('layoutTouchPad', () => {
             expect(buttonsAt(layout.controls, 422, 195)).toBeNull();
             expect(stickAt(layout.controls, 422, 195)).toBeNull();
         });
+    });
+});
+
+describe('layoutOrientation', () => {
+    it('is decided by which side is longer', () => {
+        expect(layoutOrientation(1180, 820)).toBe('landscape');
+        expect(layoutOrientation(820, 1180)).toBe('portrait');
+    });
+
+    it('takes a square screen as the one on its side', () => {
+        expect(layoutOrientation(800, 800)).toBe('landscape');
+    });
+});
+
+describe('touchPadLayouts', () => {
+    it('gives a viewer who moved nothing the layout as drawn', () => {
+        expect(touchPadLayouts()).toEqual({ preset: 'default', landscape: {}, portrait: {} });
+        expect(touchPadLayouts(null)).toEqual(touchPadLayouts());
+        expect(touchPadLayouts('nonsense')).toEqual(touchPadLayouts());
+    });
+
+    it('keeps what an editor saves, per orientation', () => {
+        const saved = touchPadLayouts({
+            preset: 'left',
+            landscape: { a: { x: 0.9, y: 0.7, s: 1.2 } },
+            portrait: { a: { x: 0.5, y: 0.6, s: 1 } },
+        });
+        expect(saved.preset).toBe('left');
+        expect(saved.landscape.a).toEqual({ x: 0.9, y: 0.7, s: 1.2 });
+        expect(saved.portrait.a).toEqual({ x: 0.5, y: 0.6, s: 1 });
+    });
+
+    it('drops what no editor could have saved', () => {
+        const saved = touchPadLayouts({
+            preset: 'sideways',
+            landscape: {
+                a: { x: 1.2, y: 0.5, s: 1 },
+                b: { x: 0.5, y: -0.1, s: 1 },
+                c: { x: 0.5, y: 0.5, s: 1 },
+                d: { x: 0.5, y: 0.5, s: 1 },
+                x: 'nonsense',
+            },
+            portrait: null,
+        });
+        expect(saved.preset).toBe('default');
+        expect(saved.landscape).toEqual({});
+        expect(saved.portrait).toEqual({});
+    });
+
+    it('keeps a size no editor offers at the plain one, and the place it was given', () => {
+        const saved = touchPadLayouts({ landscape: { y: { x: 0.25, y: 0.5, s: 9 } } });
+        expect(saved.landscape.y).toEqual({ x: 0.25, y: 0.5, s: 1 });
+        expect(touchPadLayouts({ landscape: { y: { x: 0.25, y: 0.5 } } }).landscape.y.s).toBe(1);
+    });
+
+    it('names only the controls a layout may move', () => {
+        const saved = touchPadLayouts({
+            landscape: {
+                lt: { x: 0.1, y: 0.1, s: 1 },
+                'stick-left': { x: 0.2, y: 0.8, s: 1 },
+                toggle: { x: 0.5, y: 0.5, s: 1 },
+            },
+        });
+        expect(Object.keys(saved.landscape).sort()).toEqual(['lt', 'stick-left']);
+    });
+});
+
+describe('a layout a viewer arranged', () => {
+    const W = 1180;
+    const H = 820;
+    const byId = (layout, id) => layout.controls.find((c) => c.id === id);
+    const centre = (c) => [
+        c.cx !== undefined ? c.cx : c.x + c.w / 2,
+        c.cy !== undefined ? c.cy : c.y + c.h / 2,
+    ];
+    const onScreen = (layout, w, h) =>
+        layout.controls.every(
+            (c) =>
+                c.x >= -0.001 && c.y >= -0.001 && c.x + c.w <= w + 0.001 && c.y + c.h <= h + 0.001,
+        );
+
+    it('is the default layout when nothing was moved', () => {
+        const plain = layoutTouchPad({ width: W, height: H });
+        expect(layoutTouchPad({ width: W, height: H, preset: 'default', overrides: {} })).toEqual(
+            plain,
+        );
+    });
+
+    it('takes the place it was given, as a share of the layer', () => {
+        const layout = layoutTouchPad({
+            width: W,
+            height: H,
+            overrides: { a: { x: 0.5, y: 0.5, s: 1 } },
+        });
+        const [cx, cy] = centre(byId(layout, 'a'));
+        expect(cx).toBeCloseTo(W / 2);
+        expect(cy).toBeCloseTo(H / 2);
+    });
+
+    it('grows a control with the size it was given, keeping its shape', () => {
+        const plain = layoutTouchPad({ width: W, height: H });
+        const layout = layoutTouchPad({
+            width: W,
+            height: H,
+            overrides: { a: { x: 0.9, y: 0.7, s: 1.3 } },
+        });
+        const a = byId(layout, 'a');
+        expect(a.w).toBeCloseTo(byId(plain, 'a').w * 1.3);
+        expect(a.h).toBeCloseTo(a.w);
+        expect(a.r).toBeCloseTo(a.w * 0.62);
+    });
+
+    it('stays inside the safe areas however far it is pushed', () => {
+        const insets = { top: 12, right: 47, bottom: 21, left: 47 };
+        const layout = layoutTouchPad({
+            width: W,
+            height: H,
+            insets,
+            overrides: {
+                a: { x: 1, y: 1, s: 1 },
+                lt: { x: 0, y: 0, s: 1 },
+                'stick-left': { x: 0, y: 1, s: 1 },
+            },
+        });
+        const a = byId(layout, 'a');
+        expect(a.x + a.w).toBeCloseTo(W - insets.right);
+        expect(a.y + a.h).toBeCloseTo(H - insets.bottom);
+        const lt = byId(layout, 'lt');
+        expect(lt.x).toBeCloseTo(insets.left);
+        expect(lt.y).toBeCloseTo(insets.top);
+        const stick = byId(layout, 'stick-left');
+        expect(stick.restX - stick.radius).toBeGreaterThanOrEqual(-0.001);
+        expect(stick.restY + stick.radius).toBeLessThanOrEqual(H - insets.bottom + 0.001);
+    });
+
+    it('moves a stick ring but never its zone', () => {
+        const plain = layoutTouchPad({ width: W, height: H });
+        const layout = layoutTouchPad({
+            width: W,
+            height: H,
+            overrides: { 'stick-left': { x: 0.15, y: 0.6, s: 1 } },
+        });
+        const zone = byId(layout, 'stick-left');
+        const before = byId(plain, 'stick-left');
+        expect(zone.x).toBe(before.x);
+        expect(zone.w).toBe(before.w);
+        expect(zone.restX).toBeCloseTo(0.15 * W);
+        expect(zone.restY).toBeCloseTo(0.6 * H);
+        expect(stickAt(layout.controls, zone.restX, zone.restY)).toBe(zone);
+    });
+
+    it('keeps a ring out of the middle strip, and inside its own side', () => {
+        const layout = layoutTouchPad({
+            width: W,
+            height: H,
+            overrides: { 'stick-right': { x: 0.5, y: 0.5, s: 1 } },
+        });
+        const zone = byId(layout, 'stick-right');
+        expect(zone.restX - zone.radius).toBeGreaterThanOrEqual(zone.x - 0.001);
+        expect(stickAt(layout.controls, zone.restX, zone.restY)).toBe(zone);
+    });
+
+    it('keeps the toggle between the two pills it sits between', () => {
+        const layout = layoutTouchPad({
+            width: W,
+            height: H,
+            overrides: {
+                view: { x: 0.3, y: 0.2, s: 1 },
+                menu: { x: 0.5, y: 0.2, s: 1 },
+            },
+        });
+        const view = byId(layout, 'view');
+        const menu = byId(layout, 'menu');
+        const mid = (centre(view)[0] + centre(menu)[0]) / 2;
+        expect(layout.toggle.x + layout.toggle.w / 2).toBeCloseTo(mid);
+        expect(layout.toggle.y + layout.toggle.h / 2).toBeCloseTo(centre(view)[1]);
+    });
+
+    it('reads a moved dpad in eight directions where it now is', () => {
+        const layout = layoutTouchPad({
+            width: W,
+            height: H,
+            overrides: { dpad: { x: 0.5, y: 0.5, s: 1 } },
+        });
+        const dpad = byId(layout, 'dpad');
+        const [cx, cy] = centre(dpad);
+        expect(buttonsAt(layout.controls, cx, cy)).toEqual([]);
+        expect(buttonsAt(layout.controls, cx, cy - dpad.w / 2 + 2)).toEqual([PAD.UP]);
+        expect(buttonsAt(layout.controls, cx - dpad.w / 2 + 2, cy)).toEqual([PAD.LEFT]);
+    });
+
+    it('mirrors everything for a left-handed thumb', () => {
+        const plain = layoutTouchPad({ width: W, height: H });
+        const left = layoutTouchPad({ width: W, height: H, preset: 'left' });
+        for (const id of ['a', 'y', 'lt', 'rb', 'view', 'l3']) {
+            expect(centre(byId(left, id))[0]).toBeCloseTo(W - centre(byId(plain, id))[0]);
+        }
+        for (const id of ['stick-left', 'stick-right']) {
+            expect(byId(left, id).restX).toBeCloseTo(W - byId(plain, id).restX);
+            expect(byId(left, id).x).toBe(byId(plain, id).x);
+        }
+        expect(onScreen(left, W, H)).toBe(true);
+    });
+
+    it('pulls a compact layout inward and draws less', () => {
+        const plain = layoutTouchPad({ width: W, height: H });
+        const compact = layoutTouchPad({ width: W, height: H, preset: 'compact' });
+        const a = byId(compact, 'a');
+        const before = byId(plain, 'a');
+        expect(a.w).toBeLessThan(before.w);
+        // Toward the middle of the screen, whichever side of it the control was.
+        const inward = (c) => Math.abs(centre(c)[0] - W / 2) + Math.abs(centre(c)[1] - H / 2);
+        expect(inward(a)).toBeLessThan(inward(before));
+        expect(onScreen(compact, W, H)).toBe(true);
+    });
+
+    it('keeps every preset on screen, on every shape, at every size', () => {
+        const screens = [
+            [844, 390],
+            [390, 844],
+            [1180, 820],
+            [820, 1180],
+            [568, 320],
+        ];
+        for (const [w, h] of screens) {
+            for (const scale of [0.8, 1, 1.4]) {
+                for (const preset of TOUCH_PAD_PRESETS) {
+                    const layout = layoutTouchPad({ width: w, height: h, scale, preset });
+                    expect(onScreen(layout, w, h)).toBe(true);
+                    for (const side of ['stick-left', 'stick-right']) {
+                        const c = byId(layout, side);
+                        expect(c.restX - c.radius).toBeGreaterThanOrEqual(-0.001);
+                        expect(c.restX + c.radius).toBeLessThanOrEqual(w + 0.001);
+                        expect(c.restY + c.radius).toBeLessThanOrEqual(h + 0.001);
+                    }
+                }
+            }
+        }
+    });
+
+    it('lays itself out on the orientation it is actually in', () => {
+        const saved = touchPadLayouts({
+            landscape: { a: { x: 0.9, y: 0.6, s: 1 } },
+            portrait: { a: { x: 0.5, y: 0.8, s: 1 } },
+        });
+        const wide = layoutTouchPad({
+            width: 1180,
+            height: 820,
+            overrides: saved[layoutOrientation(1180, 820)],
+        });
+        const tall = layoutTouchPad({
+            width: 820,
+            height: 1180,
+            overrides: saved[layoutOrientation(820, 1180)],
+        });
+        expect(centre(byId(wide, 'a'))[0]).toBeCloseTo(0.9 * 1180);
+        expect(centre(byId(tall, 'a'))[1]).toBeCloseTo(0.8 * 1180);
     });
 });

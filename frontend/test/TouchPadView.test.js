@@ -133,6 +133,32 @@ describe('TouchPadView', () => {
         expect(el.style.getPropertyValue('--touch-pad-opacity')).toBe('1');
     });
 
+    it("takes a viewer's arrangement, and lays out again when it changes", () => {
+        view.destroy();
+        const onLaidOut = vi.fn();
+        const moved = {
+            preset: 'default',
+            landscape: { a: { x: 0.5, y: 0.5, s: 1 } },
+            portrait: {},
+        };
+        build({ layout: moved, onLaidOut });
+        onLaidOut.mockClear();
+        const a = el.querySelector('[data-control="a"]');
+        const w = parseFloat(a.style.width);
+        expect(parseFloat(a.style.left) + w / 2).toBeCloseTo(W / 2);
+        expect(parseFloat(a.style.top) + parseFloat(a.style.height) / 2).toBeCloseTo(H / 2);
+        view.setLayout({ ...moved, landscape: { a: { x: 0.25, y: 0.5, s: 1 } } });
+        expect(onLaidOut).toHaveBeenCalledTimes(1);
+        expect(parseFloat(el.querySelector('[data-control="a"]').style.left) + w / 2).toBeCloseTo(
+            W / 4,
+        );
+        // Handing it back gives the controls the layout's own places again.
+        view.setLayout(null);
+        expect(parseFloat(el.querySelector('[data-control="a"]').style.left) + w / 2).toBeCloseTo(
+            centre('a')[0],
+        );
+    });
+
     it('draws L3 and R3 as buttons, as held as the double tap', () => {
         start(1, ...centre('l3'));
         expect(el.querySelector('[data-control="l3"]').classList.contains('is-down')).toBe(true);
