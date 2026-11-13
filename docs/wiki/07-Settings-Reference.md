@@ -158,7 +158,7 @@ CI bakes `MW_DOMAIN` and `MW_PDNS_TOKEN` (from repo secrets, via CMake defines) 
 | `mw-mic-hint-seen` | Set once the viewer has been told, at the first stream offering a microphone, that it starts cut. |
 | `mw-gamepad-mappings` | The user's own controller layouts (`util/gamepadMappingsStore.js`), `{ [padKey]: {name, bindings, updatedAt} }` — `padKey` is `usb:vid:pid`, or `name:<name>` where the browser gives no ids (Android, iOS). Written by the remap dialog (Settings → **Controllers**, the stream toasts, a share guest's join page and header button); kept apart from `mw-streaming-settings` so it is never pushed to the server as a default. See [design §7](../design/gamepad-virtual.md#7-détection). |
 | `mw_player_prefs` | A share guest's join choices: `gaming`, `touchScreen`, and `padKey` — the controller picked when several are plugged in (one controller per invitation). |
-| `mw-lang` | UI language (en/fr/zh). |
+| `mw-lang` | UI language (en/fr/tr/zh). |
 | `mw_client_uniqueid` | Per-browser Sunshine identity (session isolation); the standby stream slot derives its own id from it. |
 | `mw_jitter_auto` | Adaptive jitterBufferTarget toggle (webrtc-media). |
 | `mw_pacing` | Adaptive presentation reserve (DataChannel/WSS paths — the `FramePacer` de-jitter clock). Off by default (freshest-frame-first: on real Wi-Fi the reserve legitimately sits near its 25ms cap, and latency wins over smoothness); set to `1` to opt in. The reserve is shown live in the latency breakdown ("jitter reserve" — the row only exists while the pacer runs), and is read once per stream start — set it, then relaunch the stream. |

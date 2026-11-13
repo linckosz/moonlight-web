@@ -6,7 +6,8 @@
   "push": {
     "files": [
       { "path": "locales/en.json", "language": "en" },
-      { "path": "locales/fr.json", "language": "fr" }
+      { "path": "locales/fr.json", "language": "fr" },
+      { "path": "locales/tr.json", "language": "tr" }
     ],
     "forceMode": "OVERRIDE"
   },
