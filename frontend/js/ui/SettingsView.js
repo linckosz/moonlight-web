@@ -71,6 +71,7 @@ import {
 } from '../util/BrowserDetect.js';
 import { touchPadSettings } from '../stream/TouchPadState.js';
 import { wheelSourceSupport } from '../stream/WheelSource.js';
+import { TouchPadLayoutEditor } from './TouchPadLayoutEditor.js';
 import * as RemoteNav from './RemoteNav.js';
 import {
     HID_KINDS,
@@ -2705,6 +2706,18 @@ export class SettingsView {
                     ${slider('scale', 'settings.touchPadSize', Math.round(pad.scale * 100), 80, 140)}
                     ${slider('opacity', 'settings.touchPadOpacity', Math.round(pad.opacity * 100), 20, 100)}
                     <div class="settings-field">
+                        <label class="settings-label" for="settings-touch-pad-layout">${t('settings.touchPadLayout')}</label>
+                        <select id="settings-touch-pad-layout" class="settings-select">
+                            ${option('default', pad.layout.preset, 'settings.touchPadLayoutDefault')}
+                            ${option('left', pad.layout.preset, 'settings.touchPadLayoutLeft')}
+                            ${option('compact', pad.layout.preset, 'settings.touchPadLayoutCompact')}
+                        </select>
+                        <button type="button" id="settings-touch-pad-edit" class="btn btn-secondary">
+                            ${t('settings.touchPadEdit')}
+                        </button>
+                        <span class="setting-desc">${t('settings.touchPadLayoutDesc')}</span>
+                    </div>
+                    <div class="settings-field">
                         <label class="settings-checkbox-label">
                             <input type="checkbox" id="settings-touch-pad-vibrate"
                                 ${pad.vibrate ? 'checked' : ''} />
@@ -2733,7 +2746,10 @@ export class SettingsView {
             touch_pad_opacity: Number(field('opacity').value) / 100,
             touch_pad_vibrate: field('vibrate').checked,
             touch_pad_outside: field('outside').value,
-            touch_pad_layout: this._touchPad.layout,
+            touch_pad_layout: {
+                ...this._touchPad.layout,
+                ...(field('layout') ? { preset: field('layout').value } : {}),
+            },
         });
     }
 
@@ -2746,6 +2762,23 @@ export class SettingsView {
             this._touchPad = { ...this._touchPad, mode: field('mode').value };
             this._refreshShortcutsSection();
         });
+        field('layout').addEventListener('change', () => {
+            // A preset is a starting point, not a nudge: the places the viewer
+            // moved were their own, and the preset arranges the rest afresh.
+            this._touchPad = {
+                ...this._touchPad,
+                layout: {
+                    ...this._touchPad.layout,
+                    preset: field('layout').value,
+                    landscape: {},
+                    portrait: {},
+                },
+            };
+            this._autoSave();
+        });
+        this.container
+            .querySelector('#settings-touch-pad-edit')
+            .addEventListener('click', () => this._openTouchPadLayoutEditor());
         for (const name of ['vibrate', 'outside']) {
             field(name).addEventListener('change', () => this._autoSave());
         }
@@ -2756,6 +2789,24 @@ export class SettingsView {
             });
             field(name).addEventListener('change', () => this._autoSave());
         }
+    }
+
+    /** Where the viewer puts the controls: the editor draws them as a stream does. */
+    _openTouchPadLayoutEditor() {
+        this._touchPadEditor = new TouchPadLayoutEditor(document.body, {
+            layout: this._touchPad.layout,
+            onChange: (layout) => {
+                this._touchPad = { ...this._touchPad, layout };
+                // The page's own select follows: it is what a later save reads.
+                const select = this.container.querySelector('#settings-touch-pad-layout');
+                if (select) select.value = layout.preset;
+                this._autoSave();
+            },
+            onClosed: () => {
+                this._touchPadEditor = null;
+            },
+        });
+        this._touchPadEditor.open();
     }
 
     /** Rebuild the in-stream cheat-sheet in place, after a setting changed it. */

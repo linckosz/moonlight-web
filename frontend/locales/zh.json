@@ -604,7 +604,21 @@
         "fullscreenOnStart": "以全屏启动串流",
         "fullscreenOnStartDesc": "启动串流时立即进入全屏。在 iPhone 上，Safari 会保留其工具栏，串流将铺满页面（将 MoonlightWeb 添加到主屏幕即可获得真正的全屏）。",
         "hideFsHandle": "隐藏全屏手柄",
-        "hideFsHandleDesc": "在手机或平板横屏全屏时，隐藏图像顶部用于调出控制栏的半透明小标签。三指轻点仍可调出控制栏。"
+        "hideFsHandleDesc": "在手机或平板横屏全屏时，隐藏图像顶部用于调出控制栏的半透明小标签。三指轻点仍可调出控制栏。",
+        "touchPadLayout": "布局",
+        "touchPadLayoutDesc": "控件的位置。移动过的控件按此设备保存，横向与纵向分开记录。",
+        "touchPadLayoutDefault": "默认",
+        "touchPadLayoutLeft": "左手",
+        "touchPadLayoutCompact": "紧凑",
+        "touchPadEdit": "编辑布局…",
+        "touchPadEditorTitle": "屏幕手柄布局",
+        "touchPadEditorHint": "把控件拖到拇指停留的位置，轻点控件可调整大小。",
+        "touchPadEditorLandscape": "横屏",
+        "touchPadEditorPortrait": "竖屏",
+        "touchPadEditorSize": "大小",
+        "touchPadEditorReset": "重置",
+        "touchPadEditorCancel": "取消",
+        "touchPadEditorDone": "完成"
     },
     "admin": {
         "title": "服务器设置",
