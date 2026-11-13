@@ -223,6 +223,7 @@ else()
         # a host with none of them still runs — it simply finds nothing.
         target_sources(mw-native-host PRIVATE
             src/input/linux/EiInput.cpp
+            src/input/linux/GnomeNaturalScroll.cpp
             src/input/linux/UinputGamepad.cpp
             src/input/linux/UinputInput.cpp
             src/input/linux/WaylandLayout.cpp
@@ -573,6 +574,7 @@ if(MW_BUILD_TESTS)
         tests/test_pointer_clamp.cpp
         tests/test_recentre_detector.cpp
         tests/test_wheel_carry.cpp
+        tests/test_natural_scroll.cpp
         tests/test_xkb_text_map.cpp
         tests/test_absolute_map.cpp
         tests/test_wayland_layout.cpp

@@ -21,6 +21,7 @@
 #include "../IInputSink.h"
 #include "../RecentreDetector.h"
 #include "../WheelCarry.h"
+#include "GnomeNaturalScroll.h"
 #include "X11Pointer.h"
 #include "XkbTextMap.h"
 
@@ -122,6 +123,10 @@ private:
     /// What is left of a notch the browser sent in pieces. See WheelCarry.
     WheelCarry m_WheelCarry;
     WheelCarry m_HWheelCarry;
+
+    /// GNOME applies its natural scrolling to our mouse too: when it is on, the
+    /// wheel goes reversed so the page still scrolls the way the client asked.
+    GnomeNaturalScroll m_NaturalScroll;
 
     /// Guards the descriptors and the held sets. inject() is documented as
     /// callable from any thread, and on the native path it really is called

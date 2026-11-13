@@ -284,6 +284,10 @@ bool UinputInput::start(std::string& error)
     m_X11.open();
     m_Recentre.reset();
 
+    // GNOME reverses the wheel of every mouse when its natural scrolling is on,
+    // ours included: read the switch, off the session's path. See GnomeNaturalScroll.
+    m_NaturalScroll.start();
+
     log::info("[native] input: uinput keyboard and pointer created");
     return true;
 }
@@ -311,6 +315,7 @@ void UinputInput::stop()
         *fd = -1;
     }
 
+    m_NaturalScroll.stop();
     m_X11.close();
     m_WarpLogged = false;
 }
@@ -728,8 +733,13 @@ void UinputInput::inject(const InputEvent& event)
     // raw, one notch of the wheel would scroll a hundred and twenty lines. A
     // notch that arrives in pieces is added up first (WheelCarry): divided one
     // piece at a time, each was 0 and the wheel only moved now and then.
+    //
+    // Both axes go reversed while GNOME's natural scrolling is on: the delta
+    // already carries the client's direction, and GNOME would turn it again.
     case Type::MouseScrollVertical: {
-        const int32_t notches = m_WheelCarry.add(event.scrollAmount);
+        const int32_t amount =
+            m_NaturalScroll.reversed() ? -int32_t{event.scrollAmount} : int32_t{event.scrollAmount};
+        const int32_t notches = m_WheelCarry.add(amount);
         if (notches != 0) {
             emit(m_Keyboard, EV_REL, REL_WHEEL, notches);
             emitSyn(m_Keyboard);
@@ -737,7 +747,9 @@ void UinputInput::inject(const InputEvent& event)
         break;
     }
     case Type::MouseScrollHorizontal: {
-        const int32_t notches = m_HWheelCarry.add(event.scrollAmount);
+        const int32_t amount =
+            m_NaturalScroll.reversed() ? -int32_t{event.scrollAmount} : int32_t{event.scrollAmount};
+        const int32_t notches = m_HWheelCarry.add(amount);
         if (notches != 0) {
             emit(m_Keyboard, EV_REL, REL_HWHEEL, notches);
             emitSyn(m_Keyboard);

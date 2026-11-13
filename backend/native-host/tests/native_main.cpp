@@ -37,6 +37,7 @@ void run_evdev_keymap_tests();
 void run_pointer_clamp_tests();
 void run_recentre_detector_tests();
 void run_wheel_carry_tests();
+void run_natural_scroll_tests();
 void run_xkb_text_map_tests();
 void run_absolute_map_tests();
 void run_wayland_layout_tests();
@@ -238,6 +239,7 @@ int main(int argc, char** argv)
     RUN(pointer_clamp);
     RUN(recentre_detector);
     RUN(wheel_carry);
+    RUN(natural_scroll);
     RUN(xkb_text_map);
     RUN(absolute_map);
     RUN(wayland_layout);
