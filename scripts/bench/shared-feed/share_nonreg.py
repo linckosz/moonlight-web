@@ -6,9 +6,7 @@ before — the guest's own session, the three quality buttons, no shared feed.
                            --host <the GameStream host's uuid> --guest-gpu Arc
 """
 import argparse
-import json
 import os
-import re
 import sys
 import time
 
@@ -19,6 +17,7 @@ sys.path.insert(0, os.path.join(BENCH, "acceptance"))
 sys.path.insert(0, HERE)
 import run, drive, fleet  # noqa: E402
 import owner_load as ol  # noqa: E402
+import guest_link as gl  # noqa: E402
 
 
 def log(*a):
@@ -41,6 +40,9 @@ def main():
     pin = fleet.mint_pin("local", probe) or access.get("pin", "")
     base = fleet.lan_url("local", probe) or access.get("lan")
     mark = os.path.getsize(a.server_log)
+    started = time.time()
+    gl.keep_output()
+    warnings = []
 
     run.kiosk_start(base, on_gpu=a.client_gpu)
     d = drive.Driver(run.DEBUG_PORT)
@@ -66,30 +68,20 @@ def main():
         log("owner streaming:", {k: v for k, v in (d.stats().get("rows") or {}).items()
                                   if k in ("Codec:", "Framerate:", "Transport:")})
 
-        act = d.json_eval("""(async () => {
-            const r = await fetch('/api/share/slots/2/activate', {method: 'POST',
-                credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ttl_secs: 3600})});
-            return JSON.stringify(Object.assign({status: r.status}, await r.json()));
-        })()""")
-        link = act.get("url", "")
-        token = (re.search(r"/p/([^/?#]+)", link) or re.search(r"[#&]t=([^&]+)", link)).group(1)
         gx, gy, _w, _h = guest_rect
+        # Made before the row opens: the finally closes the row whatever happens.
         g = ol.Guest(2, (gx, gy, ol.GUEST_W, ol.GUEST_H), guest_luid, 60)
-        url = base.rstrip("/") + "/p/" + token
-        import subprocess
-        subprocess.run(["powershell", "-NoProfile", "-File", os.path.join(BENCH, "kiosk.ps1"),
-                        "-Url", url, "-X", str(gx), "-Y", str(gy), "-W", str(ol.GUEST_W),
-                        "-H", str(ol.GUEST_H), "-DebugPort", str(g.port), "-ChromeProfile",
-                        g.profile, "-AdapterLuid", guest_luid, "-Windowed"],
-                       capture_output=True, text=True)
+        # The link and the PIN stay in memory (guest_link).
+        share = gl.activate(d, 2)
+        gl.open_kiosk(g.port, g.profile, g.rect, ["-AdapterLuid", guest_luid, "-Windowed"])
         g.d = drive.Driver(g.port)
+        gl.go(g.port, base, share)
         g.d.call("Page.addScriptToEvaluateOnNewDocument", source=ol.HOOK)
         g.d.eval(ol.HOOK)
         if not g._wait("!!document.querySelector('.player-pin-input')", 60):
             raise SystemExit("guest: no PIN field")
-        g.d.eval("(() => { const i = document.querySelector('.player-pin-input'); i.value = %s; "
-                 "i.form.requestSubmit(); return 1; })()" % json.dumps(act["pin"]))
+        gl.enter_pin(g.d, share)
+        share = None
         if not g._wait("!!document.querySelector('.player-join-btn')", 60):
             raise SystemExit("guest: no Join button")
         g.d.eval(ol.HOOK)
@@ -121,12 +113,15 @@ def main():
             log("   ", l[l.find("[Session]"):][:160])
     finally:
         if g:
-            g.leave(d)
+            warnings += g.leave(d)
         try:
             d.stop()
         except Exception:
             pass
         run.kiosk_stop()
+        gl.proof(ol.OUT, started)
+        for w in warnings:
+            log("WARNING:", w)
 
 
 if __name__ == "__main__":

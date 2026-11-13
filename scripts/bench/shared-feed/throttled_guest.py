@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.join(BENCH, "acceptance"))
 sys.path.insert(0, HERE)
 import run, drive, fleet  # noqa: E402
 import owner_load as ol  # noqa: E402
+import guest_link as gl  # noqa: E402
 
 SHAPER_LOG = os.path.join(ol.OUT, "shaper.log")
 N95_CDP = 9423
@@ -153,6 +154,10 @@ def main():
 
     shaper = None
     tunnel = None
+    started = time.time()
+    gl.keep_output()
+    warnings = []
+    slot4 = False
     run.kiosk_start(base, on_gpu=a.client_gpu)
     d = drive.Driver(run.DEBUG_PORT)
     guests = {}
@@ -197,6 +202,8 @@ def main():
         gx, gy, _w, _h = guest_rect
         for i, slot in enumerate((2, 3)):
             g = ol.Guest(slot, (gx + i * ol.GUEST_W, gy, ol.GUEST_W, ol.GUEST_H), guest_luid, 60)
+            # Kept before it joins: the finally closes its row whatever happens.
+            guests[slot] = g
             g.join(d, base)
             g.d.eval(DRAW_HOOK)
             guests[slot] = g
@@ -204,14 +211,10 @@ def main():
 
         # The N95's guest: its own Chrome in max's console session, reached
         # through an SSH tunnel to its DevTools port.
-        act = d.json_eval("""(async () => {
-            const r = await fetch('/api/share/slots/4/activate', {method: 'POST',
-                credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ttl_secs: 3600})});
-            return JSON.stringify(Object.assign({status: r.status}, await r.json()));
-        })()""")
-        link = act.get("url", "")
-        token = (re.search(r"/p/([^/?#]+)", link) or re.search(r"[#&]t=([^&]+)", link)).group(1)
+        # The link and the PIN stay in memory (guest_link); the link reaches the
+        # N95's Chrome over a pipe to cdp.py nav-stdin, through the tunnel.
+        slot4 = True
+        share = gl.activate(d, 4)
         log("N95 Chrome:", n95("powershell -NoProfile -ExecutionPolicy Bypass -File "
                                r"C:\Users\Public\mw-run\n95-chrome.ps1").strip()[-60:])
         tunnel = subprocess.Popen(["ssh", "-N", "-L", "%d:127.0.0.1:9222" % N95_CDP, "mw-intel"],
@@ -219,15 +222,15 @@ def main():
                                   stderr=subprocess.DEVNULL)
         time.sleep(4)
         nd = drive.Driver(N95_CDP)
+        gl.go(N95_CDP, a.lan_url, share)
         nd.call("Page.addScriptToEvaluateOnNewDocument", source=ol.HOOK)
-        nd.navigate(a.lan_url.rstrip("/") + "/p/" + token)
         nd.eval(ol.HOOK)
         g4 = ol.Guest(4, (0, 0, 0, 0), "", 90)
         g4.d = nd
         if not g4._wait("!!document.querySelector('.player-pin-input')", 90):
             raise SystemExit("N95: no PIN field")
-        nd.eval("(() => { const i = document.querySelector('.player-pin-input'); i.value = %s; "
-                "i.form.requestSubmit(); return 1; })()" % json.dumps(act["pin"]))
+        gl.enter_pin(nd, share)
+        share = None
         if not g4._wait("!!document.querySelector('.player-join-btn')", 90):
             raise SystemExit("N95: no Join button")
         nd.eval(ol.HOOK)
@@ -278,18 +281,20 @@ def main():
                 pass
             tunnel.terminate()
         for g in list(guests.values()):
-            g.leave(d)
-        try:
-            d.eval("fetch('/api/share/slots/4/deactivate', {method: 'POST', credentials: "
-                   "'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})")
-        except Exception:
-            pass
+            warnings += g.leave(d)
+        if slot4 and not gl.deactivate(d, 4):
+            warnings.append("slot 4 may still be open: close it on the share board")
         try:
             d.stop()
         except Exception:
             pass
         run.content_stop()
         run.kiosk_stop()
+        # The N95's own Chrome is stopped by n95-chrome.ps1 -Stop above; its
+        # profile there is that script's to remove.
+        gl.proof(ol.OUT, started)
+        for w in warnings:
+            log("WARNING:", w)
 
 
 if __name__ == "__main__":

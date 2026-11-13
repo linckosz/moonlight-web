@@ -14,9 +14,7 @@ whoever sits at the machine first, and check monitors.ps1 before and after.
 """
 import argparse
 import base64
-import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -27,6 +25,7 @@ BENCH = os.path.dirname(HERE)
 sys.path.insert(0, BENCH)
 sys.path.insert(0, os.path.join(BENCH, "acceptance"))
 import run, drive, fleet  # noqa: E402
+import guest_link as gl  # noqa: E402
 
 SCR = os.path.join(os.path.dirname(os.path.dirname(BENCH)), "bench-out", "shared-feed")
 HOOK = open(os.path.join(HERE, "hook.js"), encoding="utf-8").read()
@@ -50,18 +49,13 @@ def vd(d):
 
 
 def open_row(d, slot):
-    return d.json_eval("""(async () => {
-        const r = await fetch('/api/share/slots/%d/activate', {method: 'POST',
-            credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ttl_secs: 3600, host_uuid: '%s', app_id: %d})});
-        return JSON.stringify(Object.assign({status: r.status}, await r.json()));
-    })()""" % (slot, NATIVE, VD_APP))
+    """The row, on the native host's virtual display. Its link and PIN stay in
+    memory (guest_link); only share.info may be printed."""
+    return gl.activate(d, slot, {"host_uuid": NATIVE, "app_id": VD_APP})
 
 
 def close_row(d, slot):
-    return d.eval("fetch('/api/share/slots/%d/deactivate', {method: 'POST', credentials: "
-                  "'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})"
-                  ".then(r => r.status)" % slot)
+    return gl.deactivate(d, slot)
 
 
 class Guest:
@@ -71,21 +65,15 @@ class Guest:
         self.profile = ".chrome-guest-%d" % slot
         self.d = None
 
-    def join(self, base, act):
-        m = re.search(r"/p/([^/?#]+)", act.get("url", "")) or re.search(r"#t=([^&]+)", act.get("url", ""))
-        url = base.rstrip("/") + "/p/" + m.group(1)
-        x, y, w, h = self.rect
-        subprocess.run(["powershell", "-NoProfile", "-File", os.path.join(BENCH, "kiosk.ps1"),
-                        "-Url", url, "-X", str(x), "-Y", str(y), "-W", str(w), "-H", str(h),
-                        "-DebugPort", str(self.port), "-ChromeProfile", self.profile,
-                        "-AdapterLuid", self.luid, "-Windowed"], capture_output=True, text=True)
+    def join(self, base, share):
+        gl.open_kiosk(self.port, self.profile, self.rect, ["-AdapterLuid", self.luid, "-Windowed"])
         self.d = drive.Driver(self.port)
+        gl.go(self.port, base, share)
         self.d.call("Page.addScriptToEvaluateOnNewDocument", source=HOOK)
         self.d.eval(HOOK)
         if not self.wait("!!document.querySelector('.player-pin-input')", 40):
             raise SystemExit("guest %d: no PIN field" % self.slot)
-        self.d.eval("(() => { const i = document.querySelector('.player-pin-input'); i.value = %s; "
-                    "i.form.requestSubmit(); return 1; })()" % json.dumps(act["pin"]))
+        gl.enter_pin(self.d, share)
         if not self.wait("!!document.querySelector('.player-join-btn')", 40):
             raise SystemExit("guest %d: no Join button" % self.slot)
         self.d.eval(HOOK)
@@ -129,11 +117,8 @@ class Guest:
             return path
 
     def close(self):
-        subprocess.run(["powershell", "-NoProfile", "-Command",
-                        "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
-                        "Where-Object { $_.CommandLine -like '*%s*' } | "
-                        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" % self.profile],
-                       capture_output=True, text=True)
+        """Its Chrome closes and its profile goes: '' or a warning."""
+        return gl.close_kiosk(self.profile)
 
 
 def wait_vd(d, active, secs):
@@ -162,9 +147,14 @@ def main():
     base = fleet.lan_url("local", probe) or access.get("lan")
     log("base", base, "guest decodes on", amd[0], luid)
 
+    started = time.time()
+    gl.keep_output()
+    warnings = []
     run.kiosk_start(base, on_gpu="AMD")
     d = drive.Driver(run.DEBUG_PORT)
     guests = []
+    # The rows this run asked to open: each is closed in the finally, whatever happened.
+    rows = []
     try:
         d.navigate(base)
         d.eval("(async () => { await caches.delete('mw-shell'); for (const r of await "
@@ -174,11 +164,13 @@ def main():
             raise SystemExit("owner never reached the library")
         log("virtual display before:", vd(d))
 
-        act = open_row(d, 2)
-        log("row 2 opened cold:", {k: act.get(k) for k in ("status", "app_id", "host_uuid", "state")})
+        rows.append(2)
+        share = open_row(d, 2)
+        log("row 2 opened cold:", share.info)
         g2 = Guest(2, (2560 + 1280, 720, 1280, 720), luid)
         guests.append(g2)
-        ok, secs = g2.join(base, act)
+        ok, secs = g2.join(base, share)
+        share = None
         log("guest 2 canvas:", ok, "after %.1f s" % secs, g2.state())
         log("virtual display now:", vd(d))
         log("monitors now:", monitors())
@@ -187,11 +179,13 @@ def main():
         log("guest 2 screenshot:", p, g2.state())
 
         if a.second:
-            act3 = open_row(d, 3)
-            log("row 3 opened:", act3.get("status"))
+            rows.append(3)
+            share = open_row(d, 3)
+            log("row 3 opened:", share.info.get("status"))
             g3 = Guest(3, (2560 + 1280, 0, 1280, 720), luid)
             guests.append(g3)
-            ok3, secs3 = g3.join(base, act3)
+            ok3, secs3 = g3.join(base, share)
+            share = None
             log("guest 3 canvas:", ok3, "after %.1f s" % secs3, g3.state())
             log("virtual display now:", vd(d))
             time.sleep(5)
@@ -207,19 +201,35 @@ def main():
             log("owner streaming; virtual display:", vd(d).get("active"))
 
         for g in reversed(guests):
-            log("row %d closed:" % g.slot, close_row(d, g.slot))
-            g.close()
+            closed = close_row(d, g.slot)
+            log("row %d closed:" % g.slot, closed)
+            if closed:
+                rows.remove(g.slot)
+            left = g.close()
+            if left:
+                warnings.append(left)
+        guests = []
         st = wait_vd(d, False, 40)
         log("virtual display after the guests left:", st)
         if a.owner_other:
             d.stop()
             log("owner stopped")
     finally:
+        for slot in rows:
+            if not close_row(d, slot):
+                warnings.append("slot %d may still be open: close it on the share board" % slot)
         for g in guests:
-            g.close()
+            left = g.close()
+            if left:
+                warnings.append(left)
         run.kiosk_stop()
+        gl.proof(SCR, started)
+        for w in warnings:
+            log("WARNING:", w)
     time.sleep(3)
     log("monitors after:", monitors())
+    for w in warnings:
+        log("WARNING:", w)
 
 
 if __name__ == "__main__":
