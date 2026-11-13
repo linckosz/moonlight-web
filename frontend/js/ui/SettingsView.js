@@ -1110,6 +1110,8 @@ export class SettingsView {
             touch_pad_opacity: this._touchPad.opacity,
             touch_pad_vibrate: this._touchPad.vibrate,
             touch_pad_outside: this._touchPad.outside,
+            // Where the viewer put the controls, per orientation.
+            touch_pad_layout: this._touchPad.layout,
             mic_enabled: this._micEnabled,
             mic_chosen: this._micChosen,
             mic_quality: this._micQuality,
@@ -2710,6 +2712,7 @@ export class SettingsView {
             touch_pad_opacity: Number(field('opacity').value) / 100,
             touch_pad_vibrate: field('vibrate').checked,
             touch_pad_outside: field('outside').value,
+            touch_pad_layout: this._touchPad.layout,
         });
     }
 

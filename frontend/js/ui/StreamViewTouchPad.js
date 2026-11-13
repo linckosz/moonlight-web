@@ -68,6 +68,16 @@ export class StreamViewTouchPad {
     }
 
     /**
+     * The viewer's saved arrangement (`touch_pad_layout`), or null for the
+     * layout as drawn: a guest has no settings page, so nothing to save.
+     * @this {StreamViewInstance}
+     */
+    _touchPadLayout() {
+        const prefs = this._touchPadPrefs || {};
+        return prefs.layout || null;
+    }
+
+    /**
      * Whether this viewer could ever have one, whatever the screen says right
      * now. A guest needs the invitation's gamepad; a TV never has fingers.
      * @this {StreamViewInstance}
@@ -201,6 +211,8 @@ export class StreamViewTouchPad {
             scale: this._touchPadPref('scale'),
             opacity: this._touchPadPref('opacity'),
             ignoreOutside: this._touchPadPref('outside') === 'ignore',
+            // The viewer's own arrangement, which orientation picks from.
+            layout: this._touchPadLayout(),
             onChanged: poke,
             // As the trackpad does for a touch of its own.
             onTouch: () => {

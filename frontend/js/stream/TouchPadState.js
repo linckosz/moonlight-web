@@ -332,6 +332,80 @@ export class TouchPadState {
 }
 
 /**
+ * The controls a saved layout may name: everything drawn, the two pills, and
+ * each stick's resting ring. The button that hides the controller is not one of
+ * them: it follows the two pills it sits between.
+ */
+export const TOUCH_PAD_CONTROLS = [
+    'lt',
+    'lb',
+    'rt',
+    'rb',
+    'x',
+    'y',
+    'a',
+    'b',
+    'dpad',
+    'l3',
+    'r3',
+    'view',
+    'menu',
+    'stick-left',
+    'stick-right',
+];
+
+/** What a layout may start from; a viewer's own places are kept on top. */
+export const TOUCH_PAD_PRESETS = ['default', 'left', 'compact'];
+
+/** How small or large a moved control may get, on top of the size setting. */
+const OVERRIDE_MIN = 0.8;
+const OVERRIDE_MAX = 1.3;
+
+/** Which of the two saved layouts a screen uses. */
+export function layoutOrientation(width, height) {
+    return height > width ? 'portrait' : 'landscape';
+}
+
+/**
+ * The saved layout, cleaned: a preset and, per orientation, the controls the
+ * viewer moved, as shares of the layer (`{ x, y, s }`, the centre of the drawn
+ * control). Nothing a hand-edited or older save holds beyond that survives: an
+ * unknown control, a coordinate off the screen or a size no editor offers is
+ * dropped, and that control keeps the place the layout gives it.
+ * @param {any} raw
+ */
+export function touchPadLayouts(raw) {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const clean = {};
+    for (const orientation of ['landscape', 'portrait']) {
+        const saved = source[orientation];
+        const out = {};
+        if (saved && typeof saved === 'object') {
+            for (const id of TOUCH_PAD_CONTROLS) {
+                const entry = saved[id];
+                if (!entry || typeof entry !== 'object') continue;
+                const { x, y } = entry;
+                if (typeof x !== 'number' || !(x >= 0 && x <= 1)) continue;
+                if (typeof y !== 'number' || !(y >= 0 && y <= 1)) continue;
+                const s =
+                    typeof entry.s === 'number' &&
+                    entry.s >= OVERRIDE_MIN &&
+                    entry.s <= OVERRIDE_MAX
+                        ? entry.s
+                        : 1;
+                out[id] = { x, y, s };
+            }
+        }
+        clean[orientation] = out;
+    }
+    return {
+        preset: TOUCH_PAD_PRESETS.includes(source.preset) ? source.preset : 'default',
+        landscape: clean.landscape,
+        portrait: clean.portrait,
+    };
+}
+
+/**
  * The controller's settings as saved (Settings → On-screen controller, per
  * device), with the defaults of a viewer who never opened them.
  * @param {Record<string, any>} [data]
@@ -345,6 +419,7 @@ export function touchPadSettings(data = {}) {
         opacity: within(data.touch_pad_opacity, 0.2, 1, 1),
         vibrate: data.touch_pad_vibrate !== false,
         outside: data.touch_pad_outside === 'ignore' ? 'ignore' : 'mouse',
+        layout: touchPadLayouts(data.touch_pad_layout),
     };
 }
 
@@ -363,10 +438,23 @@ export function touchPadSettings(data = {}) {
  * ring rests at when no one holds it. `toggle` is where the button that hides the
  * controller goes between View and Menu: it is not one of the pad's controls.
  *
+ * `preset` and `overrides` are a viewer's own arrangement (`touchPadLayouts`):
+ * the preset moves the whole thing first, then each moved control takes its
+ * saved place as a share of the layer. With neither, the layout is exactly the
+ * one above, which is what every screen and every setting is measured against.
+ *
  * @param {{width: number, height: number, scale?: number,
- *          insets?: {top?: number, right?: number, bottom?: number, left?: number}}} opts
+ *          insets?: {top?: number, right?: number, bottom?: number, left?: number},
+ *          preset?: string, overrides?: Record<string, {x: number, y: number, s: number}>|null}} opts
  */
-export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) {
+export function layoutTouchPad({
+    width: w,
+    height: h,
+    scale = 1,
+    insets = {},
+    preset = 'default',
+    overrides = null,
+}) {
     const short = Math.min(w, h);
     // A button's diameter. Past what fits, the scale gives way, so the two sides
     // never meet on a phone held upright.
@@ -491,17 +579,161 @@ export function layoutTouchPad({ width: w, height: h, scale = 1, insets = {} }) 
         restX: w - restInward,
         restY,
     });
+    const toggle = {
+        x: w / 2 - toggleSize / 2,
+        y: middleY - toggleSize / 2,
+        w: toggleSize,
+        h: toggleSize,
+    };
     return {
         d,
         radius,
         controls,
-        toggle: {
-            x: w / 2 - toggleSize / 2,
-            y: middleY - toggleSize / 2,
-            w: toggleSize,
-            h: toggleSize,
-        },
+        toggle: tunedToggle({ controls, toggle, preset, overrides, w, h, d, left, right, insets }),
     };
+}
+
+/** The centre a control is drawn around, whichever way it was built. */
+function centreOf(c) {
+    return {
+        x: c.cx !== undefined ? c.cx : c.x + c.w / 2,
+        y: c.cy !== undefined ? c.cy : c.y + c.h / 2,
+    };
+}
+
+/** A value kept between two bounds, which may have crossed on a narrow screen. */
+function clampTo(v, min, max) {
+    return min > max ? (min + max) / 2 : Math.min(max, Math.max(min, v));
+}
+
+/**
+ * The toggle between View and Menu, moved with them; and before that, the
+ * preset and the viewer's own places applied to the controls.
+ *
+ * With no preset and nothing moved, this returns `toggle` untouched: the
+ * default layout is the one everything else is measured against.
+ */
+function tunedToggle({ controls, toggle, preset, overrides, w, h, d, left, right, insets }) {
+    const moved = preset !== 'default' || (overrides && Object.keys(overrides).length > 0);
+    if (!moved) return toggle;
+    if (preset !== 'default') applyPreset(controls, preset, w, h);
+    if (overrides) {
+        applyOverrides(controls, overrides, {
+            w,
+            h,
+            d,
+            left,
+            right,
+            top: Math.max(8, insets.top || 0),
+            bottom: Math.max(8, insets.bottom || 0),
+        });
+    }
+    const view = controls.find((c) => c.id === 'view');
+    const menu = controls.find((c) => c.id === 'menu');
+    if (!view || !menu) return toggle;
+    const size = toggle.w;
+    const mid = (centreOf(view).x + centreOf(menu).x) / 2;
+    return {
+        x: clampTo(mid - size / 2, 0, w - size),
+        y: clampTo(centreOf(view).y - size / 2, 0, h - size),
+        w: size,
+        h: toggle.h,
+    };
+}
+
+/**
+ * A preset's own arrangement, applied to the layout as built. `left` mirrors
+ * everything a right-handed thumb reaches for; `compact` pulls the whole
+ * arrangement a little inward and shrinks what it draws, for hands that cannot
+ * reach the edges. The zones of the sticks stay where they are: a side is a
+ * side whatever the preset, and only the ring's rest moves.
+ */
+function applyPreset(controls, preset, w, h) {
+    if (preset === 'left') {
+        for (const c of controls) {
+            const centre = centreOf(c);
+            const x = w - centre.x;
+            if (c.kind === 'stick') {
+                c.restX = w - c.restX;
+                continue;
+            }
+            c.x = x - c.w / 2;
+            if (c.cx !== undefined) c.cx = x;
+        }
+    } else if (preset === 'compact') {
+        const inward = (v, size) => size / 2 + (v - size / 2) * 0.88;
+        for (const c of controls) {
+            if (c.kind === 'stick') {
+                c.restX = inward(c.restX, w);
+                c.restY = inward(c.restY, h);
+                continue;
+            }
+            const centre = centreOf(c);
+            const reach = c.kind === 'dpad' ? c.reach - c.w / 2 : 0;
+            const nw = c.w * 0.9;
+            const nh = c.h * 0.9;
+            const cx = inward(centre.x, w);
+            const cy = inward(centre.y, h);
+            c.w = nw;
+            c.h = nh;
+            c.x = cx - nw / 2;
+            c.y = cy - nh / 2;
+            if (c.cx !== undefined) {
+                c.cx = cx;
+                c.cy = cy;
+            }
+            if (c.kind === 'dpad') c.reach = nw / 2 + reach * 0.9;
+        }
+    }
+}
+
+/**
+ * What the viewer moved: each control's centre as shares of the layer, and how
+ * much bigger or smaller it was made. Everything stays where a thumb can reach
+ * and where the safe areas leave room; a stick's ring stays inside its own zone,
+ * or a thumb resting on it would be over the picture instead.
+ */
+function applyOverrides(controls, overrides, { w, h, d, left, right, top, bottom }) {
+    for (const c of controls) {
+        const o = overrides[c.id];
+        if (!o) continue;
+        const size = o.s;
+        if (c.kind === 'stick') {
+            c.restX = clampTo(
+                o.x * w,
+                Math.max(c.x + c.radius, left + c.radius),
+                Math.min(c.x + c.w - c.radius, w - right - c.radius),
+            );
+            c.restY = clampTo(
+                o.y * h,
+                Math.max(c.y + c.radius, top + c.radius),
+                Math.min(c.y + c.h - c.radius, h - bottom - c.radius),
+            );
+            continue;
+        }
+        const nw = c.w * size;
+        const nh = c.h * size;
+        const cx = clampTo(o.x * w, left + nw / 2, w - right - nw / 2);
+        const cy = clampTo(o.y * h, top + nh / 2, h - bottom - nh / 2);
+        c.w = nw;
+        c.h = nh;
+        c.x = cx - nw / 2;
+        c.y = cy - nh / 2;
+        if (c.kind === 'dpad') {
+            c.cx = cx;
+            c.cy = cy;
+            // The cross answers a little past what it draws, as it always did.
+            c.reach = nw / 2 + d * 0.05 * size;
+        } else {
+            if (c.cx !== undefined) {
+                c.cx = cx;
+                c.cy = cy;
+            }
+            // A round key's reach and a pill's slack follow what is drawn.
+            if (c.r) c.r = nw * 0.62;
+            if (c.pill) c.slack = Math.max(0, (44 - nh) / 2);
+        }
+    }
 }
 
 /** The buttons a dpad means under a finger, diagonals included. */
