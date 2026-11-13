@@ -21,8 +21,10 @@
 #include "server/routes/HostManualAdd.h"
 #include "server/ClientUniqueId.h"
 #include "server/HttpServer.h"
+#include "server/LanHttp.h"
 #include "server/RestRouter.h"
 #include "backend/ComputerManager.h"
+#include "backend/streambackend/NativeHostBackend.h"
 #include "backend/streambackend/StreamBackendRegistry.h"
 
 #include <QJsonArray>
@@ -32,6 +34,11 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
 {
     server.router()->get("/api/hosts", [&computerManager](const HttpRequest& req) {
         QJsonArray hosts = computerManager.getHostsJson();
+        // A TV on plain HTTP reads this machine's own host and no other, not
+        // even another's name (issue #42; LanHttp::hostsFor).
+        if (req.lanHttp)
+            hosts = LanHttp::hostsFor(hosts, NativeHostBackend::hostUuid(),
+                                      NativeHostBackend::typeName(), LanHttp::kStreamsThisPc);
         for (qsizetype i = 0; i < hosts.size(); ++i)
             hosts[i] = hostForReader(hosts[i].toObject(), req.isLocal);
         QJsonObject obj;

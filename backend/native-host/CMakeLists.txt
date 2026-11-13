@@ -60,6 +60,7 @@ if(WIN32)
         src/platform/windows/DisplayOutputs.cpp
         src/platform/windows/WindowsSession.cpp
         src/platform/windows/InputDesktop.cpp
+        src/platform/windows/SessionLockWatch.cpp
         src/platform/windows/CrossGpuBridge.cpp
         src/platform/windows/StreamPriority.cpp
         src/platform/windows/Win32PointerSystem.cpp
@@ -614,6 +615,7 @@ if(MW_BUILD_TESTS)
         tests/test_deadline_cadence.cpp
         tests/test_click_trace.cpp
         tests/test_restart_backoff.cpp
+        tests/test_desktop_gate.cpp
         tests/test_rate_control.cpp
         tests/test_qp_rate_controller.cpp
         tests/test_virtual_display.cpp

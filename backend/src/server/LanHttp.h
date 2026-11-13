@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QJsonArray>
 #include <QMap>
 #include <QSet>
 #include <QString>
@@ -46,7 +47,8 @@
  *   - what it may ask: the short list of routes below, and nothing a later
  *     route adds unless it is named here;
  *   - with which key: the `mw_lan_http` cookie, read on this path and on no
- *     other, while the HTTPS cookies are never read on this one.
+ *     other, while the HTTPS cookies are never read on this one;
+ *   - which host: this machine's own, on Windows, and no other (hostAllowed).
  */
 namespace LanHttp {
 
@@ -93,6 +95,35 @@ bool originAllowed(const QString& origin, const QString& validatedHost);
 /// (any path outside /api/) are read with GET or HEAD.
 bool route(const QString& method, const QString& path);
 
+/// Whether this server lets a device on plain HTTP stream at all: on Windows,
+/// where this machine's own host holds such a stream to the user's unlocked
+/// desktop (native-host core/DesktopGate.h). Elsewhere it reaches no host.
+#ifdef Q_OS_WIN
+inline constexpr bool kStreamsThisPc = true;
+#else
+inline constexpr bool kStreamsThisPc = false;
+#endif
+
+/// Whether @p path names a host, "/api/hosts/<id>" and below; @p id gets its
+/// id, empty when the segment is.
+bool namesHost(const QString& path, QString* id = nullptr);
+
+/// Whether a device on plain HTTP may reach the host the server knows by
+/// @p id, of backend @p backendType: this machine's own host (@p nativeId, of
+/// backend @p nativeType), on a server that streams it (@p streamsThisPc),
+/// and no other. Known by its id AND its backend, never by an address: a
+/// Sunshine on 127.0.0.1 or on this machine's own LAN address is another
+/// host. The lock state another server's screen is in is not this one's to
+/// read, and a TV's key, which travels in clear, never drives it.
+bool hostAllowed(const QString& id, const QString& backendType, const QString& nativeId,
+                 const QString& nativeType, bool streamsThisPc);
+
+/// /api/hosts as a device on plain HTTP reads it: the hosts it may reach
+/// (hostAllowed, on each entry's "uuid" and "backendType") and no other, not
+/// even their names or addresses.
+QJsonArray hostsFor(const QJsonArray& hosts, const QString& nativeId, const QString& nativeType,
+                    bool streamsThisPc);
+
 /// The stream socket a device on plain HTTP may open: the signalling one of a
 /// slot, "/ws" (slot 0) or "/wsN". Never the legacy video relay
 /// ("/ws/stream", "/wsN/stream"), never the control channel. -1 for anything
@@ -134,9 +165,10 @@ enum class Key
 enum class Verdict
 {
     Serve,
-    NotFound,    ///< not a route of the list: 404
-    Forbidden,   ///< another page, or a body that is not JSON: 403
-    Unauthorized ///< a route that wants the key, without it: 401
+    NotFound,     ///< not a route of the list: 404
+    Forbidden,    ///< another page, or a body that is not JSON: 403
+    Unauthorized, ///< a route that wants the key, without it: 401
+    OtherHost     ///< a route naming a host other than this machine's own: 403
 };
 
 struct Gate
@@ -152,9 +184,12 @@ struct Gate
 };
 
 /// The decision serveLanHttp applies, without a socket: @p guardRefused is
-/// RequestGuard::evaluate's refusal (another site, a body that is not JSON).
+/// RequestGuard::evaluate's refusal (another site, a body that is not JSON);
+/// @p hostAllowed says whether a host a route names may be reached
+/// (hostAllowed, with what the server knows of that host). Empty: none may.
 Gate gate(const QString& method, const QString& path, const QMap<QString, QString>& headers,
-          const QString& validatedHost, Key key, bool guardRefused);
+          const QString& validatedHost, Key key, bool guardRefused,
+          const std::function<bool(const QString& hostId)>& hostAllowed = {});
 
 struct WsGate
 {

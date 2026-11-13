@@ -98,6 +98,23 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
                                                    RumbleCallback onRumble, CursorCallback onCursor,
                                                    SessionEndedCallback onEnded, std::string& error)
 {
+    // A stream held to the user's own desktop (a TV on plain HTTP) is kept off
+    // the lock screen by the session's lock state, which this module reads on
+    // Windows only (platform/windows/SessionLockWatch). Anywhere else it is
+    // refused rather than streamed with nothing to hold it; the server refuses
+    // it first (LanHttp::hostAllowed). Nor does it ever take the guests'
+    // shared feed, whose pictures it could not hold back.
+#ifndef _WIN32
+    if (config.defaultDesktopOnly) {
+        error = "a stream held to the user's own desktop is offered on Windows only";
+        return nullptr;
+    }
+#endif
+    if (config.defaultDesktopOnly && config.videoSource == VideoSource::External) {
+        error = "a stream held to the user's own desktop never takes the shared feed's pictures";
+        return nullptr;
+    }
+
     if (config.videoSource == VideoSource::External) {
         SessionCallbacks callbacks;
         callbacks.onAudio = std::move(onAudio);

@@ -92,6 +92,7 @@ void run_cadence_step_tests();
 void run_decode_credit_tests();
 void run_deadline_cadence_tests();
 void run_restart_backoff_tests();
+void run_desktop_gate_tests();
 void run_click_trace_tests();
 void run_rate_control_tests();
 void run_qp_rate_controller_tests();
@@ -195,6 +196,7 @@ int main(int argc, char** argv)
     RUN(decode_credit);
     RUN(deadline_cadence);
     RUN(restart_backoff);
+    RUN(desktop_gate);
     RUN(click_trace);
     RUN(rate_control);
     RUN(qp_rate_controller);

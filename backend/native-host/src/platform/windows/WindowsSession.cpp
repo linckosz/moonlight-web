@@ -47,6 +47,7 @@
 #include "DisplayOutputs.h"
 #include "../SignInScreen.h"
 #include "InputDesktop.h"
+#include "SessionLockWatch.h"
 #include "StreamPriority.h"
 #include "Win32PointerSystem.h"
 #include "video/D3d11VideoPipeline.h"
@@ -306,6 +307,12 @@ public:
             }
             return startExternal(*display, error);
         }
+
+        // A TV on plain HTTP: its pictures and its input go only while the
+        // desktop gate is open (core/DesktopGate.h), which this session's
+        // watcher opens at the first read that says unlocked, before the first
+        // picture. No watcher, no stream: the gate would never open.
+        if (m_Config.defaultDesktopOnly && !startDesktopGate(error)) return false;
 
         // Out of EcoQoS and ahead of the game on the GPU before anything is
         // built: a D3D12 queue takes the priority of the class it is made
@@ -569,7 +576,7 @@ public:
                 if (m_Config.onPadNumber) m_Config.onPadNumber(controllerNumber, hostNumber);
             });
         sink->setAllowElevated(m_Config.allowElevatedInput);
-        sink->setDefaultDesktopOnly(m_Config.defaultDesktopOnly);
+        if (m_DesktopGate) sink->setDesktopGate(m_DesktopGate);
         if (m_Config.tuning.clickTrace) sink->setClickTrace(&m_ClickTrace);
         // On a host with no pointing device, a mouse of its own: the pointer,
         // and a device for games (SystemMouse.h). Mouse Keys when it cannot.
@@ -618,6 +625,13 @@ public:
                                                  : m_Config.tuning.audioGraceUs,
                 AppAudioOptions{m_Config.audioSource, m_StreamedDisplay,
                                 m_Config.onAudioAppChanged});
+            // A TV on plain HTTP: the host's sound goes with the picture, and
+            // silence while the desktop gate holds it (DesktopGate::soundMayGo).
+            if (m_DesktopGate)
+                audio->setHold([this] {
+                    return !m_DesktopGate->soundMayGo(
+                        m_PictureSentGen.load(std::memory_order_acquire));
+                });
             std::string audioError;
             if (audio->start(audioError)) {
                 m_Audio = std::move(audio);
@@ -639,6 +653,11 @@ public:
             else
                 m_Thread.join();
         }
+        // The watcher reaches the input sink and the loop's flags: stopped
+        // after the loop that kicks it, before the sink goes. Kept until the
+        // session goes, for an encode thread that may still kick it (a no-op
+        // once stopped).
+        if (m_LockWatch) m_LockWatch->stop();
         // Torn down before the capture, and under the lock, because inject()
         // runs on the network thread and may be in flight right now. Dropping
         // the sink releases whatever the user was still holding.
@@ -1954,6 +1973,8 @@ private:
                 if (blank && !blankShown) {
                     if (m_Pipeline->convertBlank(cursorDraw(), error)) {
                         blankShown = true;
+                        // Nothing of the screen: it goes while the gate is open.
+                        m_ConvertedGen = m_DesktopGate ? m_DesktopGate->generation() : 0;
                     } else {
                         log::warning("[native] could not draw the blank picture: " + error);
                         m_Pipeline->releaseBlank();
@@ -2771,6 +2792,7 @@ private:
         };
 
         m_LoopStartUs = steadyNowUs();
+        m_LoopGateGen = m_DesktopGate ? m_DesktopGate->generation() : 0;
         m_LoadCap.start(m_LoopStartUs);
         m_Hold.start(m_LoopStartUs, m_CadenceFps);
         while (m_Running.load()) {
@@ -2912,6 +2934,7 @@ private:
                         finish("colour conversion failed: " + error);
                         return;
                     }
+                    m_ConvertedGen = m_RetainedGen;
                     awaitingPicture = false;
                     if (!emitPicture(resendStamps(steadyNowUs()), false)) return;
                 } else {
@@ -2940,11 +2963,24 @@ private:
                     finish("colour conversion failed: " + error);
                     return;
                 }
+                m_ConvertedGen = m_RetainedGen;
                 if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
                 lastSentUs = steadyNowUs();
                 noteReal();
             }
             if (desktopWanted() && !retakeDesktop()) return;
+
+            // A TV on plain HTTP: the gate's generation this turn's picture is
+            // taken in, read once and before the acquire. Opened since the
+            // last turn: the desktop is handed over again first.
+            uint64_t turnGen = 0;
+            if (m_DesktopGate) {
+                turnGen = m_DesktopGate->generation();
+                if (turnGen != m_LoopGateGen) {
+                    m_LoopGateGen = turnGen;
+                    if (DesktopGate::isOpen(turnGen) && !freshDesktopAfterGate()) return;
+                }
+            }
 
             capture::CapturedFrame frame;
             // A duplication that turned out to paint the pointer in is left for
@@ -3091,6 +3127,7 @@ private:
                         finish("colour conversion failed: " + error);
                         return;
                     }
+                    m_ConvertedGen = m_RetainedGen;
                     if (!emit(frameNumber, resendStamps(steadyNowUs()), error)) return;
                     noteReal();
                     continue;
@@ -3186,6 +3223,7 @@ private:
                     finish("colour conversion failed: " + error);
                     return;
                 }
+                m_ConvertedGen = m_RetainedGen;
                 // No present of its own — the picture changed when the pointer
                 // did, so that is its t₀. A picture like any other from here:
                 // gated by the cadence if one is running, and when it goes out
@@ -3294,6 +3332,9 @@ private:
                 finish("colour conversion failed: " + error);
                 return;
             }
+            // Taken in this turn's generation, and so is the copy it keeps.
+            m_ConvertedGen = turnGen;
+            if (retain) m_RetainedGen = turnGen;
             awaitingPicture = false;
             // Handed over for a copy the conversion could not keep: the next
             // retake would end the same way.
@@ -3377,11 +3418,19 @@ private:
     {
         const int encoderKbps = m_EncoderKbps;
         const int linkKbps = m_LinkKbps;
-        m_Pipeline->encodeLater([this, &frameNumber, stamps, encoderKbps, linkKbps](
+        // The converter's picture is this job's: its generation goes with it.
+        const uint64_t pictureGen = m_ConvertedGen;
+        m_Pipeline->encodeLater([this, &frameNumber, stamps, encoderKbps, linkKbps, pictureGen](
                                     const WindowsVideoPipeline::EncodePicture& encodePicture) {
             Delivered d;
             d.stamps = stamps;
             d.linkKbps = linkKbps;
+            if (!pictureMayEncode(pictureGen)) {
+                d.skipped = true;
+                std::lock_guard<std::mutex> lock(m_DeliveredMutex);
+                m_Delivered.push_back(std::move(d));
+                return;
+            }
             invalidateLost();
             const bool forceKeyframe = m_ForceKeyframe.exchange(false);
             encode::EncoderOutput encoded;
@@ -3392,7 +3441,7 @@ private:
                 d.bytes = encoded.size;
                 d.qp = encoded.avgQp;
                 if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend() &&
-                    userDesktopMaySend()) {
+                    pictureMaySend(pictureGen)) {
                     d.frame = encodedFrame(encoded, frameNumber++, stamps, encoderKbps);
                     m_Callbacks.onVideo(d.frame);
                     d.frame.data = nullptr;
@@ -3441,6 +3490,10 @@ private:
             delivered.swap(m_Delivered);
         }
         for (const Delivered& d : delivered) {
+            if (d.skipped) {
+                m_DeliveredUncounted++;
+                continue;
+            }
             if (d.result == WindowsVideoPipeline::EncodeResult::Lost) {
                 pipelineLost(d.error);
                 continue;
@@ -3543,6 +3596,11 @@ private:
             if (!absorbDelivered()) return false;
         }
 
+        // A TV on plain HTTP: nothing is encoded while the desktop gate holds
+        // the converter's picture back (pictureMayEncode).
+        const uint64_t pictureGen = m_ConvertedGen;
+        if (!pictureMayEncode(pictureGen)) return true;
+
         invalidateLost();
 
         const bool forceKeyframe = m_ForceKeyframe.exchange(false);
@@ -3566,7 +3624,7 @@ private:
         m_Link.sent(steadyNowUs(), encoded.size, m_LinkKbps);
 
         if (encoded.data && encoded.size > 0 && m_Callbacks.onVideo && signInMaySend() &&
-            userDesktopMaySend()) {
+            pictureMaySend(pictureGen)) {
             EncodedFrame out = encodedFrame(encoded, frameNumber++, stamps, m_EncoderKbps);
             attachMwsrZones(out);
             // Before the send, which is not the picture's own cost.
@@ -3805,6 +3863,12 @@ private:
     void reportCursor()
     {
         if (!m_Callbacks.onCursor || m_CompositeCursor.load()) return;
+        // A TV on plain HTTP: nothing of the screen while the desktop gate is
+        // closed, the pointer's shape neither; said again at the opening.
+        if (m_DesktopGate && !m_DesktopGate->open()) {
+            m_ResendCursor.store(true);
+            return;
+        }
 
         const capture::CursorState& cursor = m_Capture->cursor();
         const bool forced = m_ResendCursor.exchange(false);
@@ -3867,6 +3931,12 @@ private:
         if (m_CompositeCursor.load()) {
             // Nothing to say while we draw it; and the client that takes it
             // over next has seen nothing, so the first position must go out.
+            m_PositionGate.reset();
+            return;
+        }
+        // Nor its place while the desktop gate is closed; the first one after
+        // the opening goes out whatever it is.
+        if (m_DesktopGate && !m_DesktopGate->open()) {
             m_PositionGate.reset();
             return;
         }
@@ -4664,25 +4734,83 @@ private:
         return true;
     }
 
-    /// A TV on plain HTTP (SessionConfig::defaultDesktopOnly), where an encoded
-    /// picture is handed out: only while the input desktop is the user's own.
-    /// The secure desktop's pictures (UAC, the lock screen) are held back and
-    /// the viewer keeps the last one; the first picture after the switch back
-    /// asks for a key frame. Each switch is said once.
-    bool userDesktopMaySend()
+    /// The desktop gate and its watcher (SessionConfig::defaultDesktopOnly):
+    /// the watcher lets go of the viewer's input at each close, under the
+    /// input lock, and has the next picture sent a key frame at each opening.
+    bool startDesktopGate(std::string& error)
     {
-        if (!m_Config.defaultDesktopOnly) return true;
-        const bool onUser = platform::isUserDesktop(platform::inputDesktopName());
-        const int now = onUser ? 1 : 0;
-        const int before = m_PicturesOnUserDesktop.exchange(now);
-        // Back on the user's desktop: the pictures held back were references
-        // the viewer never got, so the next one is a key frame.
-        if (before == 0 && onUser) m_ForceKeyframe.store(true);
-        if (before != now && !(before == -1 && onUser))
-            log::info(onUser ? "[native] plain HTTP: the user's desktop is back, pictures resume"
-                             : "[native] plain HTTP: the input desktop is not the user's own, "
-                               "pictures are held back");
-        return onUser;
+        m_DesktopGate = std::make_shared<DesktopGate>();
+        platform::SessionLockWatch::Callbacks callbacks;
+        callbacks.onClosed = [this] {
+            std::lock_guard<std::mutex> lock(m_InputMutex);
+            if (m_Input) m_Input->releaseForGate();
+        };
+        callbacks.onOpened = [this] { m_ForceKeyframe.store(true); };
+        m_LockWatch =
+            std::make_unique<platform::SessionLockWatch>(m_DesktopGate, std::move(callbacks));
+        if (m_LockWatch->start(error)) return true;
+        m_LockWatch.reset();
+        error = "the session's lock state cannot be watched: " + error;
+        return false;
+    }
+
+    /// A TV on plain HTTP, before the picture in the converter is encoded: the
+    /// gate's word as it stands, one atomic read — open, and at the very
+    /// generation the picture was taken in (core/DesktopGate.h). Held back,
+    /// nothing of it is encoded, and the next picture sent is a key frame.
+    bool pictureMayEncode(uint64_t generation)
+    {
+        if (!m_DesktopGate) return true;
+        if (m_DesktopGate->admitPicture(generation, true)) return true;
+        m_ForceKeyframe.store(true);
+        return false;
+    }
+
+    /// The same where an encoded picture is handed out, with the input desktop
+    /// read now: one that is not the user's closes the gate, and has the
+    /// watcher read the session and let go of the viewer's input at once. Held
+    /// back, the viewer keeps the last picture it had, and the next one sent is
+    /// a key frame: the ones in between were references it never got.
+    bool pictureMaySend(uint64_t generation)
+    {
+        if (!m_DesktopGate) return true;
+        bool closedNow = false;
+        const bool go = m_DesktopGate->admitPicture(
+            generation, platform::isUserDesktop(platform::inputDesktopName()), &closedNow);
+        if (closedNow && m_LockWatch) m_LockWatch->kick();
+        if (!go) {
+            m_ForceKeyframe.store(true);
+            return false;
+        }
+        // The sound goes from now on (soundMayGo): with this picture.
+        m_PictureSentGen.store(generation, std::memory_order_release);
+        return true;
+    }
+
+    /// The desktop gate opened since the loop's last turn: the capture hands
+    /// the desktop over again before the next acquire, so that nothing it
+    /// queued or kept while the gate was closed (the lock screen's pictures
+    /// in WGC's pool) is ever taken for a new picture, and a still desktop goes
+    /// at once rather than at its next change. What the converter holds, and
+    /// the copy kept for the pointer, are of an older generation: never sent
+    /// again. A capture that cannot hand it over says Lost at the next
+    /// acquire, and the ordinary restart opens it afresh. False only when the
+    /// session ends.
+    bool freshDesktopAfterGate()
+    {
+        if (m_Pipeline->pipelined()) {
+            m_Pipeline->settle();
+            if (!absorbDelivered()) return false;
+        }
+        m_Pipeline->forgetCaptured();
+        // DXGI duplicates the desktop of the calling thread: see openCapture().
+        platform::attachThread();
+        std::string why;
+        if (!m_Capture->retake(why))
+            log::info("[native] plain HTTP: the desktop could not be handed over again (" + why +
+                      ") — the next picture comes with the screen's next change");
+        m_ForceKeyframe.store(true);
+        return true;
     }
 
     void finish(const std::string& reason) noexcept
@@ -4696,9 +4824,22 @@ private:
         }
     }
 
-    /// userDesktopMaySend's last look: -1 none yet, 0 another desktop, 1 the
-    /// user's own.
-    std::atomic<int> m_PicturesOnUserDesktop{-1};
+    /// SessionConfig::defaultDesktopOnly (a TV on plain HTTP): the gate that
+    /// holds its pictures and its input to the user's own unlocked desktop,
+    /// shared with the input sink, and the watcher that opens it. Null for
+    /// every other stream.
+    std::shared_ptr<DesktopGate> m_DesktopGate;
+    std::unique_ptr<platform::SessionLockWatch> m_LockWatch;
+    /// The gate's generation the picture in the converter was taken in, and
+    /// the one of the desktop copy kept for the pointer; the generation the
+    /// loop last acted on. The loop's thread only.
+    uint64_t m_ConvertedGen = 0;
+    uint64_t m_RetainedGen = 0;
+    uint64_t m_LoopGateGen = 0;
+    /// The generation of the last picture handed out, for the sound (none
+    /// yet: a value no generation takes). Written where pictures go, read by
+    /// the audio thread.
+    std::atomic<uint64_t> m_PictureSentGen{~uint64_t(0)};
 
     /// Sign-in screen mode's figures (signInStillShown, signInMaySend).
     std::atomic<uint64_t> m_SignInSent{0};
@@ -5001,6 +5142,8 @@ private:
         int linkKbps = 0;
         /// Handed to onVideo: the frame, its data gone with the encoder's buffer.
         bool sent = false;
+        /// Held back by the desktop gate before its encode: nothing was made.
+        bool skipped = false;
         EncodedFrame frame;
         FrameStamps stamps;
     };

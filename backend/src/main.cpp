@@ -3740,10 +3740,11 @@ int main(int argc, char* argv[])
 
         // A TV on plain HTTP (issue #42, server/LanHttp.h). Its token is its
         // slot's session from here on: what a revocation cuts and what its
-        // stream socket is opened with. It streams once, never the sign-in
-        // screen, never as a second leg, and never in place of another
-        // device: a key that travels in clear must not end someone else's
-        // stream (Q1). The owner's own devices still take over a TV's.
+        // stream socket is opened with. It streams this machine's own host
+        // only, on Windows; once, never the sign-in screen, never as a second
+        // leg, and never in place of another device: a key that travels in
+        // clear must not end someone else's stream (Q1). The owner's own
+        // devices still take over a TV's.
         const QString lanHttpToken =
             req.lanHttp ? HttpServer::streamTokenFromRequest(req) : QString();
         if (req.lanHttp) {
@@ -3752,6 +3753,13 @@ int main(int argc, char* argv[])
             if (lanHttpToken.isEmpty()) {
                 refusal = QStringLiteral("authentication_required");
                 status = 401;
+            } else if (!LanHttp::hostAllowed(
+                           host->uuid, host->backendType, NativeHostBackend::hostUuid(),
+                           NativeHostBackend::typeName(), LanHttp::kStreamsThisPc)) {
+                // This machine's own host, on Windows, and no other: the gate
+                // already said so (HttpServer::serveLanHttp), and it is said
+                // again where the stream starts.
+                refusal = QStringLiteral("plain_http_this_pc_only");
             } else if (host->backendType == NativeHostBackend::typeName() &&
                        body["appId"].toInt(0) == NativeHostBackend::signInScreenAppId()) {
                 refusal = QStringLiteral("sign_in_screen_not_over_plain_http");
@@ -7831,6 +7839,14 @@ int main(int argc, char* argv[])
          [&rendezvous]() { return rendezvous.isOnline() ? rendezvous.entryUrl() : QString(); },
          [&server]() { return server.activeHttpsPort(); }});
     server.setLanHttpClientsProvider([&appSettings]() { return appSettings.lanHttpClients(); });
+    // And the one host it reaches, by every route that names one: this
+    // machine's own, on Windows (LanHttp::hostAllowed, security review 13/11).
+    server.setLanHttpHostCheck([&computerManager](const QString& id) {
+        const NvComputer* host = computerManager.getHost(id);
+        return host &&
+               LanHttp::hostAllowed(host->uuid, host->backendType, NativeHostBackend::hostUuid(),
+                                    NativeHostBackend::typeName(), LanHttp::kStreamsThisPc);
+    });
     // A TV opens the signalling socket of its own stream's slot, and no other.
     server.setLanHttpSlotAuthorizer([&authManager, &g_Pool](const QString& token, int slot) {
         const QString id = authManager.sessionIdForToken(token);

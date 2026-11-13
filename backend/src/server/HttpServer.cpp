@@ -2005,9 +2005,10 @@ void HttpServer::serveLanHttp(HttpRequest req, ResponseCallback respond)
     // The rest is LanHttp::gate's to decide, without a socket, and tested as it
     // is: the routes named one by one, an Origin on every write, the key.
     const QString token = LanHttp::tokenFromCookieHeader(req.headers.value("cookie"));
-    const LanHttp::Gate gate = LanHttp::gate(req.method, req.path, req.headers, req.lanHttpHost,
-                                             keyOf(m_AuthManager, token, req.clientAddress),
-                                             decision.outcome != RequestGuard::Outcome::Allow);
+    const LanHttp::Gate gate =
+        LanHttp::gate(req.method, req.path, req.headers, req.lanHttpHost,
+                      keyOf(m_AuthManager, token, req.clientAddress),
+                      decision.outcome != RequestGuard::Outcome::Allow, m_LanHttpHostCheck);
     if (gate.counted) m_ConnGuard.reportAuthFailure(req.clientAddress);
     if (gate.verdict != LanHttp::Verdict::Serve) {
         if (gate.verdict != LanHttp::Verdict::NotFound)
@@ -2015,6 +2016,8 @@ void HttpServer::serveLanHttp(HttpRequest req, ResponseCallback respond)
                                 .arg(req.method, LanHttp::pathForLog(req.path), req.clientAddress,
                                      gate.verdict == LanHttp::Verdict::Forbidden
                                          ? QStringLiteral("another page")
+                                     : gate.verdict == LanHttp::Verdict::OtherHost
+                                         ? QStringLiteral("not this machine's own host")
                                          : QStringLiteral("not signed in")));
         HttpResponse refused;
         switch (gate.verdict) {
@@ -2029,6 +2032,9 @@ void HttpServer::serveLanHttp(HttpRequest req, ResponseCallback respond)
             break;
         case LanHttp::Verdict::Unauthorized:
             refused = HttpResponse::json(QJsonObject{{"error", "authentication_required"}}, 401);
+            break;
+        case LanHttp::Verdict::OtherHost:
+            refused = HttpResponse::json(QJsonObject{{"error", "plain_http_this_pc_only"}}, 403);
             break;
         default: refused = HttpResponse::error(404, "Not Found"); break;
         }

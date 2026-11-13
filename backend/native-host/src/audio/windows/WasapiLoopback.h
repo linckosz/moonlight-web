@@ -22,6 +22,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <string>
 #include <thread>
@@ -69,6 +70,11 @@ public:
     WasapiLoopback(const WasapiLoopback&) = delete;
     WasapiLoopback& operator=(const WasapiLoopback&) = delete;
 
+    /// Asked before each frame is encoded, on the audio thread: true sends that
+    /// frame as digital silence (audio/SoundHold.h) — a TV on plain HTTP while
+    /// the desktop gate holds its stream back. Before start(); none: never.
+    void setHold(std::function<bool()> held) { m_Held = std::move(held); }
+
     /// Open the default endpoint and start delivering. Fails — with the reason
     /// — only when there is no encoder or no audio device at all; a device that
     /// disappears later is handled by the thread.
@@ -88,6 +94,7 @@ private:
     int m_FrameSamples;
     int m_GraceUs;
     AppAudioOptions m_AppAudio;
+    std::function<bool()> m_Held;
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
     std::atomic<int64_t> m_Packets{0};

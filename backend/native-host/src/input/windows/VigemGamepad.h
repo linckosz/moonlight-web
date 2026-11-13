@@ -140,6 +140,12 @@ public:
     /// nothing.
     void remove(const InputEvent& event);
 
+    /// Centre every pad plugged in, and leave it plugged in: the desktop gate
+    /// closed (Win32Input::releaseHeldForGate), and nothing the viewer holds
+    /// may stay held while nothing of theirs goes in. Their next report moves
+    /// it again once the gate opens.
+    void centreAll();
+
     /// How many pads are plugged in right now.
     int connectedCount() const;
 
@@ -165,6 +171,10 @@ private:
 
     /// Unplug one slot. The caller holds m_Mutex.
     void unplug(int slot);
+
+    /// Send @p pad a report of nothing held, sticks at rest. The caller holds
+    /// m_Mutex.
+    void centre(const Pad& pad);
 
     RumbleSink m_OnRumble;
     NumberSink m_OnNumber;

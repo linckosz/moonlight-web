@@ -218,11 +218,15 @@ struct SessionConfig
     /// own regardless (see InputGate); this flag only ever narrows further.
     bool allowElevatedInput = true;
 
-    /// Act on the user's own desktop only: a TV on plain HTTP (issue #42).
-    /// No input is injected, and no picture is sent, while the input desktop
-    /// is any other — the secure desktop of UAC, the lock screen and
-    /// Ctrl+Alt+Del above all. Input is dropped, never queued; the viewer keeps
-    /// the last picture. Each switch is said once in the log.
+    /// Act on the user's own unlocked desktop only: a TV on plain HTTP (issue
+    /// #42). No input is injected, and no picture is sent, while the input
+    /// desktop is any other (the secure desktop of UAC and Ctrl+Alt+Del) or
+    /// while the session is locked or not the active one, which Windows 11
+    /// shows on the user's own desktop: the session's lock state is read as
+    /// well (core/DesktopGate.h). Input is dropped, never queued, and what the
+    /// viewer held is let go of; the viewer keeps the last picture, and the
+    /// first one after is fresh and a key frame. Windows only: a session asked
+    /// with it elsewhere is refused. Each change is said once in the log.
     bool defaultDesktopOnly = false;
 
     /// Silence the host's own speakers for the length of the session, the way

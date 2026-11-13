@@ -402,17 +402,36 @@ void VigemGamepad::remove(const InputEvent& event)
     // otherwise leave the game holding its last report — a trigger down, a stick
     // shoved — with no device left to ever release it. Best-effort: the unplug
     // is what actually matters.
-    if (m_Pads[slot].profile == Profile::DualShock4) {
-        DS4_REPORT neutral = {};
-        DS4_REPORT_INIT(&neutral);
-        vigem_target_ds4_update(m_Client, m_Pads[slot].target, neutral);
-    } else {
-        const XUSB_REPORT neutral = {};
-        vigem_target_x360_update(m_Client, m_Pads[slot].target, neutral);
-    }
+    centre(m_Pads[slot]);
 
     unplug(slot);
     log::info("[native] gamepad " + std::to_string(slot) + " unplugged");
+}
+
+void VigemGamepad::centreAll()
+{
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    int centred = 0;
+    for (const Pad& pad : m_Pads) {
+        if (!pad.target) continue;
+        centre(pad);
+        ++centred;
+    }
+    if (centred > 0)
+        log::info("[native] gamepad: " + std::to_string(centred) +
+                  " pad(s) centred, left plugged in");
+}
+
+void VigemGamepad::centre(const Pad& pad)
+{
+    if (pad.profile == Profile::DualShock4) {
+        DS4_REPORT neutral = {};
+        DS4_REPORT_INIT(&neutral);
+        vigem_target_ds4_update(m_Client, pad.target, neutral);
+    } else {
+        const XUSB_REPORT neutral = {};
+        vigem_target_x360_update(m_Client, pad.target, neutral);
+    }
 }
 
 } // namespace mw::native::input

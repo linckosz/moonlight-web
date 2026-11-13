@@ -6,8 +6,11 @@
  */
 
 #include "test_framework.h"
+#include "backend/streambackend/NativeHostBackend.h"
 #include "server/LanHttp.h"
 
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QList>
 #include <QMap>
 #include <QPair>
@@ -314,7 +317,8 @@ void run_lan_http_tests()
               Verdict::Forbidden);
         Headers mine = withCookie;
         mine["origin"] = origin;
-        CHECK(gate("POST", "/api/hosts/h/start", mine, host, Key::Valid, false).verdict ==
+        const auto onlyH = [](const QString& id) { return id == QStringLiteral("h"); };
+        CHECK(gate("POST", "/api/hosts/h/start", mine, host, Key::Valid, false, onlyH).verdict ==
               Verdict::Serve);
         // RequestGuard's refusal (another site's page, a body that is not JSON).
         g = gate("GET", "/api/hosts", withCookie, host, Key::Valid, true);
@@ -363,6 +367,175 @@ void run_lan_http_tests()
               Verdict::Serve);
         CHECK(gate("GET", "/js/app.js", Headers{}, host, Key::None, false).verdict ==
               Verdict::Serve);
+    }
+
+    SECTION("LanHttp — the routes that name a host");
+
+    {
+        QString id;
+        CHECK(namesHost("/api/hosts/abc-123/apps", &id));
+        CHECK_EQ(id, QStringLiteral("abc-123"));
+        CHECK(namesHost("/api/hosts/abc-123", &id));
+        CHECK_EQ(id, QStringLiteral("abc-123"));
+        // An empty segment still names one, which nothing reaches.
+        CHECK(namesHost("/api/hosts//apps", &id));
+        CHECK(id.isEmpty());
+        CHECK(!namesHost("/api/hosts"));
+        CHECK(!namesHost("/api/hostsx/abc/apps"));
+        CHECK(!namesHost("/api/lan-http/pair/abc"));
+        CHECK(!namesHost("/hosts/abc/apps"));
+        // Every route of the list under /api/hosts/ names one: each goes
+        // through the host check, and a route added there later does too.
+        int named = 0;
+        for (const QString& r : routeTable()) {
+            const QString path = r.section(QLatin1Char(' '), 1);
+            if (!path.startsWith(QLatin1String("/api/hosts/"))) continue;
+            CHECK(namesHost(QString(path).replace(QLatin1Char('*'), QLatin1String("x")), &id));
+            CHECK_EQ(id, QStringLiteral("x"));
+            ++named;
+        }
+        // apps, running-app, stream-state, start, quit.
+        CHECK_EQ(named, 5);
+    }
+
+    SECTION("LanHttp — this machine's own host, on Windows, and no other (#42, SR 13/11)");
+
+    {
+        const QString nativeId = NativeHostBackend::hostUuid();
+        const QString nativeType = NativeHostBackend::typeName();
+        const auto allowed = [&](const QString& id, const QString& type, bool windows) {
+            return hostAllowed(id, type, nativeId, nativeType, windows);
+        };
+        // This machine's own host, on Windows.
+        CHECK(allowed(nativeId, nativeType, true));
+        // Sunshine, Apollo and Wolf, wherever they run.
+        CHECK(!allowed(QStringLiteral("5A6B7C8D-0000-1111-2222-333344445555"),
+                       QStringLiteral("sunshine"), true));
+        CHECK(!allowed(QStringLiteral("apollo-uuid"), QStringLiteral("apollo"), true));
+        CHECK(!allowed(QStringLiteral("wolf-uuid"), QStringLiteral("wolf"), true));
+        CHECK(!allowed(QStringLiteral("gamestream-uuid"), QString(), true));
+        // A server that claims this machine's id is not this machine's host,
+        // and the native backend under another id is no host of ours either.
+        CHECK(!allowed(nativeId, QStringLiteral("sunshine"), true));
+        CHECK(!allowed(nativeId, QString(), true));
+        CHECK(!allowed(QStringLiteral("other-id"), nativeType, true));
+        // Linux and macOS: no host at all.
+        CHECK(!allowed(nativeId, nativeType, false));
+        // Nothing reaches nothing.
+        CHECK(!allowed(QString(), nativeType, true));
+        CHECK(!hostAllowed(QString(), QString(), QString(), QString(), true));
+#ifdef Q_OS_WIN
+        CHECK(kStreamsThisPc);
+#else
+        CHECK(!kStreamsThisPc);
+#endif
+    }
+
+    SECTION("LanHttp — each route that names a host, end to end");
+
+    {
+        // The server's table as the predicate reads it. A Sunshine on this
+        // very machine (127.0.0.1) or on its LAN address is another host:
+        // the address is never asked.
+        struct Known
+        {
+            QString type;
+            QString address;
+        };
+        const QString nativeId = NativeHostBackend::hostUuid();
+        const QMap<QString, Known> table{
+            {nativeId, {NativeHostBackend::typeName(), QStringLiteral("127.0.0.1")}},
+            {QStringLiteral("sun-local"),
+             {QStringLiteral("sunshine"), QStringLiteral("127.0.0.1")}},
+            {QStringLiteral("sun-lan"),
+             {QStringLiteral("sunshine"), QStringLiteral("192.168.1.10")}},
+            {QStringLiteral("apollo-far"),
+             {QStringLiteral("apollo"), QStringLiteral("192.168.1.30")}},
+            {QStringLiteral("wolf-far"), {QStringLiteral("wolf"), QStringLiteral("192.168.1.40")}},
+        };
+        const auto check = [&](bool windows) {
+            return [&table, &nativeId, windows](const QString& id) {
+                if (!table.contains(id)) return false;
+                return hostAllowed(id, table.value(id).type, nativeId,
+                                   NativeHostBackend::typeName(), windows);
+            };
+        };
+        const Headers h{{"cookie", "mw_lan_http=T"}, {"origin", origin}};
+        for (const QString& r : routeTable()) {
+            const QString method = r.section(QLatin1Char(' '), 0, 0);
+            const QString pattern = r.section(QLatin1Char(' '), 1);
+            if (!pattern.startsWith(QLatin1String("/api/hosts/"))) continue;
+            const auto pathFor = [&pattern](const QString& id) {
+                return QString(pattern).replace(QLatin1Char('*'), id);
+            };
+            // This machine's own host, on Windows: served.
+            CHECK(
+                gate(method, pathFor(nativeId), h, host, Key::Valid, false, check(true)).verdict ==
+                Verdict::Serve);
+            // Every other: 403, never counted against the TV.
+            for (const QString& id : {QStringLiteral("sun-local"), QStringLiteral("sun-lan"),
+                                      QStringLiteral("apollo-far"), QStringLiteral("wolf-far"),
+                                      QStringLiteral("unknown-id")}) {
+                const Gate g = gate(method, pathFor(id), h, host, Key::Valid, false, check(true));
+                CHECK(g.verdict == Verdict::OtherHost);
+                CHECK(!g.counted);
+            }
+            // Linux and macOS: not even this machine's own.
+            CHECK(
+                gate(method, pathFor(nativeId), h, host, Key::Valid, false, check(false)).verdict ==
+                Verdict::OtherHost);
+            // No check given: none may.
+            CHECK(gate(method, pathFor(nativeId), h, host, Key::Valid, false).verdict ==
+                  Verdict::OtherHost);
+            // Without a good key, the key is what is said: nothing about ids.
+            CHECK(gate(method, pathFor(QStringLiteral("sun-lan")), h, host, Key::Expired, false,
+                       check(true))
+                      .verdict == Verdict::Unauthorized);
+        }
+        // The host list itself names none: it is filtered (hostsFor).
+        CHECK(gate("GET", "/api/hosts", h, host, Key::Valid, false).verdict == Verdict::Serve);
+    }
+
+    SECTION("LanHttp — the host list a TV reads");
+
+    {
+        const QString nativeId = NativeHostBackend::hostUuid();
+        const QString nativeType = NativeHostBackend::typeName();
+        const auto entry = [](const QString& uuid, const QString& type, const QString& address,
+                              const QString& name) {
+            return QJsonObject{
+                {"uuid", uuid}, {"backendType", type}, {"activeAddress", address}, {"name", name}};
+        };
+        const QJsonArray all{
+            entry(QStringLiteral("sun-far"), QStringLiteral("sunshine"),
+                  QStringLiteral("192.168.1.20"), QStringLiteral("Living room")),
+            entry(nativeId, nativeType, QString(), QStringLiteral("This PC")),
+            entry(QStringLiteral("sun-local"), QStringLiteral("sunshine"),
+                  QStringLiteral("127.0.0.1"), QStringLiteral("Sunshine here")),
+            entry(QStringLiteral("apollo-far"), QStringLiteral("apollo"),
+                  QStringLiteral("192.168.1.30"), QStringLiteral("Apollo")),
+            entry(QStringLiteral("wolf-far"), QStringLiteral("wolf"),
+                  QStringLiteral("192.168.1.40"), QStringLiteral("Wolf")),
+            entry(nativeId + QStringLiteral("-2"), nativeType, QString(), QStringLiteral("Alias")),
+            entry(QStringLiteral("claims"), QStringLiteral("sunshine"), QStringLiteral("10.0.0.9"),
+                  QStringLiteral("Claimer")),
+        };
+        // On Windows: this machine's own entry, whole, and nothing of the others.
+        const QJsonArray seen = hostsFor(all, nativeId, nativeType, true);
+        CHECK_EQ(seen.size(), qsizetype(1));
+        CHECK_EQ(seen.at(0).toObject().value("uuid").toString(), nativeId);
+        CHECK_EQ(seen.at(0).toObject().value("name").toString(), QStringLiteral("This PC"));
+        // A server claiming this machine's id, with its own backend: left out.
+        QJsonArray claiming = all;
+        claiming.append(entry(nativeId, QStringLiteral("sunshine"), QStringLiteral("10.0.0.9"),
+                              QStringLiteral("Impostor")));
+        const QJsonArray seenClaim = hostsFor(claiming, nativeId, nativeType, true);
+        CHECK_EQ(seenClaim.size(), qsizetype(1));
+        CHECK_EQ(seenClaim.at(0).toObject().value("name").toString(), QStringLiteral("This PC"));
+        // Linux and macOS: an empty list.
+        CHECK(hostsFor(all, nativeId, nativeType, false).isEmpty());
+        // Nothing to filter: nothing.
+        CHECK(hostsFor(QJsonArray{}, nativeId, nativeType, true).isEmpty());
     }
 
     SECTION("LanHttp — the gate of the stream socket");

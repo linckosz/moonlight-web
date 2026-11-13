@@ -18,6 +18,7 @@
 #include "LanHttp.h"
 
 #include <QHostAddress>
+#include <QJsonObject>
 #include <QPair>
 
 namespace LanHttp {
@@ -262,6 +263,35 @@ QString tokenFromCookieHeader(const QString& cookieHeader)
     return count == 1 ? found : QString();
 }
 
+bool namesHost(const QString& path, QString* id)
+{
+    static const QString prefix = QStringLiteral("/api/hosts/");
+    if (!path.startsWith(prefix)) return false;
+    if (id) *id = path.mid(prefix.size()).section(QLatin1Char('/'), 0, 0);
+    return true;
+}
+
+bool hostAllowed(const QString& id, const QString& backendType, const QString& nativeId,
+                 const QString& nativeType, bool streamsThisPc)
+{
+    return streamsThisPc && !id.isEmpty() && !nativeId.isEmpty() && id == nativeId &&
+           !nativeType.isEmpty() && backendType == nativeType;
+}
+
+QJsonArray hostsFor(const QJsonArray& hosts, const QString& nativeId, const QString& nativeType,
+                    bool streamsThisPc)
+{
+    QJsonArray kept;
+    for (const QJsonValue& v : hosts) {
+        const QJsonObject host = v.toObject();
+        if (hostAllowed(host.value(QStringLiteral("uuid")).toString(),
+                        host.value(QStringLiteral("backendType")).toString(), nativeId, nativeType,
+                        streamsThisPc))
+            kept.append(host);
+    }
+    return kept;
+}
+
 QStringList routeTable()
 {
     QStringList out;
@@ -277,7 +307,8 @@ bool openRoute(const QString& path)
 }
 
 Gate gate(const QString& method, const QString& path, const QMap<QString, QString>& headers,
-          const QString& validatedHost, Key key, bool guardRefused)
+          const QString& validatedHost, Key key, bool guardRefused,
+          const std::function<bool(const QString& hostId)>& hostAllowed)
 {
     Gate g;
     const QString token = tokenFromCookieHeader(headers.value(QStringLiteral("cookie")));
@@ -303,6 +334,14 @@ Gate gate(const QString& method, const QString& path, const QMap<QString, QStrin
     if (api && !openRoute(path) && key != Key::Valid) {
         g.verdict = Verdict::Unauthorized;
         g.counted = key == Key::OtherAddress || write;
+        return g;
+    }
+
+    // A route naming a host: this machine's own only. Asked with a good key
+    // only, so that nobody learns from the answer which ids exist.
+    QString hostId;
+    if (namesHost(path, &hostId) && !(hostAllowed && hostAllowed(hostId))) {
+        g.verdict = Verdict::OtherHost;
         return g;
     }
 

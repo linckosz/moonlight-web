@@ -22,6 +22,7 @@
 #include "../../core/Log.h"
 #include "../AudioPacer.h"
 #include "../OpusEncoder.h"
+#include "../SoundHold.h"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -339,6 +340,8 @@ void WasapiLoopback::runLoop()
     // What the pacer holds behind each frame it sends, summed over the minute:
     // the sound's wait in the host, which the grace trades against silence.
     int64_t heldSamples = 0, heldFrames = 0;
+    // Frames sent as silence because the desktop gate held the stream.
+    int64_t gateSilence = 0;
     std::vector<float> frame(pacer.frameFloats());
     std::vector<uint8_t> packet;
     int64_t lastReopenAttemptUs = 0;
@@ -400,6 +403,10 @@ void WasapiLoopback::runLoop()
             }
             heldSamples += static_cast<int64_t>(pacer.queuedSamples());
             heldFrames++;
+            // The desktop gate's word, before each frame (setHold): held, the
+            // frame goes as silence and the track keeps its clock.
+            const bool gateHeld = holdFrame(frame.data(), frame.size(), m_Held && m_Held());
+            if (gateHeld) ++gateSilence;
             const size_t n = encoder.encode(frame.data(), packet);
             if (n == 0) continue;
             AudioPacket out;
@@ -409,7 +416,7 @@ void WasapiLoopback::runLoop()
             out.capturedUs = now;
             out.queuedFrames = static_cast<int>(pacer.queuedFrames());
             out.peak = AudioPacer::peakOf(frame.data(), frame.size());
-            out.silence = !captured;
+            out.silence = !captured || gateHeld;
             m_OnPacket(out);
             m_Packets.fetch_add(1, std::memory_order_relaxed);
         }
@@ -446,7 +453,10 @@ void WasapiLoopback::runLoop()
 
     log::info("[native] audio: " + std::to_string(m_Packets.load()) + " packets, " +
               std::to_string(pacer.droppedFrames()) + " frames dropped, " +
-              std::to_string(pacer.underruns()) + " silence frames (quiet host or late capture)");
+              std::to_string(pacer.underruns()) + " silence frames (quiet host or late capture)" +
+              (gateSilence > 0 ? ", " + std::to_string(gateSilence) +
+                                     " sent as silence while the desktop gate held the stream"
+                               : std::string()));
 
     if (timer) CloseHandle(timer);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);

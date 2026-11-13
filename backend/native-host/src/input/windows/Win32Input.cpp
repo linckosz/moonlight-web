@@ -1034,7 +1034,7 @@ void Win32Input::forgetHeld()
                   " key(s) and " + std::to_string(buttons) + " button(s) were down — forgotten");
 }
 
-void Win32Input::releaseAll()
+void Win32Input::releaseAll(const char* when)
 {
     std::set<int> keys;
     std::set<int> buttons;
@@ -1090,7 +1090,21 @@ void Win32Input::releaseAll()
         if (!(mouseButtons & systemmouse::buttonBit(button))) sendMouseButton(button, false);
 
     log::info("[native] input: released " + std::to_string(keys.size()) + " key(s) and " +
-              std::to_string(buttons.size()) + " button(s) at session end");
+              std::to_string(buttons.size()) + " button(s) " + when);
+}
+
+void Win32Input::releaseHeldForGate()
+{
+    if (!m_DesktopGate || !m_GateCloses.releaseDue(m_DesktopGate->generation())) return;
+    // Key-ups for what went down on the user's desktop, where the lock screen
+    // is now (or, on the secure desktop, refused by Windows, which dropped
+    // that state with the switch). Pads centred and left plugged in: the
+    // viewer's next report moves them once the gate opens again. A SYSTEM
+    // worker would have to do this on its follower, standing on the desktop;
+    // a stream with this gate never runs as one (StreamWorkerHost).
+    if (m_Follow) return;
+    releaseAll("as the desktop gate closed");
+    if (m_Gamepad) m_Gamepad->centreAll();
 }
 
 /// Straight to the OS, or through the thread that follows the desktop switch.
@@ -1174,19 +1188,18 @@ void Win32Input::runFollower()
 void Win32Input::injectNow(const InputEvent& event)
 {
     // A TV on plain HTTP (SessionConfig::defaultDesktopOnly), before anything
-    // else: every event, a pad's included, acts on the user's own desktop
-    // only. On any other — the secure desktop of UAC, the lock screen and
-    // Ctrl+Alt+Del — it is dropped, never queued. A key held across the switch
-    // is let go by the held-key heartbeat once the desktop is back.
-    if (m_DefaultDesktopOnly) {
-        const bool onUser = platform::isUserDesktop(platform::inputDesktopName());
-        const int now = onUser ? 1 : 0;
-        const int before = m_OnUserDesktop.exchange(now, std::memory_order_relaxed);
-        if (before != now && !(before == -1 && onUser))
-            log::info(onUser ? "[native] plain HTTP: the user's desktop is back, input resumes"
-                             : "[native] plain HTTP: the input desktop is not the user's own, "
-                               "input is dropped");
-        if (!onUser) {
+    // else: every event, a pad's included, goes in only while the desktop gate
+    // is open (core/DesktopGate.h): the input desktop the user's own, read
+    // here, and the session unlocked, as its watcher read it. On the secure
+    // desktop of UAC and Ctrl+Alt+Del, and on the lock screen, which Windows 11
+    // draws on the user's own desktop, it is dropped, never queued. What the
+    // viewer held is let go of once per close, here or by the watcher, whoever
+    // comes first. The watcher says each change once in the log.
+    if (m_DesktopGate) {
+        const bool admitted =
+            m_DesktopGate->admit(platform::isUserDesktop(platform::inputDesktopName()));
+        releaseHeldForGate();
+        if (!admitted) {
             m_Gated.fetch_add(1, std::memory_order_relaxed);
             return;
         }
@@ -1698,9 +1711,16 @@ void Win32Input::injectMouseMove(int deltaX, int deltaY)
     sendOne(input);
 }
 
-void Win32Input::setDefaultDesktopOnly(bool on)
+void Win32Input::setDesktopGate(std::shared_ptr<DesktopGate> gate)
 {
-    m_DefaultDesktopOnly = on;
+    m_DesktopGate = std::move(gate);
+    m_GateCloses = GateCloses{};
+}
+
+void Win32Input::releaseForGate()
+{
+    if (!m_Started) return;
+    releaseHeldForGate();
 }
 
 void Win32Input::setAllowElevated(bool allow)
@@ -1837,8 +1857,10 @@ bool minimiseEverything()
 bool Win32Input::releaseBlock()
 {
     // It asks the shell for something; the sign-in screen mode asks Windows for
-    // nothing but pictures and keys.
-    if (platform::signInScreenOnly()) return false;
+    // nothing but pictures and keys. Nor does a stream held to the user's own
+    // desktop (a TV on plain HTTP), whose messages never name it anyway: it
+    // minimises the user's windows, locked screen or not.
+    if (platform::signInScreenOnly() || m_DesktopGate) return false;
     HWND blocker = nullptr;
     {
         std::lock_guard<std::mutex> lock(m_GateMutex);

@@ -21,7 +21,12 @@
 #include "mw/native/NativeHost.h"
 
 #include <atomic>
+#include <memory>
 #include <string>
+
+namespace mw::native {
+class DesktopGate;
+}
 
 namespace mw::native::input {
 
@@ -119,9 +124,17 @@ public:
     /// such distinction ignores it. Set before start(), never changed after.
     virtual void setAllowElevated(bool allow) { (void)allow; }
 
-    /// SessionConfig::defaultDesktopOnly. A sink on an OS with no secure
-    /// desktop ignores it. Set before start(), never changed after.
-    virtual void setDefaultDesktopOnly(bool on) { (void)on; }
+    /// SessionConfig::defaultDesktopOnly: every event goes in only while the
+    /// gate is open (core/DesktopGate.h), and what the viewer holds is let go
+    /// of once per close. Windows only: a session elsewhere with that flag is
+    /// refused (NativeHost::createSession). Set before start(), never changed
+    /// after.
+    virtual void setDesktopGate(std::shared_ptr<DesktopGate> gate) { (void)gate; }
+
+    /// The gate closed (the session's watcher, at once): what the viewer holds
+    /// is let go of now, unless a later event did it already. Under the same
+    /// lock as inject().
+    virtual void releaseForGate() {}
 
     /// Where to report the gate opening or closing — see InputGate. Called
     /// from inject(), on its thread, on change only. A sink that never gates

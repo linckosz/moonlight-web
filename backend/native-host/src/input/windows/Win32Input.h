@@ -24,6 +24,7 @@
 #include "../SystemMouse.h"
 #include "../VirtualHid.h"
 #include "../../core/ClickTrace.h"
+#include "../../core/DesktopGate.h"
 #include "VigemGamepad.h"
 #include "WinTextKeys.h"
 
@@ -84,7 +85,8 @@ public:
     void inject(const InputEvent& event) override;
     void setDisplayRect(int left, int top, int right, int bottom) override;
     void setAllowElevated(bool allow) override;
-    void setDefaultDesktopOnly(bool on) override;
+    void setDesktopGate(std::shared_ptr<DesktopGate> gate) override;
+    void releaseForGate() override;
     void setGateCallback(InputGateCallback callback) override;
     bool releaseBlock() override;
 
@@ -271,8 +273,14 @@ private:
     std::condition_variable m_KeyboardWake;
     std::thread m_KeyboardThread;
 
-    /// Release everything still recorded as held. Called by stop().
-    void releaseAll();
+    /// Release everything still recorded as held. Called by stop(), and when
+    /// the desktop gate closes (releaseHeldForGate); @p when ends the log line.
+    void releaseAll(const char* when = "at session end");
+
+    /// The desktop gate closed since the viewer's input was last let go of:
+    /// keys, buttons and pads let go of now, once per close (GateCloses).
+    /// Under the session's input lock, like injectNow().
+    void releaseHeldForGate();
 
 public:
     /// What a window's process runs as — see standingOf() in the .cpp. Public
@@ -338,10 +346,11 @@ private:
     StandingCache m_Focused;     ///< the foreground window — keyboard's target
     StandingCache m_UnderCursor; ///< the window under the pointer — a click's
     bool m_AllowElevated = true;
-    /// SessionConfig::defaultDesktopOnly, and what the last event saw: -1
-    /// nothing yet, 0 another desktop, 1 the user's own.
-    bool m_DefaultDesktopOnly = false;
-    std::atomic<int> m_OnUserDesktop{-1};
+    /// SessionConfig::defaultDesktopOnly's gate, shared with the session's
+    /// pictures and its watcher (core/DesktopGate.h); null for every other
+    /// stream. And which of its closes the viewer's input was let go of for.
+    std::shared_ptr<DesktopGate> m_DesktopGate;
+    GateCloses m_GateCloses;
     InputGateCallback m_OnGate;
     /// The gate's last reported state, and the window it named. Guarded because
     /// the unblock thread reports too — see reportGate.

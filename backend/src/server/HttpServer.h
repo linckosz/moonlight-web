@@ -97,6 +97,14 @@ public:
     /// on it compares a non-empty value or nothing.
     static QString streamTokenFromRequest(const HttpRequest& req);
 
+    /// Plain HTTP: whether a host a route names may be reached — this
+    /// machine's own only (LanHttp::hostAllowed, with what the server knows of
+    /// the host). Unset: none may.
+    void setLanHttpHostCheck(std::function<bool(const QString& hostId)> fn)
+    {
+        m_LanHttpHostCheck = std::move(fn);
+    }
+
     void setLanHttpClientsProvider(std::function<QStringList()> fn)
     {
         m_LanHttpClients = std::move(fn);
@@ -397,6 +405,8 @@ private:
     std::function<bool(const HttpRequest&, int slot)> m_PlayerSlotAuth;
     /// Plain HTTP for the listed TVs (see setLanHttpClientsProvider).
     std::function<QStringList()> m_LanHttpClients;
+    /// And the one host they reach (see setLanHttpHostCheck).
+    std::function<bool(const QString& hostId)> m_LanHttpHostCheck;
     std::function<bool(const QString& token, int slot)> m_LanHttpSlotAuth;
     QSet<QString> m_LanHttpUsable;
     QSet<QString> m_OwnAddresses;
