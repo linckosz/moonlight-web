@@ -438,14 +438,23 @@ try {
             $row.perf = (Cdp perf 20).Trim()
 
             if (-not $NoProbe) {
-                $probe = & powershell -NoProfile -File "$PSScriptRoot\probe-run.ps1" `
-                    -Label $pass.id -Clicks $Clicks -SpacingMs $SpacingMs `
-                    -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir `
-                    -TimeoutMs $ProbeTimeoutMs -TargetPid $targetPid -BenchDisplay $benchDevice `
-                    -AlreadyParked:$parked 2>&1 | Out-String
+                # An argument list, built: through -File a switch takes no value
+                # (-AlreadyParked:$false does not bind) and an empty string is no
+                # argument at all, so either would stop probe-run before it says
+                # anything.
+                $probeArgs = @('-NoProfile', '-File', "$PSScriptRoot\probe-run.ps1",
+                    '-Label', $pass.id, '-Clicks', $Clicks, '-SpacingMs', $SpacingMs,
+                    '-ParkX', $parkX, '-ParkY', $parkY, '-DebugPort', $DebugPort, '-ResultsDir', $ResultsDir,
+                    '-TimeoutMs', $ProbeTimeoutMs, '-TargetPid', $targetPid)
+                if ($benchDevice) { $probeArgs += @('-BenchDisplay', $benchDevice) }
+                if ($parked) { $probeArgs += '-AlreadyParked' }
+                $probe = & powershell @probeArgs 2>&1 | Out-String
                 $row.probe = $probe.Trim()
                 $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
                 if ($line) { Write-Host "  probe      : $($line.Trim())" }
+                # No line at all is a probe that never started: not a measure, and
+                # nothing to say the pointer is where it should be. The run stops.
+                if (-not $line) { throw "the click-to-photon probe did not run: $($probe.Trim())" }
                 # A series the probe stopped (the pointer left its spot, the
                 # machine was in use, the page was not in front): someone may be
                 # at this machine. The run stops with it; the finally does the rest.
