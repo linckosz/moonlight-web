@@ -186,9 +186,14 @@ $cx = [int]$crect[0]; $cy = [int]$crect[1]; $cw = [int]$crect[2]; $ch = [int]$cr
 # The client's own screen, by GDI name: the hdr-on pass needs it in HDR too,
 # or the host rightly streams SDR to a screen that could not show HDR.
 $clientDevice = ''
+# And the captured screen's, where the probe's pointer parks (probe-run.ps1 -BenchDisplay).
+$benchDevice = ''
 foreach ($line in @(Get-Prop (Get-Content (Join-Path $ResultsDir 'inventory.json') -Raw -Encoding UTF8 | ConvertFrom-Json) 'monitors' @())) {
     if ($line -match '^(\S+)\s+(-?\d+),(-?\d+)\s' -and [int]$Matches[2] -eq $cx -and [int]$Matches[3] -eq $cy) {
         $clientDevice = $Matches[1]
+    }
+    if ($line -match '^(\S+)\s+(-?\d+),(-?\d+)\s' -and [int]$Matches[2] -eq $kx -and [int]$Matches[3] -eq $ky) {
+        $benchDevice = $Matches[1]
     }
 }
 
@@ -274,9 +279,10 @@ if ($ClientAdapterLuid) { $clientArgs += @('-AdapterLuid', $ClientAdapterLuid) }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
     Where-Object { $_.CommandLine -like '*click-target.ps1*' -and $_.ProcessId -ne $PID } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+# Its process is the one window probe-run.ps1 lets the host click into (-TargetPid).
+$targetPid = (Start-Process powershell -WindowStyle Hidden -PassThru -ArgumentList @(
     '-NoProfile', '-File', "$PSScriptRoot\click-target.ps1",
-    '-X', $targetX, '-Y', $targetY, '-Size', $targetSize)
+    '-X', $targetX, '-Y', $targetY, '-Size', $targetSize)).Id
 Start-Sleep -Seconds 2
 
 # ── Helpers over cdp.py ─────────────────────────────────────────────────────
@@ -314,6 +320,8 @@ function Wait-Tile {
 $out = @()
 $ownerWarnings = @()
 $first = $true
+# Whether a probe series already parked the pointer in this run.
+$parked = $false
 $jsonl = Join-Path $ResultsDir 'browser.jsonl'
 if (Test-Path $jsonl) { Remove-Item $jsonl }
 
@@ -433,10 +441,20 @@ try {
                 $probe = & powershell -NoProfile -File "$PSScriptRoot\probe-run.ps1" `
                     -Label $pass.id -Clicks $Clicks -SpacingMs $SpacingMs `
                     -ParkX $parkX -ParkY $parkY -DebugPort $DebugPort -ResultsDir $ResultsDir `
-                    -TimeoutMs $ProbeTimeoutMs 2>&1 | Out-String
+                    -TimeoutMs $ProbeTimeoutMs -TargetPid $targetPid -BenchDisplay $benchDevice `
+                    -AlreadyParked:$parked 2>&1 | Out-String
                 $row.probe = $probe.Trim()
                 $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
                 if ($line) { Write-Host "  probe      : $($line.Trim())" }
+                # A series the probe stopped (the pointer left its spot, the
+                # machine was in use, the page was not in front): someone may be
+                # at this machine. The run stops with it; the finally does the rest.
+                if ($line -and ($line -match '"invalid":\s*true')) {
+                    throw "the click-to-photon series stopped: someone may be using this machine (see the probe line above)"
+                }
+                # A series that went through parks the pointer once for the run:
+                # the next ones find it there (probe-run.ps1 -AlreadyParked).
+                if ($line) { $parked = $true }
                 # Every sample of the very first series timing out is not a slow
                 # pipeline, it is no flag at all - and it costs an hour to find that
                 # out at the end of a matrix. The flag is armed when the host STARTS:
