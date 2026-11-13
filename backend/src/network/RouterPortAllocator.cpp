@@ -16,7 +16,9 @@
  */
 
 #include "RouterPortAllocator.h"
+#include "RouterHoles.h"
 #include "RouterPortPools.h"
+#include "SocketTables.h"
 #include "UPNPClient.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
@@ -24,6 +26,8 @@
 
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QStandardPaths>
+#include <QSysInfo>
 #include <QThread>
 #include <QTimer>
 #include <QUdpSocket>
@@ -49,20 +53,21 @@ public:
                                         description.toStdString(), protocol.toStdString());
     }
 
-    bool owner(uint16_t externalPort, const QString& protocol, QString& client,
-               int& leaseLeft) override
+    Lookup entry(uint16_t externalPort, const QString& protocol, Entry& out) override
     {
-        std::string who;
-        std::string internalPort;
-        std::string lease;
-        if (!m_Client->getExistingPortMapping(externalPort, protocol.toStdString(), who,
-                                              internalPort, &lease))
-            return false;
-        client = QString::fromStdString(who);
+        UPNPClient::MappingEntry found;
+        switch (m_Client->portMapping(externalPort, protocol.toStdString(), found)) {
+        case UPNPClient::Mapping::None: return Lookup::None;
+        case UPNPClient::Mapping::Unknown: return Lookup::Unknown;
+        case UPNPClient::Mapping::Found: break;
+        }
+        out.client = QString::fromStdString(found.internalClient);
+        out.internalPort = portOf(found.internalPort);
+        out.description = QString::fromStdString(found.description);
         bool number = false;
-        const int seconds = QString::fromStdString(lease).trimmed().toInt(&number);
-        leaseLeft = number && seconds >= 0 ? seconds : -1;
-        return true;
+        const int seconds = QString::fromStdString(found.leaseDuration).trimmed().toInt(&number);
+        out.leaseLeft = number && seconds >= 0 ? seconds : -1;
+        return Lookup::Found;
     }
 
     bool remove(uint16_t externalPort, const QString& protocol) override
@@ -71,8 +76,102 @@ public:
     }
 
 private:
+    /// A port as a router writes it: figures and nothing else. 0 for anything
+    /// that is not one.
+    static uint16_t portOf(const std::string& text)
+    {
+        if (text.empty() || text.size() > 5) return 0;
+        unsigned value = 0;
+        for (const char c : text) {
+            if (c < '0' || c > '9') return 0;
+            value = value * 10 + static_cast<unsigned>(c - '0');
+        }
+        return value <= 65535 ? static_cast<uint16_t>(value) : 0;
+    }
+
     UPNPClient* m_Client;
 };
+
+/// What the worker thread is started with, read on the main thread.
+struct Startup
+{
+    QString previousLan;
+    /// Where the record of this host's router entries is kept.
+    QString dataDir;
+    bool devInstance = false;
+    /// What a version that kept no such record remembers in the settings.
+    mw::routerholes::Earlier earlier;
+};
+
+Startup startupOf(const AppSettings& settings)
+{
+    Startup s;
+    s.previousLan = settings.routerLanIp();
+    s.dataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    s.devInstance = mw::edition::isDev();
+    s.earlier.lan = s.previousLan;
+    s.earlier.tunnel = settings.rememberedTunnelPorts();
+    s.earlier.media = settings.rememberedMediaPorts();
+    return s;
+}
+
+/// A line of the record as the log names it: no address, and no tag.
+QString holeName(const mw::routerholes::Hole& hole)
+{
+    QString what;
+    switch (hole.kind) {
+    case mw::routerholes::Kind::Tunnel: what = QStringLiteral("tunnel"); break;
+    case mw::routerholes::Kind::Streams: what = QStringLiteral("streams' shared port"); break;
+    case mw::routerholes::Kind::Media: what = QStringLiteral("media slot %1").arg(hole.slot); break;
+    }
+    return QStringLiteral("%1 %2 (%3)")
+        .arg(hole.tcp ? QStringLiteral("TCP") : QStringLiteral("UDP"))
+        .arg(hole.external)
+        .arg(what);
+}
+
+/// What became of an entry an earlier run left on the router. Every removal
+/// is said; so is every entry that was looked at and left.
+void logSwept(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResult& result)
+{
+    using Swept = RouterPortCore::Swept;
+    const QString name = holeName(hole);
+    switch (result.outcome) {
+    case Swept::Removed:
+        Logger::info(
+            QStringLiteral("[UPNP] Left by an earlier run: %1 removed from the router").arg(name));
+        break;
+    case Swept::NotOurs:
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier run: %1 now has another %2 on the "
+                                    "router — left as it is")
+                         .arg(name, result.detail));
+        break;
+    case Swept::Unknown:
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier run: the router does not say what "
+                                    "%1 is — left as it is, asked again at the next start")
+                         .arg(name));
+        break;
+    case Swept::Stayed:
+        Logger::warning(QStringLiteral("[UPNP] Left by an earlier run: %1 is still on the router "
+                                       "after its removal was asked — asked again at the next "
+                                       "start")
+                            .arg(name));
+        break;
+    case Swept::InUse:
+        Logger::info(result.detail == QLatin1String("listened")
+                         ? QStringLiteral("[UPNP] Left by an earlier version: %1 leads to a port "
+                                          "something on this machine listens on — left as it is")
+                               .arg(name)
+                         : QStringLiteral("[UPNP] Left by an earlier version: this system does "
+                                          "not say whether anything listens on the port %1 leads "
+                                          "to — left as it is")
+                               .arg(name));
+        break;
+    case Swept::Gone:
+    case Swept::OtherAddress:
+    case Swept::HeldAgain: break;
+    }
+}
 
 /// Whether this machine can actually listen there. See RouterPortCore's
 /// constructor for why it is asked before the mapping is made.
@@ -84,8 +183,15 @@ bool portIsFree(uint16_t port)
 
 QString purposeName(RouterPortCore::Purpose purpose, int slot)
 {
-    return purpose == RouterPortCore::Purpose::Tunnel ? QStringLiteral("tunnel")
-                                                      : QStringLiteral("media slot %1").arg(slot);
+    switch (purpose) {
+    case RouterPortCore::Purpose::Tunnel: return QStringLiteral("tunnel");
+    case RouterPortCore::Purpose::Mux:
+        return slot == RouterPortCore::kMuxStandard
+                   ? QStringLiteral("streams' shared port (conferencing)")
+                   : QStringLiteral("streams' shared port (stream block)");
+    case RouterPortCore::Purpose::Media: break;
+    }
+    return QStringLiteral("media slot %1").arg(slot);
 }
 
 QString skipLine(const RouterPortCore::Skipped& s)
@@ -120,9 +226,11 @@ public:
         m_Core.reset();
         m_Gateway.reset();
         m_Upnp.reset();
+        // After the core, which goes by it. Its lock ends here.
+        m_Record.reset();
     }
 
-    void start(const QString& previousLan)
+    void start(const Startup& startup)
     {
         if (m_Upnp) return;
         auto upnp = std::make_unique<UPNPClient>();
@@ -138,7 +246,20 @@ public:
         m_Upnp = std::move(upnp);
         m_Gateway = std::make_unique<UpnpGatewayAdapter>(m_Upnp.get());
         m_Core = std::make_unique<RouterPortCore>(*m_Gateway, &portIsFree);
-        m_Core->setPreviousLanAddress(previousLan);
+        m_Core->setPreviousLanAddress(startup.previousLan);
+        // What this host writes on the router is noted, so that what a run
+        // that was killed left there can be taken back (RouterHoles.h). Opened
+        // once: its lock is this process's for as long as it lives.
+        if (!m_RecordTried) {
+            m_RecordTried = true;
+            QString said;
+            m_Record = mw::routerholes::File::open(startup.dataDir, startup.devInstance,
+                                                   QSysInfo::machineUniqueId(), startup.earlier,
+                                                   lan, &said);
+            if (!said.isEmpty()) Logger::info(QStringLiteral("[UPNP] Note: ") + said);
+        }
+        m_Core->setRecord(m_Record.get());
+        m_Core->setListens(&mw::sockettables::listens);
 
         m_Renew = new QTimer(this);
         connect(m_Renew, &QTimer::timeout, this, [this]() { renew(); });
@@ -150,6 +271,35 @@ public:
                 o->onDiscovered(true, publicIp, lan, gateway);
             },
             Qt::QueuedConnection);
+
+        // What an earlier run left on the router. Queued, so that the claims
+        // that waited for this discovery are served first, and one line at a
+        // time, so that those that come meanwhile do not wait for the sweep.
+        m_Sweep = m_Core->sweepList();
+        if (!m_Sweep.isEmpty())
+            QMetaObject::invokeMethod(this, [this]() { sweepFirst(); }, Qt::QueuedConnection);
+    }
+
+    void sweepFirst()
+    {
+        if (!m_Core || m_Sweep.isEmpty()) return;
+        if (!m_Core->sweepBelieved(m_Sweep)) {
+            Logger::info(QStringLiteral("[UPNP] Asked about a port no MoonlightWeb ever maps, the "
+                                        "router did not answer that it has no such entry: "
+                                        "nothing an earlier run left on it is removed"));
+            m_Sweep.clear();
+            return;
+        }
+        sweepNext();
+    }
+
+    void sweepNext()
+    {
+        if (!m_Core || m_Sweep.isEmpty()) return;
+        const mw::routerholes::Hole hole = m_Sweep.takeFirst();
+        logSwept(hole, m_Core->sweep(hole));
+        if (!m_Sweep.isEmpty())
+            QMetaObject::invokeMethod(this, [this]() { sweepNext(); }, Qt::QueuedConnection);
     }
 
     void claim(quint64 token, const RouterPortCore::Request& request)
@@ -196,7 +346,12 @@ private:
     RouterPortAllocator* m_Owner;
     std::unique_ptr<UPNPClient> m_Upnp;
     std::unique_ptr<UpnpGatewayAdapter> m_Gateway;
+    /// Null when another process has it: this run then notes nothing.
+    std::unique_ptr<mw::routerholes::File> m_Record;
+    bool m_RecordTried = false;
     std::unique_ptr<RouterPortCore> m_Core;
+    /// The lines of the record still to be looked at.
+    QList<mw::routerholes::Hole> m_Sweep;
     QTimer* m_Renew = nullptr;
 };
 
@@ -242,9 +397,9 @@ void RouterPortAllocator::discover()
     // Asked again: the worker keeps no client after a miss, so start() looks
     // for the router afresh.
     m_State = GatewayState::Discovering;
-    const QString previousLan = m_Settings->routerLanIp();
+    const Startup startup = startupOf(*m_Settings);
     QMetaObject::invokeMethod(
-        m_Worker, [w = m_Worker, previousLan]() { w->start(previousLan); }, Qt::QueuedConnection);
+        m_Worker, [w = m_Worker, startup]() { w->start(startup); }, Qt::QueuedConnection);
 }
 
 void RouterPortAllocator::startWorker()
@@ -257,9 +412,9 @@ void RouterPortAllocator::startWorker()
     connect(m_Thread, &QThread::finished, m_Worker, &QObject::deleteLater);
     m_Thread->start();
 
-    const QString previousLan = m_Settings->routerLanIp();
+    const Startup startup = startupOf(*m_Settings);
     QMetaObject::invokeMethod(
-        m_Worker, [w = m_Worker, previousLan]() { w->start(previousLan); }, Qt::QueuedConnection);
+        m_Worker, [w = m_Worker, startup]() { w->start(startup); }, Qt::QueuedConnection);
 }
 
 void RouterPortAllocator::onDiscovered(bool ok, const QString& publicIp, const QString& lanIp,
@@ -393,32 +548,79 @@ void RouterPortAllocator::claimMediaPort(int slot, uint16_t internalPort, QObjec
         return;
     }
 
+    // A port the mux is bound to is the mux's: a hole made for this slot
+    // would lead to it.
+    const bool muxHoldsPort = m_MuxHolds && m_MuxHolds(internalPort);
+
     // Held from an earlier stream on this slot: no round trip, no wait. The
     // entry is written again behind the answer: the router may have lost it
     // meanwhile (rebooted, or a lease run out while this machine slept).
-    if (const auto held = heldMediaPort(slot)) {
+    const auto held = heldMediaPort(slot);
+    if (held && !muxHoldsPort && held->internal == internalPort) {
         answerLater(Purpose::Media, slot, context, std::move(callback), *held, {});
         recheck(held->external);
         return;
     }
+    // Held, but to a port the mux has come to since, or to another port than
+    // the one this stream binds: it leads nowhere this stream listens.
+    if (held) releaseMediaPort(slot);
 
-    RouterPortCore::Request request;
-    request.purpose = Purpose::Media;
-    request.slot = slot;
-    request.internalPort = internalPort;
     // Up to 0.3.0 the slot's own number was 48010 + slot, and that is what a
     // host upgraded from it remembers: asking for it again would keep the old
     // number on the router, pointed at the new block. Asked for from scratch.
-    const quint16 remembered = m_Settings->rememberedMediaPort(slot);
-    if (remembered >= 48010 && remembered <= 48033)
+    quint16 remembered = m_Settings->rememberedMediaPort(slot);
+    if (remembered >= 48010 && remembered <= 48033) {
         m_Settings->forgetMediaPort(slot);
-    else if (remembered)
-        request.remembered.append(remembered);
-    request.preferred.append(internalPort);
-    request.poolBegin = mw::routerports::kMediaPoolBegin;
-    request.poolEnd = mw::routerports::kMediaPoolEnd;
-    request.description = QStringLiteral("MoonlightWeb media slot %1").arg(slot);
+        remembered = 0;
+    }
+    RouterPortCore::Request request =
+        RouterPortCore::mediaRequest(static_cast<bool>(m_MuxHolds), mw::edition::isDev(), slot,
+                                     internalPort, remembered, muxHoldsPort);
+    if (!request.hasCandidate()) {
+        answerLater(Purpose::Media, slot, context, std::move(callback), {},
+                    QStringLiteral("its port is one every stream shares"));
+        return;
+    }
+    submit(std::move(request), context, std::move(callback));
+}
 
+void RouterPortAllocator::claimMuxPort(int which, uint16_t current,
+                                       std::function<RouterPortCore::Hold(uint16_t)> hold,
+                                       std::function<void(uint16_t)> drop, QObject* context,
+                                       Callback callback)
+{
+    // The switches first, as for a media port.
+    const QString why = refusal();
+    if (!why.isEmpty()) {
+        answerLater(Purpose::Mux, which, context, std::move(callback), {}, why);
+        return;
+    }
+    if (const auto held = heldMuxPort(which)) {
+        answerLater(Purpose::Mux, which, context, std::move(callback), *held, {});
+        recheck(held->external);
+        return;
+    }
+
+    // The port the mux serves now, then the one the router gave last time. A
+    // remembered port this kind of instance may not hold is forgotten: a
+    // --dev that was the installed host's settings once.
+    const bool dev = mw::edition::isDev();
+    QList<uint16_t> first;
+    if (current != 0) first.append(current);
+    if (const quint16 remembered = m_Settings->rememberedMuxPort(which)) {
+        if (!RouterPortCore::muxPortAllowed(dev, which, remembered))
+            m_Settings->forgetMuxPort(which);
+        else if (!first.contains(remembered))
+            first.append(remembered);
+    }
+    RouterPortCore::Request request = RouterPortCore::muxRequest(dev, which, first);
+    if (!request.hasCandidate()) {
+        answerLater(Purpose::Mux, which, context, std::move(callback), {},
+                    QStringLiteral("this kind of instance has no such port"));
+        return;
+    }
+    request.hold = std::move(hold);
+    request.drop = std::move(drop);
     submit(std::move(request), context, std::move(callback));
 }
 
@@ -470,10 +672,15 @@ void RouterPortAllocator::onClaimed(quint64 token, const RouterPortCore::Result&
     for (const RouterPortCore::Skipped& s : result.skipped) {
         skipped << skipLine(s);
         if (s.reason == RouterPortCore::SkipReason::LocalBusy) continue;
-        if (purpose == Purpose::Tunnel)
-            m_Settings->forgetTunnelPort(s.port);
-        else if (m_Settings->rememberedMediaPort(slot) == s.port)
-            m_Settings->forgetMediaPort(slot);
+        switch (purpose) {
+        case Purpose::Tunnel: m_Settings->forgetTunnelPort(s.port); break;
+        case Purpose::Media:
+            if (m_Settings->rememberedMediaPort(slot) == s.port) m_Settings->forgetMediaPort(slot);
+            break;
+        case Purpose::Mux:
+            if (m_Settings->rememberedMuxPort(slot) == s.port) m_Settings->forgetMuxPort(slot);
+            break;
+        }
     }
 
     if (!result.ok) {
@@ -486,10 +693,11 @@ void RouterPortAllocator::onClaimed(quint64 token, const RouterPortCore::Result&
 
     const Claim& claim = result.claim;
     m_Held.append(claim);
-    if (purpose == Purpose::Tunnel)
-        m_Settings->rememberTunnelPort(claim.external);
-    else
-        m_Settings->rememberMediaPort(slot, claim.external);
+    switch (purpose) {
+    case Purpose::Tunnel: m_Settings->rememberTunnelPort(claim.external); break;
+    case Purpose::Media: m_Settings->rememberMediaPort(slot, claim.external); break;
+    case Purpose::Mux: m_Settings->rememberMuxPort(slot, claim.external); break;
+    }
 
     QString line = QStringLiteral("[UPNP] %1: claimed %2").arg(name).arg(claim.external);
     if (claim.internal != claim.external) line += QStringLiteral(" -> %1").arg(claim.internal);
@@ -514,10 +722,14 @@ void RouterPortAllocator::onRenewed(const QList<RouterPortCore::Lost>& lost)
                             .arg(l.claim.external)
                             .arg(l.owner));
         m_Held.removeAll(l.claim);
-        if (l.claim.purpose == Purpose::Tunnel)
-            m_Settings->forgetTunnelPort(l.claim.external);
-        else
-            m_Settings->forgetMediaPort(l.claim.slot);
+        switch (l.claim.purpose) {
+        case Purpose::Tunnel: m_Settings->forgetTunnelPort(l.claim.external); break;
+        case Purpose::Media: m_Settings->forgetMediaPort(l.claim.slot); break;
+        case Purpose::Mux:
+            if (m_Settings->rememberedMuxPort(l.claim.slot) == l.claim.external)
+                m_Settings->forgetMuxPort(l.claim.slot);
+            break;
+        }
         emit portLost(static_cast<int>(l.claim.purpose), l.claim.slot, l.claim.external, l.owner);
     }
 }
@@ -537,9 +749,25 @@ void RouterPortAllocator::releaseTunnelPort(quint16 externalPort)
     }
 }
 
+void RouterPortAllocator::releaseMuxPort(int which)
+{
+    const auto held = heldMuxPort(which);
+    if (!held) return;
+    const Claim claim = *held;
+    m_Held.removeAll(claim);
+    QMetaObject::invokeMethod(
+        m_Worker, [w = m_Worker, claim]() { w->release(claim); }, Qt::QueuedConnection);
+    Logger::info(QStringLiteral("[UPNP] %1: released %2")
+                     .arg(purposeName(Purpose::Mux, which))
+                     .arg(claim.external));
+}
+
 void RouterPortAllocator::switchChanged()
 {
-    if (!enabled()) emit switchedOff();
+    if (enabled())
+        emit switchedOn();
+    else
+        emit switchedOff();
 }
 
 QList<RouterPortAllocator::Claim> RouterPortAllocator::heldTunnelPorts() const
@@ -554,6 +782,13 @@ std::optional<RouterPortAllocator::Claim> RouterPortAllocator::heldMediaPort(int
 {
     for (const Claim& c : m_Held)
         if (c.purpose == Purpose::Media && c.slot == slot) return c;
+    return std::nullopt;
+}
+
+std::optional<RouterPortAllocator::Claim> RouterPortAllocator::heldMuxPort(int which) const
+{
+    for (const Claim& c : m_Held)
+        if (c.purpose == Purpose::Mux && c.slot == which) return c;
     return std::nullopt;
 }
 

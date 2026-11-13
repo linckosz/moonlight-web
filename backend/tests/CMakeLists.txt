@@ -128,6 +128,14 @@ add_executable(run_tests
     test_remote_desktop_return.cpp
     test_mdns_advertiser.cpp
     test_router_port_core.cpp
+    test_router_sweep.cpp
+    test_router_holes.cpp
+    test_socket_tables.cpp
+    test_ice_mux_core.cpp
+    test_ice_mux_sockets.cpp
+    test_ice_mux_ports.cpp
+    test_ice_mux_handles.cpp
+    test_owner_account.cpp
     test_logger_rotation.cpp
     test_control_channel.cpp
     test_feed_ipc.cpp
@@ -147,6 +155,19 @@ add_executable(run_tests
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.
     ${_src}/src/network/RouterPortCore.cpp
+    # What this host wrote on the router, and what it may take back of it.
+    ${_src}/src/network/RouterHoles.cpp
+    # Whether something on this machine listens on a port, from the system's tables.
+    ${_src}/src/network/SocketTables.cpp
+    # Which stream worker a datagram on a shared UDP port goes to.
+    ${_src}/src/network/IceMuxCore.cpp
+    ${_src}/src/network/IceMux.cpp
+    # Which ports the streams share, and which the router forwards.
+    ${_src}/src/network/IceMuxPorts.cpp
+    # A worker above the server takes the shared sockets out of it.
+    ${_src}/src/streaming/IceMuxHandles.cpp
+    # The account an installation was made by, as its installer recorded it.
+    ${_src}/src/common/OwnerAccount.cpp
     # Which MoonlightWeb this is: the names, ports and version a DEV build
     # must answer to so it can sit beside a production install.
     ${_src}/src/common/Edition.cpp
@@ -290,7 +311,7 @@ target_link_libraries(run_tests PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32)
+    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi)
     # Emit PDB debug info even in release so OpenCppCoverage can map line coverage.
     target_compile_options(run_tests PRIVATE /Zi)
     target_link_options(run_tests PRIVATE /DEBUG)
@@ -305,22 +326,49 @@ elseif(UNIX AND NOT APPLE)
     target_link_libraries(run_tests PRIVATE pthread dl)
 endif()
 
-# ── Passive ICE-TCP: our patch on libjuice ─────────────────────────────────
-# A runner of its own, in C against libjuice itself: the patch lives in the
-# library, below anything run_tests links. The backend's configure applies the
-# patch to the submodule; a test tree configured alone applies it the same way
-# (once, left alone when it already is). docs/design/ice-tcp-passive.md
+# The package's launcher, built to start this runner: a native worker is started
+# through it, and the sockets the streams share have to cross it as they cross a
+# plain start (test_ice_mux_handles.cpp). Next to the runner, under its name.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(run_tests-launch ${_src}/packaging/linux/moonlightweb-launch.c)
+    target_compile_options(run_tests-launch PRIVATE -Wall -Wextra)
+    target_compile_definitions(run_tests-launch PRIVATE MW_LAUNCH_TARGET="run_tests")
+    set_target_properties(run_tests-launch PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:run_tests>")
+    add_dependencies(run_tests run_tests-launch)
+endif()
+
+# ── Passive ICE-TCP and shared sockets: our patches on libjuice ────────────
+# A runner of its own, in C against libjuice itself: the patches live in the
+# library, below anything run_tests links. The backend's configure applies them
+# to the submodule; a test tree configured alone applies them the same way
+# (once, left alone when they already are). The shared sockets rewrite lines
+# of the passive TCP: when that patch reverses, the passive one is in as well.
+# docs/design/ice-tcp-passive.md
 find_package(Git REQUIRED)
 set(_juice ${_src}/third_party/libdatachannel/deps/libjuice)
-foreach(_juice_name IN ITEMS libjuice-ice-tcp-passive.patch libjuice-udp-long-datagram.patch)
-    set(_juice_patch ${_src}/third_party/patches/${_juice_name})
-    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply --reverse --check "${_juice_patch}"
-                    RESULT_VARIABLE _juice_patched OUTPUT_QUIET ERROR_QUIET)
-    if(NOT _juice_patched EQUAL 0)
-        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply "${_juice_patch}"
+set(_juice_patches ${_src}/third_party/patches)
+foreach(_juice_patch libjuice-ice-tcp-passive.patch libjuice-udp-long-datagram.patch
+                     libjuice-ice-mux.patch)
+    set(_juice_proofs ${_juice_patch})
+    if(_juice_patch STREQUAL "libjuice-ice-tcp-passive.patch")
+        list(APPEND _juice_proofs libjuice-ice-mux.patch)
+    endif()
+    set(_juice_in FALSE)
+    foreach(_juice_proof IN LISTS _juice_proofs)
+        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply --reverse --check
+                                "${_juice_patches}/${_juice_proof}"
+                        RESULT_VARIABLE _juice_patched OUTPUT_QUIET ERROR_QUIET)
+        if(_juice_patched EQUAL 0)
+            set(_juice_in TRUE)
+        endif()
+    endforeach()
+    if(NOT _juice_in)
+        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${_juice}" apply
+                                "${_juice_patches}/${_juice_patch}"
                         RESULT_VARIABLE _juice_failed ERROR_VARIABLE _juice_why)
         if(NOT _juice_failed EQUAL 0)
-            message(FATAL_ERROR "${_juice_name} does not apply: ${_juice_why}")
+            message(FATAL_ERROR "${_juice_patch} does not apply: ${_juice_why}")
         endif()
     endif()
 endforeach()
@@ -328,7 +376,7 @@ set(NO_SERVER ON CACHE BOOL "" FORCE)
 set(NO_TESTS ON CACHE BOOL "" FORCE)
 add_subdirectory(${_juice} ${CMAKE_BINARY_DIR}/libjuice EXCLUDE_FROM_ALL)
 
-add_executable(run_juice_tests test_ice_tcp_passive.c)
+add_executable(run_juice_tests test_ice_tcp_passive.c test_ice_mux.c)
 # Its private headers: the test writes STUN messages with the library's own code.
 target_include_directories(run_juice_tests PRIVATE ${_juice}/src ${_juice}/include/juice)
 target_link_libraries(run_juice_tests PRIVATE juice-static)

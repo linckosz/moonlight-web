@@ -620,6 +620,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                                                    QStringLiteral("rendezvous"));
                     appSettings.setInternetAccessEnabled(true);
                     internetAccess.start();
+                    // Whoever keeps router holes for as long as the server runs
+                    // asks for them from now on, as after the admin's switch.
+                    if (RouterPortAllocator* ports = internetAccess.routerPorts())
+                        ports->switchChanged();
                     // The rendezvous line follows the same switch, and nothing else
                     // throws it: /api/internet/enable calls this, the wizard did not, so
                     // a machine set up here stayed unreachable from the internet until

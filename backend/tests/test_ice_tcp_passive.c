@@ -31,6 +31,9 @@ static void sleep_ms(int ms) { Sleep(ms); }
 static void sleep_ms(int ms) { usleep(ms * 1000); }
 #endif
 
+// The shared sockets of the other patch, test_ice_mux.c: how many of its checks failed.
+int ice_mux_tests(void);
+
 static int failures = 0;
 #define CHECK(cond)                                                                                \
 	do {                                                                                           \
@@ -787,6 +790,7 @@ int main(void) {
 	test_taken_tcp_port_means_no_candidate();
 	test_active_only_does_not_listen();
 	test_long_datagram_is_dropped();
+	failures += ice_mux_tests();
 	printf(failures ? "\n%d FAILURE(S)\n" : "\nall passed\n", failures);
 	return failures ? 1 : 0;
 }

@@ -51,6 +51,7 @@
 
 // isatty(): the operator CLI prompts for consent only when a human can answer.
 #include <cstdio>
+#include <ctime>
 #ifdef Q_OS_WIN
 #define NOMINMAX
 #include <windows.h>
@@ -134,7 +135,11 @@
 #include "server/HostAppImage.h"
 #include "server/HostAppLauncher.h"
 #include "server/LauncherDetect.h"
+#include "common/OwnerAccount.h"
 #include "network/AddressRace.h"
+#include "network/IceMux.h"
+#include "network/IceMuxPorts.h"
+#include "network/IceMuxRouter.h"
 #include "network/InternetAccessManager.h"
 #include "network/MdnsAdvertiser.h"
 #include "network/RendezvousClient.h"
@@ -1598,6 +1603,46 @@ using mw::edition::kDevSignalingPort;
 // forwards an external port to it, claimed per slot by RouterPortAllocator.
 // The packages and the dev firewall rule open base..base+kSlotHardCeiling-1.
 static constexpr quint16 kMediaBasePort = mw::routerports::kMediaBasePort;
+// Whether the streams share ports in this run (settings.json ice_udp_mux, and
+// the ports could be bound). Set once, as the server starts.
+static bool g_StreamMuxInUse = false;
+// The port a stream slot binds when it has a socket of its own: base + slot,
+// moved off the mux's stretch of the block when there is a mux
+// (RouterPortPools.h).
+static quint16 slotMediaPort(int slot)
+{
+    return mw::routerports::slotMediaPort(slot, g_StreamMuxInUse, mw::edition::isDev());
+}
+// The shared ports and their holes in the router (IceMuxPorts), once started.
+// Set as the server starts, cleared before it goes.
+static IceMuxPorts* g_StreamMuxPorts = nullptr;
+
+// Whether the stream this config starts goes on the server's shared ports
+// rather than on a socket of its own: the mux is in use and reads well, the
+// worker is one that gets the shared sockets, and the connection is not one
+// that also listens in TCP (that rung's listener sits on a socket of its own).
+// Such a stream asks the router for no hole of its own: the shared ports have
+// theirs, and a hole to a port nothing binds would lead nowhere.
+static bool streamSharesPorts(const QJsonObject& cfg)
+{
+    const IceMux* mux = IceMux::shared();
+    return g_StreamMuxInUse && mux && mux->running() && mux->healthy() && !cfg["iceTcp"].toBool() &&
+           StreamWorkerHost::getsSharedPorts(cfg);
+}
+
+// That stream's config, with what it may announce at the public address: the
+// shared ports the router forwards here, as of now.
+static QJsonObject withSharedPortsAnnounced(QJsonObject cfg)
+{
+    if (!g_StreamMuxPorts) return cfg;
+    const IceMuxPorts::Announced announced = g_StreamMuxPorts->announced();
+    if (announced.ports.isEmpty()) return cfg;
+    QJsonArray ports;
+    for (const uint16_t port : announced.ports)
+        ports.append(static_cast<int>(port));
+    cfg["iceMuxPublic"] = QJsonObject{{"ip", announced.publicIp}, {"ports", ports}};
+    return cfg;
+}
 
 // Ceiling independent of the port plan: enough for the largest per-backend cap
 // on two hosts at once (see concurrentSessionCap) plus the reserved block. It
@@ -1838,7 +1883,7 @@ int main(int argc, char* argv[])
                 for (const char* flag :
                      {"--native-bench", "--status", "--new-pin", "--set-admin-password",
                       "--clear-admin-password", "--enable-internet", "--update-apply",
-                      "--open-on-desktop"}) {
+                      "--open-on-desktop", "--owner-record"}) {
                     const size_t n = qstrlen(flag);
                     if (qstrncmp(argv[i], flag, int(n)) == 0 &&
                         (argv[i][n] == '\0' || argv[i][n] == '='))
@@ -1996,6 +2041,10 @@ int main(int argc, char* argv[])
         "worker-service-remove", "Internal: remove the stream-worker launcher service");
     workerServiceRemoveOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(workerServiceRemoveOption);
+    QCommandLineOption ownerRecordOption(
+        "owner-record", "Internal: record the account this installation is made by");
+    ownerRecordOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(ownerRecordOption);
 
     // Headless operator commands: query / configure the RUNNING instance from a
     // terminal, then exit. No server is started and no lock is taken.
@@ -2241,6 +2290,14 @@ int main(int argc, char* argv[])
     if (parser.isSet(workerServiceOption)) return WorkerService::runService();
     if (parser.isSet(workerServiceInstallOption)) return WorkerService::installService();
     if (parser.isSet(workerServiceRemoveOption)) return WorkerService::removeService();
+    // The installer's as well, elevated, as the account that installs: the one
+    // a server run as a service treats as its own (common/OwnerAccount.h).
+    if (parser.isSet(ownerRecordOption)) {
+        QString why;
+        if (mw::owneraccount::record(mw::owneraccount::machineStore(), &why)) return 0;
+        std::fprintf(stderr, "The owner's account is not recorded: %s\n", qPrintable(why));
+        return 1;
+    }
 
     // ── Stream-worker child process ─────────────────────────────────────────
     // Branch BEFORE the single-instance lock (the worker is a deliberate second
@@ -2249,6 +2306,10 @@ int main(int argc, char* argv[])
     // interleave. stdout carries the worker's JSON event protocol — Logger
     // writes to file/stderr only.
     if (parser.isSet(streamWorkerOption)) {
+        // Nothing between the first line of main() and runStreamWorker starts
+        // a process, the crash handler included: a worker may have been
+        // started with sockets it keeps from its own children only once it
+        // has read its config (runStreamWorker).
         // Before anything else runs, and for good: nothing later leaves it.
         if (parser.isSet(signInScreenOption) && !mw::native::NativeHost::enterSignInScreenOnly()) {
             Logger::error("[StreamWorker] the sign-in screen mode does not exist on this platform");
@@ -2537,9 +2598,15 @@ int main(int argc, char* argv[])
     const SlotPortPlan kSlotPlan = planSlotPorts(signalingPort, kMediaBasePort, kSlotHardCeiling);
     const int kMaxSlots = qMax(kTotalSlots, kSlotPlan.maxSlots);
     SessionPool g_Pool(signalingPort, kSlotPlan.extraBase, kTotalSlots, kMaxSlots);
+
+    // The UDP ports every stream shares (settings.json ice_udp_mux; a
+    // prototype, off unless asked for). Made here, ahead of the router's
+    // allocator, which reaches it from a thread of its own and must go first;
+    // started further down, with the allocator (IceMuxPorts).
+    IceMux g_IceMux;
     qInfo() << "[Session] Stream slots: reserved" << kTotalSlots << "max" << kMaxSlots
             << "— slot 0 signaling" << signalingPort << ", slots 1.. from" << kSlotPlan.extraBase
-            << ", media from" << kMediaBasePort;
+            << ", media block from" << kMediaBasePort;
 
     // Thin names kept over the pool: they read better at the call sites and
     // leave the slot arithmetic in one place.
@@ -2994,6 +3061,84 @@ int main(int argc, char* argv[])
     // The one UPnP discovery of the process: Internet Access reads the
     // gateway from the allocator rather than looking for it a second time.
     internetAccess.setRouterPorts(&routerPorts);
+
+    // The ports the streams share and their holes in the router
+    // (IceMuxPorts.h): the stream block's port is bound now, the conferencing
+    // port and the holes as the router answers. Not started: every stream
+    // binds a port of its own, as without the mux. Declared after the
+    // allocator, so that both are gone before it stops.
+    IceMuxRouter muxRouter(&routerPorts);
+    IceMuxPorts muxPorts(
+        g_IceMux, muxRouter,
+        IceMuxPorts::Policy{[&appSettings](int which) {
+                                QList<uint16_t> remembered;
+                                if (const quint16 port = appSettings.rememberedMuxPort(which))
+                                    remembered.append(port);
+                                const RouterPortCore::Request request = RouterPortCore::muxRequest(
+                                    mw::edition::isDev(), which, remembered);
+                                return request.remembered + request.preferred;
+                            },
+                            // A conferencing port is for browsers on the Internet, and never a
+                            // DEV identity's (RouterPortPools.h).
+                            [&appSettings]() {
+                                return !mw::edition::isDev() && !mw::edition::lanOnly() &&
+                                       appSettings.internetAccessEnabled();
+                            }});
+    // Declared after it, gone before it: nothing asks an object that is no more.
+    struct MuxPortsForgotten
+    {
+        ~MuxPortsForgotten() { g_StreamMuxPorts = nullptr; }
+    } muxPortsForgotten;
+    if (appSettings.iceUdpMux()) {
+        g_IceMux.setReporter([](const std::string& what) {
+            qWarning().noquote() << "[IceMux]" << QString::fromStdString(what);
+        });
+        QString why;
+        if (muxPorts.start(&why)) {
+            g_StreamMuxInUse = true;
+            g_StreamMuxPorts = &muxPorts;
+            IceMux::setShared(&g_IceMux);
+            routerPorts.setStreamMux([&g_IceMux](uint16_t port) { return g_IceMux.holds(port); });
+            muxRouter.attach(&muxPorts);
+            // A switch of the latency bench, in the environment, never for a
+            // user: MW_ICEMUX_STATS=1 logs what the mux did and what the
+            // process cost, every ten seconds (the workers, which inherit it,
+            // log the hop's delay).
+            if (qEnvironmentVariableIntValue("MW_ICEMUX_STATS") > 0) {
+                auto* every = new QTimer(&app);
+                QObject::connect(every, &QTimer::timeout, &app, [&g_IceMux] {
+                    const IceMux::Counters c = g_IceMux.counters();
+                    qint64 cpuMs = -1;
+#ifdef Q_OS_WIN
+                    FILETIME made, ended, kernel, user;
+                    if (GetProcessTimes(GetCurrentProcess(), &made, &ended, &kernel, &user)) {
+                        const auto ticks = [](const FILETIME& t) {
+                            return (static_cast<quint64>(t.dwHighDateTime) << 32) | t.dwLowDateTime;
+                        };
+                        cpuMs = static_cast<qint64>((ticks(kernel) + ticks(user)) / 10000);
+                    }
+#else
+                    // The processor time of this process, as POSIX counts it
+                    if (const std::clock_t used = std::clock(); used != std::clock_t(-1))
+                        cpuMs = static_cast<qint64>(used / (CLOCKS_PER_SEC / 1000));
+#endif
+                    qInfo().noquote()
+                        << QStringLiteral("[IceMux] stats read=%1 passed=%2 dropped=%3 lost=%4 "
+                                          "faults=%5 cpu=%6ms")
+                               .arg(c.read)
+                               .arg(c.passed)
+                               .arg(c.dropped)
+                               .arg(c.lost)
+                               .arg(c.faults)
+                               .arg(cpuMs);
+                });
+                every->start(10'000);
+            }
+        } else {
+            qWarning().noquote() << "[IceMux] the streams share no port:" << why
+                                 << "— each stream binds its own";
+        }
+    }
     GeoIpService geoIpService(&appSettings);
     UpdateChecker updateChecker(QCoreApplication::applicationVersion(),
                                 appSettings.updateRelayAllowed());
@@ -4341,6 +4486,7 @@ int main(int argc, char* argv[])
             // nothing to a browser that reached us through the rendezvous.
             s->setTunnelArrival(req.viaTunnel);
             s->setStreamRelayPort(signalingPort + 1);
+            s->setMediaPort(slotMediaPort(0));
             s->setTransportMode(transportMode); // Full mode for response
             s->setEnableIceTcp(iceTcp);
             s->setIceTcpPassive(AppSettings().iceTcpPassive());
@@ -4633,7 +4779,7 @@ int main(int argc, char* argv[])
             cfg["signalingPort"] = static_cast<int>(slotSignalingPort(reqSlot));
             cfg["loopbackKey"] = QString::fromLatin1(mw::loopback::key());
             cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(reqSlot) + 1);
-            cfg["mediaPort"] = static_cast<int>(kMediaBasePort + reqSlot);
+            cfg["mediaPort"] = static_cast<int>(slotMediaPort(reqSlot));
             cfg["wsPath"] = slotWsPath(reqSlot);
             QJsonArray chainArr;
             for (const QString& m : transportChain)
@@ -5091,8 +5237,14 @@ int main(int argc, char* argv[])
             const quint64 generation = ++g_SlotLaunchGeneration[reqSlot];
             auto claimThenStart = [&routerPorts, startWorker, cfg, reqSlot, generation, worker,
                                    respond, standby]() {
+                // On the server's shared ports the stream has no port of its
+                // own to be forwarded to: the shared ports have their holes.
+                if (streamSharesPorts(cfg)) {
+                    startWorker(withSharedPortsAnnounced(cfg));
+                    return;
+                }
                 routerPorts.claimMediaPort(
-                    reqSlot, static_cast<uint16_t>(kMediaBasePort + reqSlot), qApp,
+                    reqSlot, slotMediaPort(reqSlot), qApp,
                     [&routerPorts, startWorker, cfg, reqSlot, generation, worker, respond,
                      standby](const RouterPortAllocator::Claim& claim, const QString& why) {
                         if (g_SlotLaunchGeneration.value(reqSlot) != generation) {
@@ -5348,7 +5500,7 @@ int main(int argc, char* argv[])
             const quint64 generation = ++g_SlotLaunchGeneration[0];
             auto claimThenStart = [&routerPorts, guarded, generation]() {
                 routerPorts.claimMediaPort(
-                    0, kMediaBasePort, qApp,
+                    0, slotMediaPort(0), qApp,
                     [&routerPorts, guarded, generation](const RouterPortAllocator::Claim& claim,
                                                         const QString& why) {
                         if (!guarded) return;
@@ -6504,7 +6656,7 @@ int main(int argc, char* argv[])
         cfg["signalingPort"] = static_cast<int>(slotSignalingPort(slot));
         cfg["loopbackKey"] = QString::fromLatin1(mw::loopback::key());
         cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(slot) + 1);
-        cfg["mediaPort"] = static_cast<int>(kMediaBasePort + slot);
+        cfg["mediaPort"] = static_cast<int>(slotMediaPort(slot));
         cfg["wsPath"] = slotWsPath(slot);
         // What this player may send. Enforced in the worker, where a forged
         // datachannel message cannot get around it.
@@ -6752,8 +6904,13 @@ int main(int argc, char* argv[])
                                generation, worker, respond]() {
             joinFeed();
             keepGuestHole(slot);
+            // As the owner path: on the shared ports, no hole of its own.
+            if (streamSharesPorts(cfg)) {
+                startWorker(withSharedPortsAnnounced(cfg));
+                return;
+            }
             routerPorts.claimMediaPort(
-                slot, static_cast<uint16_t>(kMediaBasePort + slot), qApp,
+                slot, slotMediaPort(slot), qApp,
                 [&routerPorts, startWorker, cfg, slot, generation, worker,
                  respond](const RouterPortAllocator::Claim& claim, const QString& why) {
                     if (g_SlotLaunchGeneration.value(slot) != generation) {

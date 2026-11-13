@@ -1,0 +1,777 @@
+diff --git a/include/juice/juice.h b/include/juice/juice.h
+index ee5cf45..0a0cfac 100644
+--- a/include/juice/juice.h
++++ b/include/juice/juice.h
+@@ -144,6 +144,53 @@ JUICE_EXPORT const char *juice_state_to_string(juice_state_t state);
+ JUICE_EXPORT int juice_mux_listen(const char *bind_address, int local_port, juice_cb_mux_incoming_t cb, void *user_ptr);
+ JUICE_EXPORT int juice_set_ice_tcp_mode(juice_agent_t *agent, juice_ice_tcp_mode_t ice_tcp_mode);
+ 
++// MoonlightWeb patch: an agent on UDP sockets it shares with agents of other processes, so that
++// all of them are reached on the same ports. One process holds the sockets and is the only one
++// to read them. It hands each datagram to the agent it is for on that agent's feed socket,
++// behind a header that names where the datagram came from and which socket it came in on. The
++// agent sends on its own handles of the shared sockets, straight to the peer, and never reads
++// them. Each (peer address, socket) is a candidate pair of its own, checked and nominated as
++// any other; for one peer address the earlier socket of the list is preferred.
++//
++// Poll mode only, before juice_gather_candidates(). The agent borrows every handle: it closes
++// none, and all must stay valid until juice_destroy() returns. The sockets must be non-blocking
++// (the agent sets the feed so itself), and the feed should be connected to the one address the
++// datagrams are handed over from, so that nothing else can put a datagram in.
++#define JUICE_SHARED_SOCKETS_MAX 4
++
++typedef struct juice_shared_sockets {
++	uintptr_t feed;                           // SOCKET or file descriptor, datagram
++	uintptr_t send[JUICE_SHARED_SOCKETS_MAX]; // bound UDP sockets, the preferred one first
++	int send_count;
++} juice_shared_sockets_t;
++
++JUICE_EXPORT int juice_set_shared_sockets(juice_agent_t *agent,
++                                          const juice_shared_sockets_t *shared);
++
++// The header before each datagram on a feed socket, JUICE_FEED_HEADER_SIZE bytes:
++//   0  version, JUICE_FEED_VERSION
++//   1  index of the shared socket the datagram came in on
++//   2  4 or 6, the family of the source address
++//   3  zero
++//   4  source port, in network byte order
++//   6  zero
++//   8  IPv6 scope of the source address, little-endian (zero for IPv4)
++//  12  source address: 4 bytes then 12 of zero, or 16 bytes
++//  28  a timestamp of the sender's choosing, little-endian (zero for none)
++// Writes it at `buffer`; returns its size, or -1 on a bad argument.
++#define JUICE_FEED_VERSION 1
++#define JUICE_FEED_HEADER_SIZE 36
++
++JUICE_EXPORT int juice_feed_write_header(void *buffer, size_t size, int ip_version,
++                                         const void *address, uint16_t port, uint32_t scope_id,
++                                         int via, uint64_t timestamp);
++
++// Called from the connections thread with the timestamp of each datagram a feed delivers, to
++// measure what the handover costs. Set it before the first agent gathers; NULL takes it out.
++typedef void (*juice_cb_feed_timestamp_t)(uint64_t timestamp);
++
++JUICE_EXPORT void juice_set_feed_timestamp_handler(juice_cb_feed_timestamp_t cb);
++
+ // ICE server
+ 
+ typedef struct juice_server juice_server_t;
+diff --git a/src/addr.c b/src/addr.c
+index 0a6993d..d49b2ea 100644
+--- a/src/addr.c
++++ b/src/addr.c
+@@ -276,6 +276,7 @@ int addr_resolve(const char *hostname, const char *service, int socktype, addr_r
+ 				memcpy(&records->addr, ai->ai_addr, ai->ai_addrlen);
+ 				records->len = (socklen_t)ai->ai_addrlen;
+ 				records->socktype = socktype;
++				records->via = 0;
+ 				++records;
+ 			}
+ 		}
+@@ -303,7 +304,7 @@ bool addr_is_numeric_hostname(const char *hostname) {
+ bool addr_record_is_equal(const addr_record_t *a, const addr_record_t *b, bool compare_ports) {
+ 	return addr_is_equal((const struct sockaddr *)&a->addr, (const struct sockaddr *)&b->addr,
+ 	                     compare_ports) &&
+-	       a->socktype == b->socktype;
++	       a->socktype == b->socktype && a->via == b->via; // MoonlightWeb patch: via
+ }
+ 
+ int addr_record_to_string(const addr_record_t *record, char *buffer, size_t size) {
+diff --git a/src/addr.h b/src/addr.h
+index 2cef8b6..601d05d 100644
+--- a/src/addr.h
++++ b/src/addr.h
+@@ -34,6 +34,10 @@ typedef struct addr_record {
+ 	struct sockaddr_storage addr;
+ 	socklen_t len;
+ 	int socktype;
++	// MoonlightWeb patch: which of the agent's shared sockets the address is reached through: the
++	// one a datagram from it came in on, and so the one a datagram to it leaves from. Always 0
++	// for an agent with a socket of its own, and for an address nothing has come from yet.
++	int via;
+ } addr_record_t;
+ 
+ int addr_resolve(const char *hostname, const char *service, int socktype, addr_record_t *records, size_t count);
+diff --git a/src/agent.c b/src/agent.c
+index b15f505..52ae664 100644
+--- a/src/agent.c
++++ b/src/agent.c
+@@ -286,6 +286,7 @@ int agent_gather_candidates(juice_agent_t *agent) {
+ 						addr_record_t tcp_record;
+ 						memcpy(&tcp_record, record, sizeof(addr_record_t));
+ 						tcp_record.socktype = SOCK_STREAM;
++						tcp_record.via = 0;
+ 						addr_set_port((struct sockaddr *)&tcp_record.addr, 9);
+ 						agent_add_local_tcp_active_candidate(agent, &tcp_record);
+ 						break;
+@@ -304,6 +305,7 @@ int agent_gather_candidates(juice_agent_t *agent) {
+ 							addr_record_t tcp_record;
+ 							memcpy(&tcp_record, record, sizeof(addr_record_t));
+ 							tcp_record.socktype = SOCK_STREAM;
++							tcp_record.via = 0;
+ 							agent_add_local_tcp_passive_candidate(agent, &tcp_record);
+ 							break;
+ 						}
+@@ -1278,7 +1280,12 @@ int agent_bookkeeping(juice_agent_t *agent, timestamp_t *next_timestamp) {
+ 			agent_change_state(agent, JUICE_STATE_CONNECTED);
+ 
+ 			if (agent->mode == AGENT_MODE_CONTROLLING && !selected_pair->nomination_requested) {
+-				if (pending_count == 0 ||
++				// MoonlightWeb patch: a pair through a later shared socket waits the timer out
++				// even with nothing left to check. The peer's check through the first socket may
++				// only be slower, and a nominated pair is kept for good.
++				bool later_socket =
++				    selected_pair->remote->resolved.via > 0 && agent->nomination_timestamp;
++				if ((pending_count == 0 && !later_socket) ||
+ 				    (agent->nomination_timestamp && now >= agent->nomination_timestamp)) {
+ 					// Nominate selected
+ 					JLOG_DEBUG("Requesting pair nomination (controlling)");
+@@ -1357,16 +1364,17 @@ int agent_verify_stun_binding(juice_agent_t *agent, void *buf, size_t size,
+ 		char username[STUN_MAX_USERNAME_LEN];
+ 		strcpy(username, msg->credentials.username);
+ 		char *separator = strchr(username, ':');
++		// MoonlightWeb patch: the checks below name no credential. On a shared port a request
++		// for another agent can come in, and what it carries has no place in a log.
+ 		if (!separator) {
+-			JLOG_WARN("STUN username invalid, username=\"%s\"", username);
++			JLOG_WARN("STUN username invalid");
+ 			return -1;
+ 		}
+ 		*separator = '\0';
+ 		const char *local_ufrag = username;
+ 		const char *remote_ufrag = separator + 1;
+ 		if (strcmp(local_ufrag, agent->local.ice_ufrag) != 0) {
+-			JLOG_WARN("STUN local ufrag check failed, expected=\"%s\", actual=\"%s\"",
+-			          agent->local.ice_ufrag, local_ufrag);
++			JLOG_WARN("STUN local ufrag check failed");
+ 			return -1;
+ 		}
+ 		// RFC 8445 7.3. STUN Server Procedures:
+@@ -1375,8 +1383,7 @@ int agent_verify_stun_binding(juice_agent_t *agent, void *buf, size_t size,
+ 		// immediately generate a response.
+ 		if (*agent->remote.ice_ufrag != '\0' &&
+ 		    strcmp(remote_ufrag, agent->remote.ice_ufrag) != 0) {
+-			JLOG_WARN("STUN remote ufrag check failed, expected=\"%s\", actual=\"%s\"",
+-			          agent->remote.ice_ufrag, remote_ufrag);
++			JLOG_WARN("STUN remote ufrag check failed");
+ 			return -1;
+ 		}
+ 	}
+@@ -1388,7 +1395,7 @@ int agent_verify_stun_binding(juice_agent_t *agent, void *buf, size_t size,
+ 		return -1;
+ 	}
+ 	if (!stun_check_integrity(buf, size, msg, password)) {
+-		JLOG_WARN("STUN integrity check failed, password=\"%s\"", password);
++		JLOG_WARN("STUN integrity check failed");
+ 		return -1;
+ 	}
+ 	return 0;
+@@ -1805,7 +1812,7 @@ int agent_send_stun_binding(juice_agent_t *agent, agent_stun_entry_t *entry, stu
+ 			int family = entry->record.addr.ss_family;
+ 			int index = entry->pair && entry->pair->local
+ 			                ? (int)(entry->pair->local - agent->local.candidates)
+-			                : 0;
++			                : entry->record.via; // MoonlightWeb patch: 0 without shared sockets
+ 			msg.priority =
+ 			    ice_compute_priority(ICE_CANDIDATE_TYPE_PEER_REFLEXIVE, family, 1, index, false);
+ 
+@@ -2442,7 +2449,9 @@ int agent_add_remote_reflexive_candidate(juice_agent_t *agent, ice_candidate_typ
+ 		if (other->transport == ICE_CANDIDATE_TRANSPORT_TCP_TYPE_ACTIVE &&
+ 		    other->type != ICE_CANDIDATE_TYPE_PEER_REFLEXIVE)
+ 			continue; // announced, and so without a pair: not the connection the request came on
++		// and, on shared sockets, one of the same socket: each has its own pair
+ 		if ((other->transport != ICE_CANDIDATE_TRANSPORT_UDP) == is_tcp &&
++		    other->resolved.via == record->via &&
+ 		    addr_is_equal((const struct sockaddr *)&other->resolved.addr,
+ 		                  (const struct sockaddr *)&record->addr, true)) {
+ 			JLOG_VERBOSE("A remote candidate exists for the remote address");
+@@ -2470,7 +2479,9 @@ int agent_add_remote_reflexive_candidate(juice_agent_t *agent, ice_candidate_typ
+ 	JLOG_DEBUG("Obtained a new remote reflexive candidate, priority=%lu", (unsigned long)priority);
+ 
+ 	ice_candidate_t *remote = agent->remote.candidates + agent->remote.candidates_count - 1;
+-	remote->priority = priority;
++	// MoonlightWeb patch: the peer gives one priority whichever shared socket it reached, and
++	// its pair through a later socket must not pass the one through the first
++	remote->priority = ice_penalize_priority_via(priority, record->via);
+ 
+ 	return agent_add_candidate_pairs_for_remote(agent, remote);
+ }
+@@ -2875,6 +2886,22 @@ int agent_set_ice_tcp_mode(juice_agent_t *agent, juice_ice_tcp_mode_t ice_tcp_mo
+ 	return JUICE_ERR_SUCCESS;
+ }
+ 
++int agent_set_shared_sockets(juice_agent_t *agent, const juice_shared_sockets_t *shared) {
++	if (agent->conn_impl) {
++		JLOG_WARN("Unable to set shared sockets, candidates gathering already started");
++		return JUICE_ERR_FAILED;
++	}
++	// Only the poll mode reads a feed
++	if (agent->config.concurrency_mode != JUICE_CONCURRENCY_MODE_POLL ||
++	    shared->send_count < 1 || shared->send_count > JUICE_SHARED_SOCKETS_MAX) {
++		JLOG_ERROR("Invalid shared sockets");
++		return JUICE_ERR_INVALID;
++	}
++
++	agent->shared = *shared;
++	return JUICE_ERR_SUCCESS;
++}
++
+ void agent_translate_host_candidate_entry(juice_agent_t *agent, agent_stun_entry_t *entry) {
+ 	if (!entry->pair || entry->pair->remote->type != ICE_CANDIDATE_TYPE_HOST)
+ 		return;
+diff --git a/src/agent.h b/src/agent.h
+index 1bd47b0..06de622 100644
+--- a/src/agent.h
++++ b/src/agent.h
+@@ -158,6 +158,9 @@ struct juice_agent {
+ 	// MoonlightWeb patch: the local address of the connection the passive listener accepted, as
+ 	// getsockname() gives it (len 0 before one). Set and read under the conn lock.
+ 	addr_record_t tcp_passive_local;
++
++	// MoonlightWeb patch: the sockets shared with other processes, send_count 0 without any
++	juice_shared_sockets_t shared;
+ };
+ 
+ juice_agent_t *agent_create(const juice_config_t *config);
+@@ -249,5 +252,6 @@ agent_find_entry_from_record(juice_agent_t *agent, const addr_record_t *record,
+                              const addr_record_t *relayed); // relayed may be NULL
+ void agent_translate_host_candidate_entry(juice_agent_t *agent, agent_stun_entry_t *entry);
+ int agent_set_ice_tcp_mode(juice_agent_t *agent, juice_ice_tcp_mode_t ice_tcp_mode);
++int agent_set_shared_sockets(juice_agent_t *agent, const juice_shared_sockets_t *shared);
+ 
+ #endif
+diff --git a/src/conn_poll.c b/src/conn_poll.c
+index beeeee7..55fa2d9 100644
+--- a/src/conn_poll.c
++++ b/src/conn_poll.c
+@@ -79,6 +79,13 @@ typedef struct conn_impl {
+ 	int polled_pending;
+ 	int pending_count;
+ 	tcp_passive_pending_t pending[TCP_PASSIVE_PENDING_MAX];
++	// MoonlightWeb patch: the sockets shared with other processes (juice_set_shared_sockets()).
++	// udp_sock is then the feed, the only socket polled and read; these only send, each to the
++	// addresses heard through it. All are borrowed.
++	int shared_count;
++	socket_t shared_send[JUICE_SHARED_SOCKETS_MAX];
++	int shared_ds[JUICE_SHARED_SOCKETS_MAX];
++	int shared_family[JUICE_SHARED_SOCKETS_MAX]; // read once: see socket_family()
+ } conn_impl_t;
+ 
+ typedef struct pfds_record {
+@@ -104,6 +111,11 @@ static void tcp_passive_drop(conn_impl_t *conn_impl, int k);
+ static bool tcp_passive_same_source(const addr_record_t *a, const addr_record_t *b);
+ static int tcp_passive_oldest(const conn_impl_t *conn_impl, const addr_record_t *src);
+ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfds_t i);
++static socket_t shared_take(conn_impl_t *conn_impl, const juice_shared_sockets_t *shared);
++static int shared_recv_feed(conn_impl_t *conn_impl, char *buffer, size_t size, addr_record_t *src,
++                            char **data);
++
++static atomic(juice_cb_feed_timestamp_t) feed_timestamp_handler;
+ 
+ static thread_return_t THREAD_CALL conn_thread_entry(void *arg) {
+ 	thread_set_name_self("juice poll");
+@@ -317,17 +329,21 @@ void conn_poll_process_udp(juice_agent_t *agent, struct pollfd *pfd) {
+ 	}
+ 
+ 	if (pfd->revents & POLLIN) {
+-		char buffer[BUFFER_SIZE];
++		// MoonlightWeb patch: a feed holds the same datagrams, each behind its header
++		char buffer[JUICE_FEED_HEADER_SIZE + BUFFER_SIZE];
++		char *data = buffer;
+ 		addr_record_t src;
+ 		int ret = 0;
+ 		int left = 1000; // limit for fairness between sockets
+ 		while (left--) {
+-			if ((ret = conn_poll_recv_udp(conn_impl->udp_sock, buffer, BUFFER_SIZE,
+-							&src)) <= 0) {
++			if (conn_impl->shared_count > 0)
++				ret = shared_recv_feed(conn_impl, buffer, sizeof(buffer), &src, &data);
++			else
++				ret = conn_poll_recv_udp(conn_impl->udp_sock, buffer, BUFFER_SIZE, &src);
++			if (ret <= 0)
+ 				break;
+-			}
+ 
+-			if (agent_conn_recv(agent, buffer, (size_t)ret, &src) != 0) {
++			if (agent_conn_recv(agent, data, (size_t)ret, &src) != 0) {
+ 				JLOG_WARN("Agent receive failed");
+ 				conn_impl->state = CONN_STATE_FINISHED;
+ 				break;
+@@ -633,7 +649,10 @@ int conn_poll_init(juice_agent_t *agent, conn_registry_t *registry, udp_socket_c
+ 		return -1;
+ 	}
+ 
+-	conn_impl->udp_sock = udp_create_socket(config);
++	if (agent->shared.send_count > 0) // MoonlightWeb patch: no socket of its own
++		conn_impl->udp_sock = shared_take(conn_impl, &agent->shared);
++	else
++		conn_impl->udp_sock = udp_create_socket(config);
+ 	if (conn_impl->udp_sock == INVALID_SOCKET) {
+ 		JLOG_ERROR("UDP socket creation failed");
+ 		free(conn_impl);
+@@ -648,7 +667,8 @@ int conn_poll_init(juice_agent_t *agent, conn_registry_t *registry, udp_socket_c
+ 	memset(&conn_impl->tcp_ice_read_context, 0, sizeof(tcp_ice_read_context_t));
+ 
+ 	conn_impl->listen_sock = INVALID_SOCKET;
+-	if (agent->ice_tcp_mode == JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE)
++	// On shared sockets the port is another process's, and udp_sock names no port to listen on
++	if (agent->ice_tcp_mode == JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE && conn_impl->shared_count == 0)
+ 		conn_impl->listen_sock = tcp_passive_listen(conn_impl->udp_sock);
+ 
+ 	agent->conn_impl = conn_impl;
+@@ -661,7 +681,8 @@ void conn_poll_cleanup(juice_agent_t *agent) {
+ 	conn_poll_interrupt(agent);
+ 
+ 	mutex_destroy(&conn_impl->send_mutex);
+-	closesocket(conn_impl->udp_sock);
++	if (conn_impl->shared_count == 0) // MoonlightWeb patch: a feed is borrowed
++		closesocket(conn_impl->udp_sock);
+ 	tcp_passive_close(conn_impl);
+ 	if (conn_impl->tcp_passive && conn_impl->tcp_sock != INVALID_SOCKET) {
+ 		// Reset rather than leave our end of it in TIME_WAIT: the next session's listener binds
+@@ -716,6 +737,128 @@ int conn_poll_interrupt(juice_agent_t *agent) {
+ 	return 0;
+ }
+ 
++// MoonlightWeb patch: the class of one datagram (its Differentiated Services byte) on a shared
++// socket. Agents of several processes send on such a socket: its own class (udp_set_diffserv())
++// would be whichever of them set it last. So the socket's is never set, and a datagram that has a
++// class carries it itself, as ancillary data. Windows documents that for ECN only: where the
++// system refuses it, the datagrams of a shared socket leave unmarked.
++
++// The family a socket was made with, 0 when the system will not say. A shared socket's is
++// read once, when the sockets are set: a bound socket keeps it, and a datagram that carries
++// its class goes by it.
++static int socket_family(socket_t sock) {
++	addr_record_t name;
++	name.len = sizeof(name.addr);
++	if (getsockname(sock, (struct sockaddr *)&name.addr, &name.len) != 0)
++		return 0;
++	return name.addr.ss_family;
++}
++
++// Whether a send error says "no class for one datagram here", and nothing else. Any other is
++// the datagram's own, as for a plain send (the buffer is full, it is too large, no route).
++bool conn_poll_class_refused(int err) {
++#ifdef _WIN32
++	return err == WSAEINVAL || err == WSAENOPROTOOPT || err == WSAEOPNOTSUPP;
++#else
++	return err == EINVAL || err == ENOPROTOOPT || err == EOPNOTSUPP;
++#endif
++}
++
++static int sendto_with_class(socket_t sock, int family, const char *data, size_t size,
++                             const addr_record_t *dst, int ds) {
++	// Which class it is, IPv4's or IPv6's, is said by the address the datagram really goes to:
++	// an IPv4 peer of an IPv6 socket is reached IPv4-mapped (as in udp_sendto()), and is IPv4.
++	addr_record_t tmp = *dst;
++	if (family == 0)
++		family = socket_family(sock);
++	bool inet6_sock = family == AF_INET6;
++	bool tos = tmp.addr.ss_family == AF_INET;
++	if (tmp.addr.ss_family == AF_INET6)
++		tos = IN6_IS_ADDR_V4MAPPED(&((const struct sockaddr_in6 *)&tmp.addr)->sin6_addr);
++#ifndef __linux__
++	if (inet6_sock)
++		addr_map_inet6_v4mapped(&tmp.addr, &tmp.len);
++#endif
++#ifdef __APPLE__
++	// macOS refuses IP_TOS on a dual-stack socket: an IPv4-mapped peer takes the IPv6 class
++	if (inet6_sock)
++		tos = false;
++#endif
++	(void)inet6_sock;
++	int value = ds & 0xFF;
++
++#ifdef _WIN32
++	union {
++		WSACMSGHDR header; // for the alignment
++		char space[WSA_CMSG_SPACE(sizeof(int))];
++	} control;
++	memset(&control, 0, sizeof(control));
++	WSABUF buf;
++	buf.buf = (char *)data;
++	buf.len = (ULONG)size;
++	WSAMSG msg;
++	memset(&msg, 0, sizeof(msg));
++	msg.name = (LPSOCKADDR)&tmp.addr;
++	msg.namelen = (INT)tmp.len;
++	msg.lpBuffers = &buf;
++	msg.dwBufferCount = 1;
++	msg.Control.buf = control.space;
++	msg.Control.len = (ULONG)WSA_CMSG_SPACE(sizeof(int));
++	WSACMSGHDR *cmsg = WSA_CMSG_FIRSTHDR(&msg);
++	cmsg->cmsg_level = tos ? IPPROTO_IP : IPPROTO_IPV6;
++	cmsg->cmsg_type = tos ? IP_TOS : IPV6_TCLASS;
++	cmsg->cmsg_len = WSA_CMSG_LEN(sizeof(int));
++	memcpy(WSA_CMSG_DATA(cmsg), &value, sizeof(value));
++	DWORD sent = 0;
++	if (WSASendMsg(sock, &msg, 0, &sent, NULL, NULL) != 0)
++		return -1;
++	return (int)sent;
++#else
++	union {
++		struct cmsghdr header; // for the alignment
++		char space[CMSG_SPACE(sizeof(int))];
++	} control;
++	memset(&control, 0, sizeof(control));
++	struct iovec iov;
++	iov.iov_base = (void *)data;
++	iov.iov_len = size;
++	struct msghdr msg;
++	memset(&msg, 0, sizeof(msg));
++	msg.msg_name = (void *)&tmp.addr;
++	msg.msg_namelen = tmp.len;
++	msg.msg_iov = &iov;
++	msg.msg_iovlen = 1;
++	msg.msg_control = control.space;
++	msg.msg_controllen = CMSG_SPACE(sizeof(int));
++	struct cmsghdr *cmsg = CMSG_FIRSTHDR(&msg);
++	cmsg->cmsg_level = tos ? IPPROTO_IP : IPPROTO_IPV6;
++	cmsg->cmsg_type = tos ? IP_TOS : IPV6_TCLASS;
++	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
++	memcpy(CMSG_DATA(cmsg), &value, sizeof(value));
++	return (int)sendmsg(sock, &msg, 0);
++#endif
++}
++
++int conn_poll_send_shared(socket_t sock, int via, int family, int *class_state, const char *data,
++                          size_t size, const addr_record_t *dst, int ds) {
++	// No class asked, or none to be had: a plain send. Nobody sets a class on a shared socket.
++	if ((ds & 0xFF) == 0 || *class_state < 0)
++		return udp_sendto(sock, data, size, dst);
++
++	int ret = sendto_with_class(sock, family, data, size, dst, ds);
++	if (ret >= 0)
++		return ret;
++	int err = sockerrno;
++	if (!conn_poll_class_refused(err))
++		return ret; // the datagram's own error, sockerrno still says which
++
++	*class_state = -1;
++	JLOG_INFO("No class for one datagram on shared socket %d, errno=%d: its datagrams leave "
++	          "unmarked",
++	          via, err);
++	return udp_sendto(sock, data, size, dst);
++}
++
+ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *data, size_t size,
+                    int ds) {
+ 	conn_impl_t *conn_impl = agent->conn_impl;
+@@ -749,6 +892,15 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
+ 			// MoonlightWeb patch: the queue is full, drop
+ 			ret = -SEAGAIN;
+ 		}
++	} else if (conn_impl->shared_count > 0) {
++		// MoonlightWeb patch: on shared sockets, the one the destination is reached through.
++		// The class goes with the datagram, never on the socket: conn_poll_send_shared()
++		int via = dst->via >= 0 && dst->via < conn_impl->shared_count ? dst->via : 0;
++		ret = conn_poll_send_shared(conn_impl->shared_send[via], via,
++		                            conn_impl->shared_family[via], conn_impl->shared_ds + via,
++		                            data, size, dst, ds);
++		if (ret < 0)
++			ret = -sockerrno;
+ 	} else {
+ 		if (conn_impl->send_ds >= 0 && conn_impl->send_ds != ds) {
+ 			JLOG_VERBOSE("Setting Differentiated Services field to 0x%X", ds);
+@@ -1159,5 +1311,171 @@ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfd
+ int conn_poll_get_addrs(juice_agent_t *agent, addr_record_t *records, size_t size) {
+ 	conn_impl_t *conn_impl = agent->conn_impl;
+ 
++	if (conn_impl->shared_count > 0) {
++		// MoonlightWeb patch: the addresses of each shared socket, the first socket's first, each
++		// knowing its socket. What does not fit is counted, as udp_get_addrs() does.
++		int count = 0;
++		for (int via = 0; via < conn_impl->shared_count; ++via) {
++			size_t done = (size_t)count < size ? (size_t)count : size;
++			int ret = udp_get_addrs(conn_impl->shared_send[via], records + done, size - done);
++			if (ret < 0)
++				continue;
++			for (size_t i = done; i < size && i < done + (size_t)ret; ++i)
++				records[i].via = via;
++			count += ret;
++		}
++		return count;
++	}
++
+ 	return udp_get_addrs(conn_impl->udp_sock, records, size);
+ }
++
++// A datagram socket, and a bound one if `bound`
++static bool shared_is_datagram(socket_t sock, bool bound) {
++	int type = 0;
++	socklen_t len = sizeof(type);
++	if (getsockopt(sock, SOL_SOCKET, SO_TYPE, (char *)&type, &len) != 0 || type != SOCK_DGRAM)
++		return false;
++
++	return !bound || udp_get_port(sock) != 0;
++}
++
++// The sockets given with juice_set_shared_sockets(), checked for what they must be: a handle
++// of another kind would be written to as if it were one. Returns the feed, the socket the
++// connection reads, or INVALID_SOCKET.
++static socket_t shared_take(conn_impl_t *conn_impl, const juice_shared_sockets_t *shared) {
++	socket_t feed = (socket_t)shared->feed;
++	if (!shared_is_datagram(feed, false)) {
++		JLOG_ERROR("The feed is not a datagram socket");
++		return INVALID_SOCKET;
++	}
++	for (int via = 0; via < shared->send_count; ++via) {
++		if (!shared_is_datagram((socket_t)shared->send[via], true)) {
++			JLOG_ERROR("Shared socket %d is not a bound datagram socket", via);
++			return INVALID_SOCKET;
++		}
++	}
++
++	ctl_t nbio = 1;
++	if (ioctlsocket(feed, FIONBIO, &nbio)) {
++		JLOG_ERROR("Setting non-blocking mode on the feed failed, errno=%d", sockerrno);
++		return INVALID_SOCKET;
++	}
++
++	for (int via = 0; via < shared->send_count; ++via) {
++		conn_impl->shared_send[via] = (socket_t)shared->send[via];
++		conn_impl->shared_family[via] = socket_family(conn_impl->shared_send[via]);
++	}
++	conn_impl->shared_count = shared->send_count;
++	JLOG_INFO("Using %d shared socket(s), the first on UDP port %hu", conn_impl->shared_count,
++	          udp_get_port(conn_impl->shared_send[0]));
++	return feed;
++}
++
++static uint32_t feed_read_le32(const uint8_t *p) {
++	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
++}
++
++// The header of a feed datagram, as juice_feed_write_header() writes it: the address the
++// datagram came from, with the shared socket it came in on, one of `via_count`. Returns the size
++// of the header, or -1 if these `size` bytes do not start with one.
++int conn_poll_feed_read_header(const char *buffer, size_t size, int via_count, addr_record_t *src,
++                               uint64_t *timestamp) {
++	const uint8_t *header = (const uint8_t *)buffer;
++	if (size < JUICE_FEED_HEADER_SIZE || header[0] != JUICE_FEED_VERSION)
++		return -1;
++
++	int via = header[1];
++	if (via >= via_count)
++		return -1;
++
++	memset(src, 0, sizeof(*src));
++	switch (header[2]) {
++	case 4: {
++		struct sockaddr_in *sin = (struct sockaddr_in *)&src->addr;
++		sin->sin_family = AF_INET;
++		memcpy(&sin->sin_port, header + 4, 2);
++		memcpy(&sin->sin_addr, header + 12, 4);
++		src->len = sizeof(*sin);
++		break;
++	}
++	case 6: {
++		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&src->addr;
++		sin6->sin6_family = AF_INET6;
++		memcpy(&sin6->sin6_port, header + 4, 2);
++		memcpy(&sin6->sin6_addr, header + 12, 16);
++		sin6->sin6_scope_id = feed_read_le32(header + 8);
++		src->len = sizeof(*sin6);
++		addr_unmap_inet6_v4mapped((struct sockaddr *)&src->addr, &src->len);
++		break;
++	}
++	default:
++		return -1;
++	}
++	src->socktype = SOCK_DGRAM;
++	src->via = via;
++
++	if (timestamp)
++		*timestamp = (uint64_t)feed_read_le32(header + 28) |
++		             (uint64_t)feed_read_le32(header + 32) << 32;
++	return JUICE_FEED_HEADER_SIZE;
++}
++
++int juice_feed_write_header(void *buffer, size_t size, int ip_version, const void *address,
++                            uint16_t port, uint32_t scope_id, int via, uint64_t timestamp) {
++	if (!buffer || !address || size < JUICE_FEED_HEADER_SIZE ||
++	    (ip_version != 4 && ip_version != 6) || via < 0 || via >= JUICE_SHARED_SOCKETS_MAX)
++		return -1;
++
++	uint8_t *header = buffer;
++	memset(header, 0, JUICE_FEED_HEADER_SIZE);
++	header[0] = JUICE_FEED_VERSION;
++	header[1] = (uint8_t)via;
++	header[2] = (uint8_t)ip_version;
++	header[4] = (uint8_t)(port >> 8);
++	header[5] = (uint8_t)port;
++	for (int i = 0; i < 4; ++i)
++		header[8 + i] = (uint8_t)(scope_id >> (8 * i));
++	memcpy(header + 12, address, ip_version == 4 ? 4 : 16);
++	for (int i = 0; i < 8; ++i)
++		header[28 + i] = (uint8_t)(timestamp >> (8 * i));
++	return JUICE_FEED_HEADER_SIZE;
++}
++
++void juice_set_feed_timestamp_handler(juice_cb_feed_timestamp_t cb) {
++	atomic_store(&feed_timestamp_handler, cb);
++}
++
++// The next datagram of the feed: `src` is where it came from, `data` its first byte, past the
++// header. One whose header does not hold is dropped, like an empty one, and so is one that
++// does not fit the buffer. Returns its size, or minus the socket error.
++static int shared_recv_feed(conn_impl_t *conn_impl, char *buffer, size_t size, addr_record_t *src,
++                            char **data) {
++	while (true) {
++		addr_record_t from;
++		int len = udp_recvfrom(conn_impl->udp_sock, buffer, size, &from);
++		if (len < 0) {
++			int err = sockerrno;
++			if (err == SEMSGSIZE)
++				continue;
++			if (err != SEAGAIN && err != SEWOULDBLOCK)
++				JLOG_ERROR("recvfrom failed on the feed, errno=%d", err);
++			return -err;
++		}
++
++		uint64_t timestamp = 0;
++		int header = conn_poll_feed_read_header(buffer, (size_t)len, conn_impl->shared_count, src,
++		                                        &timestamp);
++		if (header < 0 || header == len) {
++			JLOG_DEBUG("Dropping a feed datagram without a valid header or without data");
++			continue;
++		}
++
++		juice_cb_feed_timestamp_t handler = atomic_load(&feed_timestamp_handler);
++		if (handler)
++			handler(timestamp);
++
++		*data = buffer + header;
++		return len - header;
++	}
++}
+diff --git a/src/conn_poll.h b/src/conn_poll.h
+index ae786e6..f2ec236 100644
+--- a/src/conn_poll.h
++++ b/src/conn_poll.h
+@@ -30,5 +30,16 @@ int conn_poll_send(juice_agent_t *agent, const addr_record_t *dst, const char *d
+ void conn_poll_tcp_connect(juice_agent_t *agent, const addr_record_t *dst);
+ bool conn_poll_tcp_listening(juice_agent_t *agent);
+ int conn_poll_get_addrs(juice_agent_t *agent, addr_record_t *records, size_t size);
++int conn_poll_feed_read_header(const char *buffer, size_t size, int via_count, addr_record_t *src,
++                               uint64_t *timestamp); // MoonlightWeb patch
++// MoonlightWeb patch: one datagram on a shared socket, its class (`ds`) as ancillary data rather
++// than as the socket's own. *class_state is the caller's memory for that socket: 0 at first,
++// below 0 once the system has refused a class for one datagram, after which none is asked.
++// `family` is the socket's (AF_INET6, AF_INET), as the caller read it once; 0 when it did not,
++// and the socket is then asked for each datagram that has a class.
++// Returns like udp_sendto(). Declared here for the tests.
++int conn_poll_send_shared(socket_t sock, int via, int family, int *class_state, const char *data,
++                          size_t size, const addr_record_t *dst, int ds);
++bool conn_poll_class_refused(int err);
+ 
+ #endif
+diff --git a/src/ice.c b/src/ice.c
+index 1ccb1ba..e38f007 100644
+--- a/src/ice.c
++++ b/src/ice.c
+@@ -399,11 +399,14 @@ int ice_update_candidate_pair(ice_candidate_pair_t *pair, bool is_controlling) {
+ 	// or remote See https://www.rfc-editor.org/rfc/rfc8445.html#section-6.1.2.3
+ 	if (!pair->local && !pair->remote)
+ 		return 0;
++	// MoonlightWeb patch: the local side of a pair without a local candidate is the shared socket
++	// its remote address is reached through, the earlier one first
+ 	uint64_t local_priority =
+ 	    pair->local
+ 	        ? pair->local->priority
+ 	        : ice_compute_priority(ICE_CANDIDATE_TYPE_HOST, pair->remote->resolved.addr.ss_family,
+-	                               pair->remote->component, 0, pair->remote->transport);
++	                               pair->remote->component, pair->remote->resolved.via,
++	                               pair->remote->transport);
+ 	uint64_t remote_priority =
+ 	    pair->remote
+ 	        ? pair->remote->priority
+@@ -498,6 +501,17 @@ uint32_t ice_compute_priority(ice_candidate_type_t type, int family, int compone
+     return p;
+ }
+ 
++uint32_t ice_penalize_priority_via(uint32_t priority, int via) {
++	if (via <= 0)
++		return priority;
++
++	uint32_t type_preference = priority >> 24;
++	type_preference = type_preference > ICE_CANDIDATE_PENALTY_VIA
++	                      ? type_preference - ICE_CANDIDATE_PENALTY_VIA
++	                      : 0;
++	return (type_preference << 24) | (priority & 0x00FFFFFF);
++}
++
+ bool ice_is_valid_string(const char *str) {
+ 	if (!str)
+ 		return false;
+diff --git a/src/ice.h b/src/ice.h
+index 1165a48..e968ba4 100644
+--- a/src/ice.h
++++ b/src/ice.h
+@@ -23,6 +23,12 @@
+ 
+ #define ICE_CANDIDATE_PENALTY_TCP 50
+ 
++// MoonlightWeb patch: taken off the type preference of a remote candidate heard on a shared
++// socket after the first. It puts every pair through such a socket under the pairs through the
++// first one (a server-reflexive candidate has 100, this leaves a peer-reflexive one 80), and
++// still above the pairs over TCP (76 at most).
++#define ICE_CANDIDATE_PENALTY_VIA 30
++
+ typedef enum ice_candidate_type {
+ 	ICE_CANDIDATE_TYPE_UNKNOWN,
+ 	ICE_CANDIDATE_TYPE_HOST,
+@@ -114,6 +120,7 @@ int ice_candidates_count(const ice_description_t *description, ice_candidate_typ
+ 
+ uint32_t ice_compute_priority(ice_candidate_type_t type, int family, int component, int index,
+                               ice_candidate_transport_t transport);
++uint32_t ice_penalize_priority_via(uint32_t priority, int via);
+ 
+ bool ice_is_valid_string(const char *str);
+ 
+diff --git a/src/juice.c b/src/juice.c
+index 074823c..f79e58d 100644
+--- a/src/juice.c
++++ b/src/juice.c
+@@ -224,3 +224,10 @@ int juice_set_ice_tcp_mode(juice_agent_t *agent, juice_ice_tcp_mode_t ice_tcp_mo
+ 
+ 	return agent_set_ice_tcp_mode(agent, ice_tcp_mode);
+ }
++
++int juice_set_shared_sockets(juice_agent_t *agent, const juice_shared_sockets_t *shared) {
++	if (!agent || !shared)
++		return JUICE_ERR_INVALID;
++
++	return agent_set_shared_sockets(agent, shared);
++}
+diff --git a/src/udp.c b/src/udp.c
+index a656349..b3d3d68 100644
+--- a/src/udp.c
++++ b/src/udp.c
+@@ -180,6 +180,7 @@ int udp_recvfrom(socket_t sock, char *buffer, size_t size, addr_record_t *src) {
+ 	while (true) {
+ 		src->len = sizeof(src->addr);
+ 		src->socktype = SOCK_DGRAM;
++		src->via = 0;
+ 		int len =
+ 		    recvfrom(sock, buffer, (socklen_t)size, 0, (struct sockaddr *)&src->addr, &src->len);
+ 		if (len >= 0) {
+@@ -313,6 +314,7 @@ uint16_t udp_get_port(socket_t sock) {
+ int udp_get_bound_addr(socket_t sock, addr_record_t *record) {
+ 	record->len = sizeof(record->addr);
+ 	record->socktype = SOCK_DGRAM;
++	record->via = 0;
+ 	if (getsockname(sock, (struct sockaddr *)&record->addr, &record->len)) {
+ 		JLOG_WARN("getsockname failed, errno=%d", sockerrno);
+ 		return -1;
+@@ -439,6 +441,9 @@ error:
+ #endif
+ 
+ int udp_get_addrs(socket_t sock, addr_record_t *records, size_t count) {
++	for (size_t i = 0; i < count; ++i)
++		records[i].via = 0; // MoonlightWeb patch: the fields below are set one by one
++
+ 	addr_record_t bound;
+ 	if (udp_get_bound_addr(sock, &bound) < 0) {
+ 		JLOG_ERROR("Getting UDP bound address failed");

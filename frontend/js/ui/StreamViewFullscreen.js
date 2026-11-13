@@ -28,6 +28,12 @@ import { IS_MOBILE_OR_TABLET, IS_IOS, IS_STANDALONE } from '../util/BrowserDetec
 const ORIENTATION_SYNC_DELAYS = [60, 160, 320, 600];
 
 /**
+ * How long the header stays down over a CSS-fullscreen picture, in ms (#62).
+ * Each press in it starts the count again.
+ */
+const FS_BAR_MS = 4000;
+
+/**
  * Whether this device can be held in landscape by the page itself.
  *
  * screen.orientation.lock() works on Android browsers, and only while the page
@@ -400,7 +406,104 @@ export class StreamViewFullscreen {
 
         // iOS blocks the Fullscreen API on canvas, so the browser chrome stays
         // visible. Hint the user that an installed PWA is the only true path.
-        if (IS_IOS && !IS_STANDALONE) this._showInstallHint();
+        const installHint = IS_IOS && !IS_STANDALONE && !this._installHintShown;
+        if (installHint) this._showInstallHint();
+
+        this._mountFsHandle();
+        // The handle hidden by choice: say once per entry where the header went,
+        // after the install hint when that one has the spot.
+        if (this._hideFsHandle && IS_MOBILE_OR_TABLET) {
+            const say = () => {
+                if (this._cssFullscreen) {
+                    this._showTransientHint(t('stream.fsThreeFingerHint'), FS_BAR_MS);
+                }
+            };
+            if (installHint) setTimeout(say, 4500);
+            else say();
+        }
+    }
+
+    /**
+     * The way back to the header in CSS fullscreen (#62): a small see-through
+     * tab at the top of the picture, unless the settings hide it. A tap on it,
+     * or a three-finger tap anywhere, brings the header down (_showFsBar).
+     * @this {StreamViewInstance}
+     */
+    _mountFsHandle() {
+        const area = this._rootEl && this._rootEl.querySelector('.stream-canvas-area');
+        if (!area) return;
+        if (!this._fsBarWired) {
+            this._fsBarWired = true;
+            // Each press in the header gives it its 4 s again.
+            const header = this._rootEl.querySelector('.stream-header');
+            if (header) {
+                header.addEventListener('pointerdown', () => {
+                    if (this._fsBarShown()) this._armFsBarTimer();
+                });
+            }
+        }
+        if (this._hideFsHandle || this._fsHandleEl) return;
+        const handle = document.createElement('button');
+        handle.type = 'button';
+        handle.className = 'stream-fs-handle';
+        handle.title = t('stream.fsHandle');
+        handle.setAttribute('aria-label', t('stream.fsHandle'));
+        handle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._showFsBar();
+        });
+        area.appendChild(handle);
+        this._fsHandleEl = handle;
+    }
+
+    /**
+     * Whether the header is down over the picture.
+     * @this {StreamViewInstance}
+     */
+    _fsBarShown() {
+        return !!(this._rootEl && this._rootEl.classList.contains('stream-fs-bar'));
+    }
+
+    /**
+     * Bring the header down over the CSS-fullscreen picture for FS_BAR_MS.
+     * @this {StreamViewInstance}
+     */
+    _showFsBar() {
+        if (!this._cssFullscreen || !this._rootEl) return;
+        this._rootEl.classList.add('stream-fs-bar');
+        this._armFsBarTimer();
+    }
+
+    /**
+     * (Re)start the countdown that puts the header away. It stays while the
+     * soft keyboard or one of the header's menus is open, and looks again later.
+     * @this {StreamViewInstance}
+     */
+    _armFsBarTimer() {
+        if (this._fsBarTimer) clearTimeout(this._fsBarTimer);
+        this._fsBarTimer = setTimeout(() => {
+            this._fsBarTimer = null;
+            if (!this._cssFullscreen) return this._hideFsBar();
+            if (this._fsBarHeld()) this._armFsBarTimer();
+            else this._hideFsBar();
+        }, FS_BAR_MS);
+    }
+
+    /**
+     * The header must stay: the keyboard is up, or a menu of it is open.
+     * @this {StreamViewInstance}
+     */
+    _fsBarHeld() {
+        if (this._kbdVisible) return true;
+        const header = this._rootEl && this._rootEl.querySelector('.stream-header');
+        return !!(header && header.querySelector('[aria-expanded="true"]'));
+    }
+
+    /** @this {StreamViewInstance} */
+    _hideFsBar() {
+        if (this._fsBarTimer) clearTimeout(this._fsBarTimer);
+        this._fsBarTimer = null;
+        if (this._rootEl) this._rootEl.classList.remove('stream-fs-bar');
     }
 
     /**
@@ -535,6 +638,7 @@ export class StreamViewFullscreen {
         // Remove CSS class from the stream-view container
         const streamView = this._rootEl || document.getElementById('stream-view');
         if (streamView) streamView.classList.remove('stream-css-fs');
+        this._hideFsBar();
 
         // Restore header fullscreen button visibility (per current orientation)
         this._updateMobileFsButtonVisibility();

@@ -121,8 +121,8 @@ void run_edition_tests()
         CHECK(payload({"--dev", "--local-request=GET /api/server/status"}));
         CHECK(!payload({"--local-requests"}));
         // The worker's protocol, a helper's answer, the parser's own texts.
-        for (const char* mode : {"--stream-worker", "--native-probe", "--vdisplay-apply", "--help",
-                                 "--version", "-h", "-v"})
+        for (const char* mode : {"--stream-worker", "--owner-record", "--native-probe",
+                                 "--vdisplay-apply", "--help", "--version", "-h", "-v"})
             CHECK(payload({mode}));
         // A word that only starts like one of them, or is another option's value, is not one.
         CHECK(!payload({"--statusx"}));

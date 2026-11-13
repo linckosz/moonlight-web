@@ -19,6 +19,7 @@
 #include "CaptureKey.h"
 #include "ConsoleSession.h"
 #include "HidParkingTransfer.h"
+#include "IceMuxHandles.h"
 #include "NativeBench.h"
 #include "StreamEnds.h"
 #include "WorkerService.h"
@@ -26,9 +27,11 @@
 #include "common/LinuxCapabilities.h"
 #include "common/RunFlags.h"
 #include "mw/native/MouseKeys.h"
+#include "network/IceMux.h"
 #include "server/AppSettings.h"
 
 #include <QCoreApplication>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QStandardPaths>
 #include <QTimer>
@@ -40,6 +43,7 @@ StreamWorkerHost::StreamWorkerHost(QObject* parent)
 
 StreamWorkerHost::~StreamWorkerHost()
 {
+    dropMuxAgent();
     if (m_Proc && m_Proc->state() != QProcess::NotRunning) {
         // Destructor teardown: no time for the graceful dance — kill. Normal
         // paths call requestQuit()/notify*() well before destruction.
@@ -48,6 +52,9 @@ StreamWorkerHost::~StreamWorkerHost()
     }
     // A console child is killed and joined by its own destructor (it is our
     // QObject child), so nothing more is needed here.
+    // The worker's copies of the shared sockets go with its process: the mux
+    // need not keep a replaced port for it any longer.
+    releaseMuxSockets();
     if (m_HidBatch) HidParkingTransfer::settle(m_HidBatch, false);
 }
 
@@ -122,6 +129,20 @@ bool StreamWorkerHost::startAs(const QJsonObject& config, Launch how)
     case Launch::Plain: break;
     }
     return startInProcess(args, configLine, native);
+}
+
+bool StreamWorkerHost::getsSharedPorts(const QJsonObject& config)
+{
+    if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return false;
+    // In start()'s order. The sign-in screen's worker comes through the
+    // launcher service or not at all, whatever this process is.
+    const bool signInScreen = config[QStringLiteral("signInScreen")].toBool(false);
+    // The one launch start() and startAs() make as Launch::ConsoleAsUser:
+    // shared only with the account this installation was made by.
+    const bool native = config[QStringLiteral("backendType")].toString() == QLatin1String("native");
+    const bool consoleAsUser = !signInScreen && native && ConsoleSession::launchesElsewhere();
+    return sharesPortsFor(false, signInScreen, consoleAsUser,
+                          consoleAsUser && ConsoleSession::consoleUserIsOwner());
 }
 
 bool StreamWorkerHost::start(const QJsonObject& config)
@@ -210,18 +231,147 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
     connect(m_Proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
             &StreamWorkerHost::onFinished);
 
+#ifndef Q_OS_WIN
+    // The UDP ports every stream shares go to this child by being left open
+    // across its start, and across the launcher's own when it comes through
+    // one: taken for it now, named in its config line, and let through in the
+    // child alone, between its fork and its exec. Every other process this
+    // one starts still gets none. A child that gets none binds a port of its
+    // own, as without the mux.
+    std::vector<int> acrossStart;
+    const QByteArray line = withSharedSockets(configLine, Launch::Plain, false, 0, &acrossStart);
+    if (!acrossStart.empty())
+        m_Proc->setChildProcessModifier([acrossStart]() {
+            mw::icemuxhandles::leaveOpenAcrossExec(acrossStart.data(), acrossStart.size());
+        });
+#endif
+
     m_Proc->start();
     if (!m_Proc->waitForStarted(5000)) {
         qWarning() << "[StreamWorkerHost] Failed to spawn worker:" << m_Proc->errorString();
+        // Nothing runs that could hold them: what was taken for it is given back
+        releaseMuxSockets();
         m_Proc->deleteLater();
         m_Proc = nullptr;
         return false;
     }
 
-    m_Proc->write(configLine);
+#ifdef Q_OS_WIN
+    // The UDP ports every stream shares, as this child alone can open them:
+    // made for its pid, which exists only now. A child that gets none binds a
+    // port of its own, as without the mux.
+    m_Proc->write(withSharedSockets(configLine, Launch::Plain, false, m_Proc->processId()));
+#else
+    m_Proc->write(line);
+#endif
     m_Launch = Launch::Plain;
     qInfo() << "[StreamWorkerHost] Worker spawned, pid=" << m_Proc->processId();
     return true;
+}
+
+// Whose process a worker is decides what it may be given: see muxHandoverFor().
+// A socket in a process of another account is that account's to use.
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::ConsoleAsUser, false) ==
+                  StreamWorkerHost::MuxHandover::None,
+              "a console worker that is not the owner's must not get the shared sockets");
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::ConsoleAsUser, true) ==
+                  StreamWorkerHost::MuxHandover::Handed,
+              "a console worker on the owner's account is handed the shared sockets");
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::Plain, false) ==
+                  StreamWorkerHost::MuxHandover::Handed,
+              "a plain child is handed the shared sockets");
+static_assert(StreamWorkerHost::muxHandoverFor(StreamWorkerHost::Launch::SignInScreen, false) ==
+                  StreamWorkerHost::MuxHandover::Taken,
+              "the sign-in screen's worker takes the shared sockets, as the service's other one");
+
+QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Launch how,
+                                               bool ownerAccount, qint64 pid,
+                                               std::vector<int>* acrossStart)
+{
+    // Whatever an earlier launch of this worker was given is given back
+    releaseMuxSockets();
+    if (acrossStart) acrossStart->clear();
+    IceMux* mux = IceMux::shared();
+    if (!mux || !mux->running() || !mux->healthy()) return configLine;
+    const MuxHandover handover = muxHandoverFor(how, ownerAccount);
+    if (handover == MuxHandover::None) {
+        // Said for each such worker, and without naming anybody.
+        qInfo() << "[IceMux] shared ports: not this account — the worker binds a port of its own";
+        return configLine;
+    }
+    const bool workerTakes = handover == MuxHandover::Taken;
+    QJsonObject config = QJsonDocument::fromJson(configLine).object();
+    // The guests' shared feed is an engine and a pipe: no browser reaches it.
+    if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return configLine;
+
+    std::string why;
+#ifdef Q_OS_WIN
+    Q_UNUSED(acrossStart);
+    const IceMux::Share share =
+        workerTakes ? mux->shareByHandle() : mux->shareWith(static_cast<unsigned long>(pid), &why);
+    const bool usable = !share.sockets.empty() &&
+                        !(workerTakes ? share.handles.empty() : share.descriptions.empty());
+#else
+    // A worker is this process's own child here and nothing else. The share
+    // is taken before the child starts and kept from then on: none of its
+    // sockets is closed, and so none of their numbers given to something
+    // else, between this line and the child's exec.
+    Q_UNUSED(pid);
+    IceMux::Share share;
+    std::vector<int> descriptors;
+    if (workerTakes || !acrossStart) {
+        why = "not a child this process is about to start";
+    } else {
+        share = mux->shareByHandle();
+        descriptors = mw::icemuxhandles::descriptorsToHand(share.handles);
+        if (descriptors.empty()) why = "no descriptor a worker can be started with";
+    }
+    const bool usable = !share.sockets.empty() && !descriptors.empty();
+#endif
+    if (!usable) {
+        mux->release(share.lease);
+        qWarning() << "[IceMux] the shared sockets cannot go to the worker:"
+                   << QString::fromStdString(why) << "— it takes a socket of its own";
+        return configLine;
+    }
+    QJsonArray ports;
+    for (const uint16_t port : share.ports)
+        ports.append(static_cast<int>(port));
+    QJsonObject shared{{QStringLiteral("hop"), static_cast<int>(mux->hopPort())},
+                       {QStringLiteral("ports"), ports}};
+#ifndef Q_OS_WIN
+    // The numbers the child finds them under: its own, once it has started,
+    // are this process's (IceMuxHandles::inherited()).
+    QJsonArray fds;
+    for (const int fd : descriptors)
+        fds.append(fd);
+    shared[QStringLiteral("fds")] = fds;
+    *acrossStart = descriptors;
+#else
+    if (workerTakes) {
+        // The numbers of this process's own handles: the worker copies them
+        // out itself, and checks what it got (streaming/IceMuxHandles).
+        QJsonArray handles;
+        for (const uint64_t handle : share.handles)
+            handles.append(QString::number(handle));
+        shared[QStringLiteral("handles")] = handles;
+    } else {
+        QJsonArray sockets;
+        for (const auto& description : share.descriptions)
+            sockets.append(
+                QString::fromLatin1(QByteArray(reinterpret_cast<const char*>(description.data()),
+                                               static_cast<qsizetype>(description.size()))
+                                        .toBase64()));
+        shared[QStringLiteral("sockets")] = sockets;
+    }
+#endif
+    config[QStringLiteral("iceMux")] = shared;
+    // Which of the mux's sockets those are: what its agents register with.
+    // The mux keeps them for this worker until it is gone (onFinished()).
+    for (const uint8_t id : share.sockets)
+        m_MuxSockets.append(id);
+    m_MuxLease = share.lease;
+    return QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
 }
 
 bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByteArray& configLine,
@@ -292,6 +442,13 @@ bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByt
             }
         }
     }
+    // The UDP ports every stream shares: a worker started by the service (on
+    // the desktop or on the sign-in screen) or by the task runs above this
+    // process, which may not open it, and is told which to take. One in the
+    // console session is handed them when the
+    // token it was started with is the owner's, and gets none otherwise
+    // (muxHandoverFor).
+    line = withSharedSockets(line, how, m_Console->runsAsOwner(), m_Console->processId());
     m_Console->write(line);
     m_Launch = how;
     qInfo() << "[StreamWorkerHost] Worker spawned"
@@ -497,6 +654,8 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
         } else if (type == QLatin1String("audioFocus")) {
             audioFocusSlot() = event["app"].toString().left(260);
             m_ReportedAudioFocus = true;
+        } else if (type == QLatin1String("iceMux")) {
+            onMuxEvent(event);
         } else if (type == QLatin1String("mouseKeys")) {
             m_MouseKeysHeld = event["on"].toBool();
             m_MouseKeysSaved = m_MouseKeysHeld ? event["saved"].toObject() : QJsonObject();
@@ -506,9 +665,60 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
     }
 }
 
+void StreamWorkerHost::dropMuxAgent()
+{
+    if (!m_MuxFeed) return;
+    if (IceMux* mux = IceMux::shared()) mux->removeAgent(m_MuxFeed);
+    m_MuxFeed = 0;
+}
+
+void StreamWorkerHost::releaseMuxSockets()
+{
+    dropMuxAgent();
+    // No agent of this worker from here on, whatever it still says
+    m_MuxSockets.clear();
+    if (!m_MuxLease) return;
+    if (IceMux* mux = IceMux::shared()) mux->release(m_MuxLease);
+    m_MuxLease = 0;
+}
+
+void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
+{
+    IceMux* mux = IceMux::shared();
+    if (!mux || !mux->running()) return;
+    const QString op = event["op"].toString();
+    if (op == QLatin1String("agent")) {
+        // One agent at a time per worker: a new one replaces the last.
+        dropMuxAgent();
+        const int feedPort = event["feedPort"].toInt();
+        if (feedPort <= 0 || feedPort > 65535) return;
+        // On the sockets this worker was handed, and no other: a worker that
+        // was handed none has no agent here, whatever it says.
+        const std::vector<uint8_t> sockets(m_MuxSockets.cbegin(), m_MuxSockets.cend());
+        m_MuxFeed = mux->addAgent(event["ufrag"].toString().toStdString(), sockets);
+        if (!m_MuxFeed) {
+            qWarning() << "[IceMux] the worker's ICE agent is refused: no datagram will reach it";
+            return;
+        }
+        mux->setFeedPort(m_MuxFeed, static_cast<uint16_t>(feedPort));
+        qInfo() << "[IceMux] agent" << m_MuxFeed << "registered for the worker";
+    } else if (op == QLatin1String("confirmed")) {
+        if (!m_MuxFeed) return;
+        const int port = event["port"].toInt();
+        if (port <= 0 || port > 65535) return;
+        mux->confirm(m_MuxFeed, event["address"].toString().toStdString(),
+                     static_cast<uint16_t>(port));
+    } else if (op == QLatin1String("gone")) {
+        dropMuxAgent();
+    }
+}
+
 void StreamWorkerHost::onFinished(int exitCode, QProcess::ExitStatus status)
 {
     qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode << "status=" << status;
+    // Its agent goes, and with its process its copies of the shared sockets:
+    // the mux need not keep a replaced port for it any longer.
+    releaseMuxSockets();
     if (m_ReportedAudioFocus) {
         audioFocusSlot().clear();
         m_ReportedAudioFocus = false;

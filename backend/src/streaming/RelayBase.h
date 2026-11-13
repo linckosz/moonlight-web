@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <cstdint>
+#include <vector>
 
 namespace rtc {
 class Candidate;
@@ -146,6 +147,13 @@ public:
     // ── UPnP NAT traversal ────────────────────────────────────────────────────
 
     void setPublicAddress(const std::string& publicIP, uint16_t publicPort);
+    /// For a stream on the server's shared ports (network/IceMux), in place of
+    /// setPublicAddress(): the public address, and the shared ports the router
+    /// forwards, each to itself. A host candidate on one of them is also
+    /// announced at the public address, on that port. One on a shared port the
+    /// router does not forward has no such copy: it goes to a peer of our own
+    /// network only (setEmitLanHostCandidate), like any internal address.
+    void setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports);
     void setForceHostCandidatePublic(bool force) { m_ForceHostPublic = force; }
     void setSuppressIPv6Candidates(bool suppress) { m_SuppressIPv6 = suppress; }
     // When host candidates are rewritten to the public IP, also advertise the
@@ -263,6 +271,10 @@ protected:
     // ── UPnP NAT traversal ──────────────────────────────────────────────────
     std::string m_PublicIP;    ///< Public IP discovered via UPnP (or empty)
     uint16_t m_PublicPort = 0; ///< Mapped port from UPnP (0 = not mapped)
+    /// See setSharedPublicPorts(): on the shared ports, the ones the router
+    /// forwards. m_PublicPort is not used then.
+    bool m_OnSharedPorts = false;
+    std::vector<uint16_t> m_SharedHoles;
     bool m_ForceHostPublic = false;
     ///< Withhold NON-GLOBAL IPv6 candidates (ULA, mesh VPN, link-local) when
     ///< UPnP is active. A global IPv6 address goes out: it is public anyway, and

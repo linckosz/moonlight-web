@@ -4021,6 +4021,8 @@ export const MoonlightApp = {
             // "Start streams in fullscreen": the launch click already asked
             // for it; the view completes it where that was not possible.
             fullscreenOnStart: streamingSettings.fullscreen_on_start === true,
+            // "Hide the full-screen handle": a phone's or tablet's own choice.
+            hideFsHandle: streamingSettings.hide_fs_handle === true,
             // Its encoder heals a lost frame with a delta (reference
             // invalidation): the view then decodes through a gap.
             refInvalidation: result.ref_invalidation === true,

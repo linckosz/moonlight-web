@@ -1,7 +1,8 @@
 # ============================================================================
 # The THIRD instrument: what the host made of the key.
 #
-#   .\keyboard-check.ps1 [-Profiles fr-azerty,us-qwerty] [-WriteSettings]
+#   .\keyboard-check.ps1 -KioskDisplay \\.\DISPLAYn [-Profiles fr-azerty,us-qwerty] [-WriteSettings]
+#   .\keyboard-check.ps1 -KioskDisplay \\.\DISPLAYn -OwnerLink -ClientRect x,y,w,h [-AppUrl ...]
 #
 # The other two instruments measure how fast a picture comes back. This one
 # measures whether the right thing happened at all, and it exists because a
@@ -48,11 +49,121 @@ param(
     # More presses than this for one keystroke is a loop, flagged as such.
     [int]      $FloodPresses = 3,
     [switch]   $WriteSettings,
-    [switch]   $NoLaunch
+    [switch]   $NoLaunch,
+    # Without it, the keys go to the Chrome already listening on -DebugPort, with
+    # the app open and its session held. With it, this script opens that client
+    # kiosk itself on -ClientRect and gives it the host's session as its owner
+    # does, by the link --print-link makes (owner_kiosk.py, as run-browser.ps1
+    # -OwnerLink): a bench instance only (--dev or the DEV edition), never the
+    # production one. Its own profile (.chrome-owner); the session ends with the
+    # run: the page logs out, the kiosk closes, the profile goes, whatever
+    # happened. While it runs, the kiosk's DevTools port (127.0.0.1) hands any
+    # process of this machine a page that holds the host's session: never left
+    # running unattended on a shared machine.
+    [switch]   $OwnerLink,
+    [string]   $AppUrl = 'https://127.0.0.1:8443/',
+    # x,y,w,h of the client kiosk, as run-browser.ps1 -ClientRect.
+    [string]   $ClientRect = '',
+    # The screen the client kiosk is on, by its device name (\\.\DISPLAY5).
+    # On a self-stream the host types every key of the table into whatever
+    # window has the foreground, and on a machine someone uses that may be
+    # theirs. So before each table and after it, the foreground must be the
+    # kiosk's own window (the browser process of its profile, on this debug
+    # port), on this screen; otherwise the run stops there.
+    [string]   $KioskDisplay = '',
+    # The kiosk's screen may be this machine's primary one (a bench with one
+    # screen). Without it, a primary -KioskDisplay is refused.
+    [switch]   $KioskOnPrimary
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$scriptStart = Get-Date
+if ($OwnerLink -and $NoLaunch) {
+    throw '-OwnerLink with -NoLaunch: the kiosk this script opens has no stream of its own to type into'
+}
+if ($OwnerLink -and @($ClientRect -split ',').Count -ne 4) {
+    throw '-OwnerLink needs -ClientRect x,y,w,h: where the client kiosk goes'
+}
+Add-Type -AssemblyName System.Windows.Forms
+$kioskScreen = @([System.Windows.Forms.Screen]::AllScreens | Where-Object { $KioskDisplay -and $_.DeviceName -eq $KioskDisplay })
+if ($kioskScreen.Count -ne 1) {
+    throw '-KioskDisplay names no screen of this machine: pass the device name of the kiosk''s screen (\\.\DISPLAYn)'
+}
+if ($kioskScreen[0].Primary -and -not $KioskOnPrimary) {
+    throw "-KioskDisplay $KioskDisplay is this machine's primary screen: refused without -KioskOnPrimary"
+}
+
+# What has the foreground: its process, its window class, its screen. Never
+# its title: a window of whoever uses the machine may show anything.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class KbForeground {
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetClassNameW", CharSet = CharSet.Unicode)]
+    static extern int GetClassName(IntPtr hwnd, StringBuilder name, int size);
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct MonitorInfoEx {
+        public int cbSize;
+        public int ml, mt, mr, mb, wl, wt, wr, wb;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string szDevice;
+    }
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", CharSet = CharSet.Unicode)]
+    static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfoEx info);
+    // { pid, class, screen device } of the foreground window; { 0, "", "" } when there is none.
+    public static string[] Now() {
+        IntPtr hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return new string[] { "0", "", "" };
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        StringBuilder cls = new StringBuilder(256);
+        GetClassName(hwnd, cls, cls.Capacity);
+        MonitorInfoEx info = new MonitorInfoEx();
+        info.cbSize = Marshal.SizeOf(typeof(MonitorInfoEx));
+        IntPtr monitor = MonitorFromWindow(hwnd, 2 /* MONITOR_DEFAULTTONEAREST */);
+        string device = (monitor != IntPtr.Zero && GetMonitorInfo(monitor, ref info)) ? info.szDevice : "";
+        return new string[] { pid.ToString(), cls.ToString(), device };
+    }
+}
+'@
+
+# The kiosk's browser process: the one Chrome process without --type= whose
+# profile is the kiosk's and which listens on -DebugPort. Exactly one, or none
+# is trusted. With -OwnerLink it is the one this run started.
+function Get-KioskPid {
+    $tags = if ($OwnerLink) { @('.chrome-owner') } else { @('.chrome-client', '.chrome-owner') }
+    $found = @(Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object {
+        $cmd = $_.CommandLine
+        $cmd -and $cmd -notmatch '--type=' -and $cmd -match "--remote-debugging-port=$DebugPort(\s|`"|$)" -and
+            @($tags | Where-Object {
+                # The profile folder is the END of the path: not .chrome-owner2.
+                $t = [regex]::Escape($_)
+                $cmd -match ('--user-data-dir=("[^"]*\\' + $t + '"|[^"\s]*\\' + $t + '(\s|"|$))')
+            }).Count -gt 0
+    })
+    if ($found.Count -ne 1) { throw "the kiosk's browser process is not one ($($found.Count)): no key is typed" }
+    if ($OwnerLink -and $found[0].CreationDate -lt $scriptStart) {
+        throw "the kiosk's browser process predates this run: no key is typed"
+    }
+    return [uint32]$found[0].ProcessId
+}
+
+# '' when the foreground is the kiosk on its screen; otherwise which rule
+# failed, with the class and the process id of the window that has it.
+function Test-KioskForeground([uint32] $KioskPid) {
+    $fg = [KbForeground]::Now()
+    $why = if ([uint32]$fg[0] -ne $KioskPid) { 'another process' }
+           elseif ($fg[1] -ne 'Chrome_WidgetWin_1') { 'not a browser window' }
+           elseif ($fg[2] -ne $KioskDisplay) { 'another screen' }
+           else { '' }
+    if (-not $why) { return '' }
+    return "the foreground is $why (class $($fg[1]), pid $($fg[0]))"
+}
 if (-not $ResultsDir) { $ResultsDir = Join-Path $PSScriptRoot 'results' }
 if (-not (Test-Path $ResultsDir)) { New-Item -ItemType Directory -Path $ResultsDir | Out-Null }
 $appData = Join-Path $env:APPDATA 'MoonlightWeb\MoonlightWeb'
@@ -110,7 +221,25 @@ is put back exactly as it was on the way out.
 Write-Host "settings     : keyboard_layout_fidelity = $fidelity"
 Write-Host "profiles     : $($Profiles -join ', ')"
 
+$ownerWarnings = @()
 try {
+    # -- -OwnerLink: the client kiosk, and the owner's session in it ----------
+    # Inside the try: from the moment the kiosk exists, the finally ends it.
+    if ($OwnerLink) {
+        $r = $ClientRect -split ','
+        # On a blank page first: it goes to the app once the link has opened its session.
+        & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url 'about:blank' `
+            -X $r[0] -Y $r[1] -W $r[2] -H $r[3] -DebugPort $DebugPort -ChromeProfile '.chrome-owner' | Out-Host
+        # The link goes from the instance's exe to the kiosk through a pipe, and
+        # nowhere else; this prints yes/no only (owner_kiosk.py).
+        $api = [uri]$ApiUrl
+        $app = [uri]$AppUrl
+        & python "$PSScriptRoot\owner_kiosk.py" open --api-port $api.Port --cdp-port $DebugPort `
+            --origin "$($app.Scheme)://$($app.Authority)" --lan-only | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "the owner's link did not open the client kiosk's session (owner_kiosk.py open)" }
+        Cdp nav $AppUrl | Out-Null
+    }
+
     # -- A stream, at the reference point: the keys need somewhere to land ----
     if (-not $NoLaunch) {
         if (-not $Tile) {
@@ -122,6 +251,16 @@ try {
             if (-not $Tile) { throw 'cannot name a tile -- pass -Tile' }
         }
         Write-Host "tile         : $Tile"
+        if ($OwnerLink) {
+            # A cold Chrome on a single-page app: the tile exists only once the
+            # host list has arrived (run-browser.ps1, Wait-Tile).
+            $seen = $false
+            for ($i = 0; $i -lt 40 -and -not $seen; $i++) {
+                $seen = (Cdp eval "JSON.stringify(document.body ? document.body.innerText : '')") -match [regex]::Escape($Tile)
+                if (-not $seen) { Start-Sleep -Seconds 2 }
+            }
+            if (-not $seen) { throw "the app at $AppUrl never showed a tile named '$Tile'" }
+        }
         Cdp launch $Tile | Out-Null
         Start-Sleep -Seconds 3
         if ((Cdp eval "!!document.querySelector('.self-stream-go')") -match 'True|true') {
@@ -144,6 +283,8 @@ try {
 
     $jsonl = Join-Path $ResultsDir 'keyboard.jsonl'
     if (Test-Path $jsonl) { Remove-Item $jsonl }
+    $kioskPid = Get-KioskPid
+    Write-Host "kiosk        : browser process $kioskPid, screen $KioskDisplay"
 
     foreach ($profileName in $Profiles) {
         $tablePath = Join-Path $PSScriptRoot "keyboard\$profileName.json"
@@ -153,9 +294,46 @@ try {
         Write-Host ""
         Write-Host "=== $profileName ($($table.layout)) ==="
 
+        # Before each table: the keys go nowhere unless the kiosk has the
+        # foreground. No second try: the run stops, and the finally does the rest.
+        $bad = Test-KioskForeground $kioskPid
+        if ($bad) {
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; aborted = $true
+                                error = "not typed: $bad" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT before the $profileName keys: $bad"
+        }
         $mark = (Get-Item $workerLog.FullName).Length
-        Cdp keys $tablePath | Out-Null
+        # cdp.py asks again before every key and stops at the first that would
+        # leave the kiosk (exit code 3, the reason on stdout). Quoted: an
+        # unquoted --kiosk-pid would be read as a parameter of Cdp itself.
+        $keysOut = Cdp '--kiosk-pid' "$kioskPid" '--kiosk-display' $KioskDisplay keys $tablePath
+        if ($LASTEXITCODE -eq 3) {
+            $stopped = @($keysOut -split "`r?`n" | Where-Object { $_ -match '^\{"aborted"' } | Select-Object -First 1)
+            $why = if ($stopped.Count) { ($stopped[0] | ConvertFrom-Json).aborted } else { 'cdp.py stopped the keys' }
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; invalid = $true
+                                error = "stopped within the table, not judged: $why" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT within the $profileName keys, which are not judged: $why"
+        } elseif ($LASTEXITCODE -ne 0) {
+            # Any other way out of cdp.py (a crash, an exit with no word) is no
+            # table to judge either.
+            $code = $LASTEXITCODE
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; invalid = $true
+                                error = "cdp.py keys ended with code $code, not judged" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT: cdp.py keys ended with code $code; the $profileName keys are not judged"
+        }
         Start-Sleep -Seconds 2
+        # And after it: a foreground that changed while the host typed makes the
+        # whole table unjudgeable (some keys went elsewhere), and stops the run.
+        $bad = Test-KioskForeground $kioskPid
+        if ($bad) {
+            ([pscustomobject]@{ profile = $profileName; fidelity = $fidelity; invalid = $true
+                                error = "typed, not judged: $bad" } |
+                ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+            throw "ABORT after the $profileName keys, which are not judged: $bad"
+        }
 
         # Read from the mark: everything the worker logged while we typed.
         $fs = [System.IO.File]::Open($workerLog.FullName, 'Open', 'Read', 'ReadWrite')
@@ -315,9 +493,54 @@ try {
     Write-Host "keyboard verdicts written to $jsonl"
 }
 finally {
+    if ($OwnerLink) {
+        # In this order: the stream stops, the page ends its session (the host
+        # revokes it), the kiosk closes, then the profile goes once no Chrome
+        # runs on it. Nothing here may throw before the profile is gone: cdp.py's
+        # stderr through 2>&1 is a terminating error under 'Stop' in PowerShell 5.1
+        # (a kiosk that never opened, a page already gone).
+        try {
+            $btns = Cdp eval "JSON.stringify([...document.querySelectorAll('button')].filter(e=>e.offsetParent).map(e=>e.textContent.trim()))"
+            if ($btns -match 'Stop Streaming') {
+                Cdp exitfs | Out-Null
+                Cdp launch 'Stop Streaming' | Out-Null
+                Start-Sleep -Seconds 4
+            }
+        } catch { Write-Host 'stream stop: the page did not answer' }
+        & python "$PSScriptRoot\owner_kiosk.py" logout --cdp-port $DebugPort | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            $ownerWarnings += 'the owner session could not be ended by the page: revoke it in Active Sessions'
+        }
+        & powershell -NoProfile -File "$PSScriptRoot\kiosk-close.ps1" -Client | Out-Host
+        for ($i = 0; $i -lt 5; $i++) {
+            $cleaned = & python "$PSScriptRoot\owner_kiosk.py" clean
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 1
+        }
+        $cleaned | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            $ownerWarnings += ".chrome-owner still holds the owner's session cookie: remove it once Chrome is closed"
+        }
+        # The proof the run wrote no key: how many times "#k=", "&k=" or "?k="
+        # appear in what it left in the results. The count only.
+        $kHits = 0
+        Get-ChildItem -LiteralPath $ResultsDir -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.Length -lt 64MB } | ForEach-Object {
+                $file = $_
+                try {
+                    $text = [System.IO.File]::ReadAllText($file.FullName, [System.Text.Encoding]::GetEncoding(28591))
+                    $kHits += [regex]::Matches($text, '[#&?]k=').Count
+                } catch { $ownerWarnings += "k= not counted in $($file.Name): unreadable" }
+            }
+        Write-Host "owner link: k= in the results: $kHits"
+        # Here too: after a throw in the try, the end of the script is never reached.
+        foreach ($w in $ownerWarnings) { Write-Warning $w }
+    }
     if ($restore) {
         [System.IO.File]::WriteAllText($SettingsPath, $originalSettings,
                                        (New-Object System.Text.UTF8Encoding $false))
         Write-Host "keyboard_debug: $SettingsPath restored"
     }
 }
+# Said again last, where it cannot be lost in the keys' output.
+foreach ($w in $ownerWarnings) { Write-Warning $w }

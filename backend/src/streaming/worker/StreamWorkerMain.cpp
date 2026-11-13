@@ -19,6 +19,7 @@
 
 #include "../Session.h"
 #include "../../common/LoopbackKey.h"
+#include "../IceMuxClient.h"
 #include "../InputMessageCodec.h"
 #include "../../server/AppSettings.h"
 #include "mw/native/FeedArbiter.h"
@@ -468,6 +469,10 @@ int runStreamWorker(QCoreApplication& app)
     Q_UNUSED(app);
     qInfo() << "[StreamWorker] Worker process started, waiting for config on stdin";
 
+    // Nothing that starts a process may run before the iceMux block below.
+    // Outside Windows a worker can be started with the server's shared
+    // sockets, and it keeps them from its own children only there.
+
     // Ctrl+Alt+Suppr: Windows takes it from a service in session 0 only, and
     // this worker runs in the console session, SYSTEM as it may be. The
     // launcher service it came from presses it on its behalf (design §31.7).
@@ -492,6 +497,19 @@ int runStreamWorker(QCoreApplication& app)
                    {QStringLiteral("body"),
                     QJsonObject{{QStringLiteral("error"), QStringLiteral("bad worker config")}}}});
         return 1;
+    }
+
+    // The UDP ports the server shares between its streams, when it does, and
+    // before anything else of the config. A worker that was started with them
+    // (outside Windows) keeps them, here, from whatever it starts: nothing
+    // above started a process, and nothing below may before this. A worker
+    // the server could not hand them to takes them out of the server its
+    // pipes lead to (none for a plain child: it was handed them).
+    if (cfg.contains(QStringLiteral("iceMux"))) {
+        mw::icemuxclient::configure(cfg["iceMux"].toObject(), ConsoleSession::workerServerPid(),
+                                    &ConsoleSession::isThisExecutable, emitEvent);
+        // And which of them the router forwards, for what the stream announces.
+        mw::icemuxclient::setPublic(cfg["iceMuxPublic"].toObject());
     }
 
     // The server's --config, before the first AppSettings below: this process

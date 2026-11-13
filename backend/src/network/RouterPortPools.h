@@ -109,6 +109,62 @@ constexpr int kMediaPortCount = 24;
 constexpr uint16_t kMediaPoolBegin = 46100;
 constexpr uint16_t kMediaPoolEnd = 46199;
 
+/// Whether `port` is one of the stream block's.
+constexpr bool inMediaBlock(int port)
+{
+    return port >= kMediaBasePort && port < kMediaBasePort + kMediaPortCount;
+}
+
+// ── The streams' shared ports (ice_udp_mux) ─────────────────────────────────
+//
+// With the mux on, the streams of one host no longer bind a port each: they
+// share two, held by the main process from start to stop. The router forwards
+// each to itself — external and internal are one number, as for the tunnel: a
+// router that has seen the host send from a port keeps translating to that
+// number, so a port is only worth advertising if the socket really binds it.
+//
+//   the first comes from the conferencing list at the top of this file, the
+//   ports a corporate network lets out. The tunnel draws from the same list;
+//   one allocator hands them out, so a port is never given twice.
+//
+//   the second is the head of the stream block: 48550, the port a manual
+//   forward on a router without UPnP has always pointed at, and one the
+//   packages' firewall rules already open. A neighbour on it, and the walk
+//   goes on up the block — never to the media pool, which is external only.
+//
+// A DEV identity holds one port, walked down from the top of the block
+// (48573), and never a conferencing port, for the reason its tunnel has a
+// block of its own. Each walk keeps to its own stretch of the block, so the
+// installed host and a --dev on one machine cannot meet, whatever the router's
+// table says.
+constexpr int kMuxBlockSpan = 12;
+
+/// Whether `port` is in the stretch of the stream block the mux's block port
+/// is drawn from: its foot for the installed host, its top for a DEV identity.
+constexpr bool inMuxBlockStretch(bool devInstance, int port)
+{
+    const int first = kMediaBasePort;
+    const int last = kMediaBasePort + kMediaPortCount - 1;
+    return devInstance ? port > last - kMuxBlockSpan && port <= last
+                       : port >= first && port < first + kMuxBlockSpan;
+}
+
+/// The port a stream slot binds when it has a socket of its own.
+///
+/// Without the mux, 48550 + slot. With it, a stream still binds one where it
+/// cannot share (a connection that also listens in TCP, a worker the shared
+/// sockets could not be handed to), and the router hole made for it leads to
+/// that port: it must never be one the mux holds, or the hole would lead to
+/// the mux. So the slots start at the other end of the block from the mux's
+/// stretch: 48562 for the installed host, 48550 as ever for a DEV identity.
+/// Only a thirteenth slot comes round to the stretch; what the mux really
+/// holds there is refused when the hole is asked for (RouterPortAllocator).
+constexpr uint16_t slotMediaPort(int slot, bool muxInUse, bool devInstance)
+{
+    const int start = muxInUse && !devInstance ? kMuxBlockSpan : 0;
+    return static_cast<uint16_t>(kMediaBasePort + (slot + start) % kMediaPortCount);
+}
+
 // ── Leases ──────────────────────────────────────────────────────────────────
 //
 // An hour, renewed at the half. Latched to permanent (0) when a router refuses

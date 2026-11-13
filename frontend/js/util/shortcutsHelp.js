@@ -80,6 +80,7 @@ export function gestureRows(touchScreen, touchPad = false) {
               [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
               [t('stream.tcDesktop'), t('stream.tcDesktopVal')],
               [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
+              [t('stream.tcControls'), t('stream.tcControlsVal')],
           ]
         : [
               [t('stream.tcMoveCursor'), t('stream.tcMoveCursorVal')],
@@ -91,6 +92,7 @@ export function gestureRows(touchScreen, touchPad = false) {
               [t('stream.tcPanZoom'), t('stream.tcPanZoomVal')],
               [t('stream.tcDesktop'), t('stream.tcDesktopVal')],
               [t('stream.tcKeyboard'), t('stream.tcKeyboardVal')],
+              [t('stream.tcControls'), t('stream.tcControlsVal')],
           ];
     if (touchPad) rows.push([t('stream.tcTouchPad'), t('stream.tcTouchPadVal')]);
     return rows;

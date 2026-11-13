@@ -46,6 +46,7 @@ REPO = os.path.dirname(os.path.dirname(BENCH))
 sys.path.insert(0, BENCH)
 sys.path.insert(0, os.path.join(BENCH, "acceptance"))
 import run, drive, fleet  # noqa: E402
+import guest_link as gl  # noqa: E402
 
 OUT = os.path.join(REPO, "bench-out", "shared-feed")
 HOOK = open(os.path.join(HERE, "hook.js"), encoding="utf-8").read()
@@ -246,34 +247,22 @@ class Guest:
 
     def join(self, owner, base_url):
         """Open the row on the board (owner's page), then have this guest's
-        own Chrome open the link, enter the PIN and press Join."""
-        act = owner.json_eval("""(async () => {
-            const r = await fetch('/api/share/slots/%d/activate', {method: 'POST',
-                credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ttl_secs: 3600})});
-            return JSON.stringify(Object.assign({status: r.status}, await r.json()));
-        })()""" % self.slot)
-        link = act.get("url", "")
-        m = re.search(r"/p/([^/?#]+)", link) or re.search(r"#t=([^&]+)", link)
-        if not m or not act.get("pin"):
-            raise drive.PassFailed("slot %d did not open: %s" % (self.slot, act))
-        url = base_url.rstrip("/") + "/p/" + m.group(1)
-        x, y, w, h = self.rect
-        subprocess.run(["powershell", "-NoProfile", "-File", os.path.join(BENCH, "kiosk.ps1"),
-                        "-Url", url, "-X", str(x), "-Y", str(y), "-W", str(w), "-H", str(h),
-                        "-DebugPort", str(self.port), "-ChromeProfile", self.profile,
-                        "-AdapterLuid", self.luid, "-Windowed"]
-                       + (["-DisableFeatures", "PlatformHEVCDecoderSupport"] if self.no_hevc else []),
-                       capture_output=True, text=True)
+        own Chrome open the link, enter the PIN and press Join. The link and
+        the PIN stay in memory (guest_link)."""
+        share = gl.activate(owner, self.slot)
+        gl.open_kiosk(self.port, self.profile, self.rect,
+                      ["-AdapterLuid", self.luid, "-Windowed"]
+                      + (["-DisableFeatures", "PlatformHEVCDecoderSupport"] if self.no_hevc else []))
         self.d = drive.Driver(self.port)
+        gl.go(self.port, base_url, share)
         # On every document this Chrome opens from now on, then on this one:
         # the Join that creates the DataChannel comes after the PIN step.
         self.d.call("Page.addScriptToEvaluateOnNewDocument", source=HOOK)
         self.d.eval(HOOK)
         if not self._wait("!!document.querySelector('.player-pin-input')", self.patience):
             raise drive.PassFailed("guest %d: the page never asked for the PIN" % self.slot)
-        self.d.eval("(() => { const i = document.querySelector('.player-pin-input'); i.value = %s; "
-                    "i.form.requestSubmit(); return 1; })()" % json.dumps(act["pin"]))
+        gl.enter_pin(self.d, share)
+        share = None
         if not self._wait("!!document.querySelector('.player-join-btn')", self.patience):
             raise drive.PassFailed("guest %d: no Join button after the PIN" % self.slot)
         self.d.eval(HOOK)  # idempotent; the PIN step may have reloaded the page
@@ -315,19 +304,17 @@ class Guest:
             return {}
 
     def leave(self, owner):
-        """The owner closes the row: the worker goes at once (a guest who only
-        closes the window is noticed when the link times out)."""
-        try:
-            owner.eval("fetch('/api/share/slots/%d/deactivate', {method: 'POST', credentials: "
-                       "'same-origin', headers: {'Content-Type': 'application/json'}, body: '{}'})"
-                       ".then(r => r.status)" % self.slot)
-        except drive.PassFailed:
-            pass
-        subprocess.run(["powershell", "-NoProfile", "-Command",
-                        "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
-                        "Where-Object { $_.CommandLine -like '*%s*' } | "
-                        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" % self.profile],
-                       capture_output=True, text=True)
+        """The owner closes the row: the worker goes at once, and the host
+        revokes the link and the PIN (a guest who only closes the window is
+        noticed when the link times out). Then the guest's Chrome closes and
+        its profile goes. Returns the warnings, if any."""
+        warnings = []
+        if not gl.deactivate(owner, self.slot):
+            warnings.append("slot %d may still be open: close it on the share board" % self.slot)
+        left = gl.close_kiosk(self.profile)
+        if left:
+            warnings.append(left)
+        return warnings
 
 
 # ── one run ─────────────────────────────────────────────────────────────────
@@ -408,6 +395,8 @@ def main():
 
     # Owner: the acceptance run's client, on its own GPU's screen.
     started = time.time()
+    gl.keep_output()
+    warnings = []
     run.kiosk_start(base, on_gpu=a.client_gpu)
     d = drive.Driver(run.DEBUG_PORT)
     guests = {}
@@ -455,7 +444,7 @@ def main():
             # Guests arrive and leave in slot order: 1 = slot 2, 3 = slots 2-4.
             for slot in slots[want:]:
                 if slot in guests:
-                    guests.pop(slot).leave(d)
+                    warnings += guests.pop(slot).leave(d)
             for i, slot in enumerate(slots[:want]):
                 if slot not in guests:
                     g = Guest(slot, (spots[i][0], spots[i][1], GUEST_W, GUEST_H), guest_luid,
@@ -464,9 +453,9 @@ def main():
                           flush=True)
                     try:
                         g.join(d, base)
-                    except drive.PassFailed:
-                        # Its window and its row go with the run.
-                        g.leave(d)
+                    except BaseException:
+                        # Its window, its profile and its row go with the run.
+                        warnings += g.leave(d)
                         raise
                     guests[slot] = g
             time.sleep(a.settle)
@@ -502,7 +491,7 @@ def main():
                 json.dump(result, f, indent=1)
     finally:
         for g in list(guests.values()):
-            g.leave(d)
+            warnings += g.leave(d)
         try:
             d.stop()
         except Exception:
@@ -510,7 +499,13 @@ def main():
         if shown:
             run.content_stop()
         run.kiosk_stop()
+        gl.proof(OUT, started, dev_logs=not remote)
+        for w in warnings:
+            print("WARNING:", w, flush=True)
     print("saved", os.path.join(OUT, a.tag + ".json"))
+    # Said again last, where they cannot be lost in the windows' lines.
+    for w in warnings:
+        print("WARNING:", w, flush=True)
 
 
 def fmt(v, w=6):

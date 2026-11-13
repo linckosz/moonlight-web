@@ -44,6 +44,7 @@ import { hostScreenCaps } from '../util/HostLimit.js';
 import { PeriodicStallDetector } from '../stream/PeriodicStallDetector.js';
 import { GamepadManager } from '../stream/GamepadManager.js';
 import { WHEEL_GESTURE_GAP_MS, WheelInverter, wheelSourceSupport } from '../stream/WheelSource.js';
+import { PINCH_GAP_MS, PinchToWheel, chromePinchLog } from '../stream/PinchZoom.js';
 import { PadNumberNotice } from '../stream/HostPadNumber.js';
 import { HidPassthrough } from '../hid/HidPassthrough.js';
 import { GamepadRemapDialog } from './GamepadRemapDialog.js';
@@ -593,6 +594,9 @@ export class StreamView {
         this._quitAppOnStop = opts.quitAppOnStop === true;
         // "Start streams in fullscreen" (settings) — see _applyFullscreenOnStart.
         this._fullscreenOnStart = opts.fullscreenOnStart === true;
+        // "Hide the full-screen handle" (settings, phones and tablets) — see
+        // _mountFsHandle. A three-finger tap still brings the header down.
+        this._hideFsHandle = opts.hideFsHandle === true;
         // Backend stream slot this view runs on (0 = /ws ports, 1 = /ws1) and
         // the uniqueid it launched with — quit() scopes its /quit with them so
         // retiring one leg of a dual stream never cancels the other.
@@ -1809,6 +1813,7 @@ export class StreamView {
         this._onMouseDown = (e) => this.handleMouseDown(e);
         this._onMouseUp = (e) => this.handleMouseUp(e);
         this._onWheel = (e) => this.handleWheel(e);
+        this._onGesture = (e) => this.handleGesture(e);
         this._onPointerLockChange = () => this.handlePointerLockChange();
         this._onPointerLockError = () => this._handlePointerLockError();
         this._onContextMenu = (e) => e.preventDefault();
@@ -1887,6 +1892,12 @@ export class StreamView {
         const wheelSource = opts.invertWheel === true ? wheelSourceSupport() : null;
         this._wheelInverter = wheelSource ? new WheelInverter(wheelSource) : null;
         this._wheelFlushTimer = 0;
+        // A trackpad pinch zooms on the host as Ctrl+wheel: the pinch under
+        // way ({ctrl, gesture, scale, timer}) and its fraction of a notch. See
+        // stream/PinchZoom.js.
+        this._pinch = null;
+        this._pinchWheel = new PinchToWheel();
+        this._gestureBound = false;
         this._scrollMomentumRaf = null; // rAF id for the inertial glide loop
         // Trackpad acceleration factor (CSS px → host deltas), user-configurable in Settings.
         this._touchSensitivity =
@@ -1932,6 +1943,13 @@ export class StreamView {
 
         // CSS fallback fullscreen (when Fullscreen API fails, e.g. iOS canvas)
         this._cssFullscreen = false;
+        // Its way back to the header (#62): the handle at the top, the header
+        // brought down over the picture, and the timer that puts it away.
+        /** @type {HTMLButtonElement | null} */
+        this._fsHandleEl = null;
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        this._fsBarTimer = null;
+        this._fsBarWired = false;
 
         // Keyboard Lock (Chrome/Edge): while in native fullscreen, lock the
         // Escape key so it is delivered to our handler (and forwarded to the
@@ -9311,6 +9329,14 @@ export class StreamView {
         // write that was denied for lack of transient activation.
         document.addEventListener('pointerdown', this._onPointerDownFlush, true);
         this.inputEl.addEventListener('wheel', this._onWheel, { passive: false });
+        // Safari on a Mac pinches through its own gesture events, which reach
+        // the element although 'ongesturechange' is not in window. On an iPad
+        // they are the finger pinch, StreamViewTouch's.
+        this._gestureBound = StreamView.listensForGestures();
+        if (this._gestureBound) {
+            for (const type of StreamView.GESTURE_EVENTS)
+                this.inputEl.addEventListener(type, this._onGesture, { passive: false });
+        }
         this._bindPointerRaw();
         this.streamEl.addEventListener('contextmenu', this._onContextMenu);
         // Touch events (mobile): bound to the WHOLE overlay so the entire
@@ -10406,6 +10432,7 @@ export class StreamView {
         this._disarmPointerCapture();
         clearTimeout(this._lockWatch);
         clearTimeout(this._wheelFlushTimer);
+        this._endPinch();
         window.removeEventListener('beforeunload', this._onBeforeUnload);
         window.removeEventListener('pagehide', this._onPageHide);
         window.removeEventListener('blur', this._onWindowBlur);
@@ -10435,6 +10462,11 @@ export class StreamView {
         }
         if (this.inputEl) {
             this.inputEl.removeEventListener('wheel', this._onWheel);
+            if (this._gestureBound) {
+                for (const type of StreamView.GESTURE_EVENTS)
+                    this.inputEl.removeEventListener(type, this._onGesture);
+                this._gestureBound = false;
+            }
             if (this._onPointerRaw) {
                 this.inputEl.removeEventListener('pointerrawupdate', this._onPointerRaw);
                 this._onPointerRaw = null;
@@ -11801,6 +11833,13 @@ export class StreamView {
             }
             this._heldPhysKeys.clear();
         }
+        // A pinch's Ctrl went with the keys above; the pinch, if it goes on,
+        // starts afresh.
+        if (this._pinch) {
+            clearTimeout(this._pinch.timer);
+            this._pinch = null;
+            this._pinchWheel.reset();
+        }
         if (this._heldMouseButtons && this._heldMouseButtons.size > 0) {
             for (const button of this._heldMouseButtons) {
                 this.webrtc.send({ type: 'mouseup', button });
@@ -12733,6 +12772,31 @@ export class StreamView {
     /** One wheel notch, in the units the GameStream scroll packet carries. */
     static WHEEL_DELTA = 120;
 
+    /** Safari's pinch, on a Mac. */
+    static GESTURE_EVENTS = ['gesturestart', 'gesturechange', 'gestureend'];
+
+    /**
+     * Whether the view takes Safari's gesture events as a pinch: Safari on a
+     * Mac, whatever 'ongesturechange' in window says (false in Safari 27).
+     * Never on a touch screen, where they are the fingers' pinch.
+     */
+    static listensForGestures(ua = navigator.userAgent, maxTouchPoints = navigator.maxTouchPoints) {
+        return wheelSourceSupport(ua, maxTouchPoints) === 'safari-mac';
+    }
+
+    /**
+     * The Ctrl a pinch holds on the host. The right one: a Mac's own keyboard
+     * has only the left, so the user's Ctrl stays apart from the pinch's.
+     */
+    static PINCH_CTRL = {
+        keyCode: 0x11,
+        code: 'ControlRight',
+        key: 'Control',
+        shiftKey: false,
+        altKey: false,
+        metaKey: false,
+    };
+
     /**
      * Browser wheel delta → notches, whatever unit the event is expressed in.
      * Chromium reports pixels (100 per notch), Firefox lines (3 per notch),
@@ -12770,6 +12834,12 @@ export class StreamView {
 
     handleWheel(e) {
         e.preventDefault();
+        // A trackpad pinch: Ctrl on the event, and no Ctrl key down here. It
+        // zooms on the host, and never turns around with the wheel.
+        if (e.ctrlKey && !this._realCtrlHeld()) {
+            this._pinchFromWheel(e);
+            return;
+        }
         const inverter = this._wheelInverter;
         if (!inverter) {
             this._sendWheelTravel(e);
@@ -12783,6 +12853,75 @@ export class StreamView {
             this._wheelFlushTimer = setTimeout(() => {
                 for (const d of inverter.flush()) this._sendWheelTravel(d);
             }, WHEEL_GESTURE_GAP_MS);
+    }
+
+    /**
+     * A Control key the user holds down here. Not the one a pinch holds on
+     * the host, and not getModifierState('Control'), which Chrome sets for a
+     * pinch too.
+     */
+    _realCtrlHeld() {
+        const held = this._heldPhysKeys;
+        if (!held) return false;
+        if (held.has('ControlLeft')) return true;
+        return held.has(StreamView.PINCH_CTRL.code) && !(this._pinch && this._pinch.ctrl);
+    }
+
+    /** Chrome's pinch: wheel events with Ctrl, deltaY = -100 × ln(scale). */
+    _pinchFromWheel(e) {
+        // Safari's own gesture already is the pinch: one source per gesture.
+        if (this._pinch && this._pinch.gesture) return;
+        if (e.deltaMode !== 0) return;
+        if (!this._pinch) this._pinch = { ctrl: false, gesture: false, scale: 1, timer: 0 };
+        clearTimeout(this._pinch.timer);
+        this._pinchZoom(chromePinchLog(e.deltaY));
+        if (this._pinch) this._pinch.timer = setTimeout(() => this._endPinch(), PINCH_GAP_MS);
+    }
+
+    /** Safari's pinch: gesturestart, gesturechange and gestureend, scale since the start. */
+    handleGesture(e) {
+        // Or Safari zooms the page itself.
+        e.preventDefault();
+        const scale = typeof e.scale === 'number' && e.scale > 0 ? e.scale : 1;
+        if (e.type === 'gesturestart') {
+            this._endPinch();
+            this._pinch = { ctrl: false, gesture: true, scale: 1, timer: 0 };
+        }
+        if (!this._pinch || !this._pinch.gesture) return;
+        this._pinchZoom(Math.log(scale / this._pinch.scale));
+        if (this._pinch) this._pinch.scale = scale;
+        if (e.type === 'gestureend') this._endPinch();
+    }
+
+    /** Turn the host's wheel by a pinch's scale, Ctrl held. */
+    _pinchZoom(lnScale) {
+        // A Mac host has no Ctrl+wheel zoom: there the pinch does nothing.
+        if (String(this.host?.hostOs || '').toLowerCase() === 'macos') return;
+        // A Safari wheel step the inverter holds goes first, as it would have.
+        if (this._wheelInverter && this._wheelInverter.holding) {
+            clearTimeout(this._wheelFlushTimer);
+            for (const d of this._wheelInverter.flush()) this._sendWheelTravel(d);
+        }
+        const units = this._pinchWheel.push(lnScale);
+        if (!units) return;
+        if (!this._pinch.ctrl) {
+            // Held for the whole pinch, and in _heldPhysKeys so the heartbeat
+            // keeps it down on the host.
+            this._sendKeyEvent({ ...StreamView.PINCH_CTRL, type: 'keydown', ctrlKey: true });
+            this._pinch.ctrl = true;
+        }
+        this.webrtc.send({ type: 'mousewheel', delta: Math.max(-32768, Math.min(32767, units)) });
+    }
+
+    /** The pinch is over: its Ctrl comes up, its fraction of a notch goes. */
+    _endPinch() {
+        const pinch = this._pinch;
+        if (!pinch) return;
+        clearTimeout(pinch.timer);
+        this._pinch = null;
+        this._pinchWheel.reset();
+        if (pinch.ctrl && this.webrtc && this._heldPhysKeys.has(StreamView.PINCH_CTRL.code))
+            this._sendKeyEvent({ ...StreamView.PINCH_CTRL, type: 'keyup', ctrlKey: false });
     }
 
     /** @param {{deltaX: number, deltaY: number, deltaMode: number}} d */

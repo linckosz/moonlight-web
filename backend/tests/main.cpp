@@ -9,6 +9,7 @@
 
 #include <QCoreApplication>
 #include <cstdlib>
+#include <cstring>
 
 TestStats g_stats;
 
@@ -88,8 +89,20 @@ void run_autostart_entry_tests();
 void run_launch_env_tests();
 void run_kms_helper_protocol_tests();
 void run_remote_desktop_return_tests();
+void run_ice_mux_core_tests();
+void run_ice_mux_socket_tests();
+void run_ice_mux_ports_tests();
+void run_ice_mux_handles_tests();
+int run_ice_mux_adopt_child(int argc, char** argv);
+int run_ice_mux_inherit_child(int argc, char** argv);
+int run_ice_mux_started_child(int argc, char** argv);
+int run_ice_mux_holds_child(int argc, char** argv);
+void run_owner_account_tests();
 void run_mdns_advertiser_tests();
 void run_router_port_core_tests();
+void run_router_sweep_tests();
+void run_router_holes_tests();
+void run_socket_tables_tests();
 void run_logger_rotation_tests();
 void run_control_channel_tests();
 void run_feed_ipc_tests();
@@ -107,6 +120,27 @@ void run_local_request_tests();
 
 int main(int argc, char** argv)
 {
+    // As the package's launcher starts a native worker: that mode first,
+    // then what the second process is to do (test_ice_mux_handles.cpp).
+    if (argc > 2 && std::strcmp(argv[1], "--stream-worker") == 0) {
+        ++argv;
+        --argc;
+    }
+    // The second process of the IceMuxHandles test, started by the test
+    // itself: it takes one socket out of the first and ends. Not a run of the
+    // suite.
+    if (argc > 1 && std::strcmp(argv[1], "--adopt-socket") == 0)
+        return run_ice_mux_adopt_child(argc, argv);
+    // Another: started with what can be inherited, it says whether it got a socket.
+    if (argc > 1 && std::strcmp(argv[1], "--inherited-socket") == 0)
+        return run_ice_mux_inherit_child(argc, argv);
+    // Outside Windows: a worker as its server starts it, and a process that
+    // says whether it holds a socket.
+    if (argc > 1 && std::strcmp(argv[1], "--started-with-sockets") == 0)
+        return run_ice_mux_started_child(argc, argv);
+    if (argc > 1 && std::strcmp(argv[1], "--holds-socket") == 0)
+        return run_ice_mux_holds_child(argc, argv);
+
     QCoreApplication app(argc, argv);
     // Keep app data hermetic-ish for any path the units resolve internally.
     QCoreApplication::setApplicationName("mw-server-tests");
@@ -188,8 +222,16 @@ int main(int argc, char** argv)
     run_launch_env_tests();
     run_kms_helper_protocol_tests();
     run_remote_desktop_return_tests();
+    run_ice_mux_core_tests();
+    run_ice_mux_socket_tests();
+    run_ice_mux_ports_tests();
+    run_ice_mux_handles_tests();
+    run_owner_account_tests();
     run_mdns_advertiser_tests();
     run_router_port_core_tests();
+    run_router_sweep_tests();
+    run_router_holes_tests();
+    run_socket_tables_tests();
     run_control_channel_tests();
     run_feed_ipc_tests();
     run_cert_manager_tests();

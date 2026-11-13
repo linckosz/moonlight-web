@@ -20,6 +20,9 @@
 #include <QObject>
 #include <QProcess>
 #include <QJsonObject>
+#include <QList>
+
+#include <vector>
 
 /**
  * Parent-side handle for one `MoonlightWeb --stream-worker` child process.
@@ -71,6 +74,70 @@ public:
         /// for it (signInScreen), and nothing below it is ever tried.
         SignInScreen,
     };
+
+    /// How a worker gets the UDP ports every stream shares (network/IceMux),
+    /// if it gets them at all.
+    enum class MuxHandover
+    {
+        /// It gets none, and binds a port of its own.
+        None,
+        /// This process hands them over, described for that process alone.
+        Handed,
+        /// The worker copies them out of this process (streaming/IceMuxHandles).
+        Taken,
+    };
+
+    /// By the way the worker is started, which says whose process it is.
+    ///
+    /// A plain child is this process's own account, at its own level: handed.
+    /// A worker of the launcher service or of the elevated task is SYSTEM or
+    /// this account elevated, above this process, which may not open it:
+    /// taken. The sign-in screen's worker is the launcher service's too, the
+    /// same SYSTEM process in another mode, which narrows what it shows and
+    /// types and nothing of how it is reached: taken as well.
+    /// A worker put in the console session runs as the user sitting
+    /// there, who may be another account than the one this installation was
+    /// made by, and a socket in a process of theirs is theirs to read and to
+    /// send from, whatever the worker itself does with it. So that worker is
+    /// handed the sockets only when `ownerAccount` says the token it was
+    /// started with is the owner's (ConsoleProcess::runsAsOwner), and gets
+    /// none otherwise. The other launches do not depend on it.
+    static constexpr MuxHandover muxHandoverFor(Launch how, bool ownerAccount)
+    {
+        switch (how) {
+        case Launch::Plain: return MuxHandover::Handed;
+        case Launch::TaskElevated:
+        case Launch::ServiceAsSystem:
+        case Launch::SignInScreen: return MuxHandover::Taken;
+        case Launch::ConsoleAsUser: return ownerAccount ? MuxHandover::Handed : MuxHandover::None;
+        }
+        return MuxHandover::None;
+    }
+
+    /// Whether a worker started for `config` is one that gets the server's
+    /// shared ports when the server has some to give: every one but the
+    /// guests' shared feed, which no browser reaches, and a native worker of
+    /// a server that is a service when whoever sits at the console is not
+    /// the account the installation was made by (muxHandoverFor). The
+    /// sign-in screen's worker is the launcher service's whoever sits
+    /// there, and gets them. What the
+    /// server asks itself before it decides whether that stream needs a
+    /// router hole of its own; the launch asks again, of its own token.
+    static bool getsSharedPorts(const QJsonObject& config);
+
+    /// The rule of getsSharedPorts(), by what it reads: the launch start()
+    /// makes for such a config, and what muxHandoverFor() gives that launch.
+    /// `consoleAsUser`: a native worker of a server that is a service;
+    /// `ownerAtConsole`: whoever sits there is the installation's account.
+    static constexpr bool sharesPortsFor(bool feed, bool signInScreen, bool consoleAsUser,
+                                         bool ownerAtConsole)
+    {
+        if (feed) return false;
+        const Launch how = signInScreen    ? Launch::SignInScreen
+                           : consoleAsUser ? Launch::ConsoleAsUser
+                                           : Launch::Plain;
+        return muxHandoverFor(how, ownerAtConsole) != MuxHandover::None;
+    }
 
     /// Spawn the worker and hand it the session config. Returns false when the
     /// process could not be started (caller falls back to in-process mode).
@@ -159,6 +226,22 @@ private:
     bool startInProcess(const QStringList& args, const QByteArray& configLine, bool native);
     /// Through ConsoleProcess, in one of the three ways above.
     bool startInConsoleSession(const QStringList& args, const QByteArray& configLine, Launch how);
+    /// The configuration line with the UDP ports every stream shares added
+    /// ("iceMux"), for a worker that streams to a browser while the server
+    /// shares ports (network/IceMux), the way muxHandoverFor() says for the
+    /// worker started as `how`, on the owner's account or not: described for
+    /// its process `pid` alone, or named for it to copy out of this process
+    /// itself. The line as it was when the worker gets none, or nothing can
+    /// be shared: it binds a port of its own.
+    ///
+    /// Outside Windows a worker is this process's own child, and gets them
+    /// by being started with them: this is then called before the start,
+    /// `pid` is not looked at, and `acrossStart` receives the descriptors
+    /// the line names, for the child to leave open across its exec
+    /// (IceMuxHandles::leaveOpenAcrossExec). Without `acrossStart` nothing is
+    /// shared there.
+    QByteArray withSharedSockets(const QByteArray& configLine, Launch how, bool ownerAccount,
+                                 qint64 pid, std::vector<int>* acrossStart = nullptr);
     void onStdoutData(const QByteArray& data);
     void onStderrData(const QByteArray& data);
     void onStdout();
@@ -186,6 +269,21 @@ private:
     /// The kept wheels handed to this worker (HidParkingTransfer), until it
     /// says it took them; 0 when none are out.
     uint64_t m_HidBatch = 0;
+    /// The worker's ICE agent on the shared UDP ports (network/IceMux), by its
+    /// feed number there; 0 when it has none.
+    uint32_t m_MuxFeed = 0;
+    /// The mux's sockets this worker was handed, in the order it was given
+    /// them: the ones its agents send on. Empty when it was handed none.
+    QList<quint8> m_MuxSockets;
+    /// The mux's lease on those sockets (IceMux::Share), from the moment the
+    /// worker is given them until it is gone: the mux keeps them bound and
+    /// read meanwhile, whatever port replaces them. 0 when it was handed none.
+    uint32_t m_MuxLease = 0;
+    void onMuxEvent(const QJsonObject& event);
+    void dropMuxAgent();
+    /// The worker is gone, or is about to be started again: its agent goes,
+    /// and what the mux kept for it is given back.
+    void releaseMuxSockets();
     /// Mouse Keys the worker turned on and has not let go of yet, with what to
     /// put back if it dies holding them (a `mouseKeys` event; Windows only).
     bool m_MouseKeysHeld = false;

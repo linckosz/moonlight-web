@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <sstream>
 #include <string>
+#include <vector>
 
 /// ICE priorities for the UPnP copy of a host candidate (RelayBase::emitLocalCandidate).
 ///
@@ -43,6 +44,26 @@ inline constexpr uint32_t kSrflxTypePreference = 100;
 inline constexpr uint32_t srflxPriority(uint32_t priority)
 {
     return (kSrflxTypePreference << 24) | (priority & 0x00FFFFFFu);
+}
+
+/// The router-side port the copy of a host candidate is announced on, 0 when
+/// the candidate has no copy at the public address.
+///
+/// A stream with a socket of its own has one hole, and the hole leads to that
+/// socket whatever its number: `ownHole`, for any `localPort`. A stream on the
+/// server's shared ports (`onSharedPorts`) sends from several, each forwarded
+/// to itself when it is forwarded at all: only a candidate on one of
+/// `sharedHoles` has a copy, on the same number. A shared port the router does
+/// not forward must not be announced at the public address: nothing there
+/// leads to this machine.
+inline uint16_t publicPortFor(uint16_t localPort, bool onSharedPorts, uint16_t ownHole,
+                              const std::vector<uint16_t>& sharedHoles)
+{
+    if (!onSharedPorts) return ownHole;
+    if (localPort == 0) return 0;
+    for (const uint16_t port : sharedHoles)
+        if (port == localPort) return port;
+    return 0;
 }
 
 /// The candidate line (RFC 8839: "candidate:<foundation> <component>

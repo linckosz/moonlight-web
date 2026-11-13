@@ -617,6 +617,8 @@
         "touchPadEditorReset": "Reset",
         "touchPadEditorCancel": "Cancel",
         "touchPadEditorDone": "Done"
+        "hideFsHandle": "Hide the full-screen handle",
+        "hideFsHandleDesc": "In full screen on a phone or tablet held sideways, hides the small see-through tab at the top that brings back the controls. A three-finger tap still brings them back."
     },
     "admin": {
         "title": "Server Settings",
@@ -971,6 +973,8 @@
         "enhancerOff": "Off",
         "enhancerPassthrough": "Off (1:1)",
         "iosFullscreenHint": "For true fullscreen: Share → Add to Home Screen, then launch Moonlight from the icon.",
+        "fsHandle": "Show the controls",
+        "fsThreeFingerHint": "Tap with three fingers to show the controls.",
         "exitFullscreenHint": "Press {{combo}} to exit fullscreen",
         "volume": "Volume",
         "mute": "Mute",
@@ -1020,7 +1024,9 @@
         "tcDesktop": "Host desktop",
         "tcDesktopVal": "3-finger horizontal swipe",
         "tcKeyboard": "Keyboard",
-        "tcKeyboardVal": "3-finger tap",
+        "tcKeyboardVal": "3-finger tap (twice in full screen)",
+        "tcControls": "Stream controls",
+        "tcControlsVal": "3-finger tap (full screen)",
         "tcTouchPad": "On-screen controller",
         "tcTouchPadVal": "4-finger tap",
         "touchScreenTitle": "Touch screen",

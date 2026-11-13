@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QList>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 #include <QJsonArray>
@@ -118,6 +119,13 @@ public:
     // default once a test from an office network streamed over it (26/10/2026);
     // false keeps every TCP port closed. Read when each connection is built.
     bool iceTcpPassive() const;
+    // ── The UDP ports every stream shares ────────────────────────────────────
+    // JSON bool "ice_udp_mux", file-only, DEFAULT false and not seeded while
+    // the mux is a prototype (docs/design/ice-mux.md). With it the server binds
+    // the streams' UDP ports itself and keeps them, and every stream worker's
+    // ICE agent shares them; without it each stream binds a port of its own,
+    // as before. Read once, when the server starts.
+    bool iceUdpMux() const;
     // A DEBUG switch for a bench, never for a user: JSON bool "debug_ice_drop_udp",
     // DEFAULT false, typed into the file by hand. Nothing writes it, not even its
     // default, and no API reads or sets it. With it, no UDP candidate crosses in
@@ -751,7 +759,8 @@ public:
     //
     // Stored as JSON object "router_ports", file-only and NOT seeded — it is
     // state the allocator writes, not a preference:
-    //   {"lan_ip": "192.168.1.20", "tunnel": [3478, 3479], "media": {"0": 48550}}
+    //   {"lan_ip": "192.168.1.20", "tunnel": [3478, 3479], "media": {"0": 48550},
+    //    "mux": {"standard": 3480, "block": 48550}}
     // A remembered port is retried first and forgotten the moment the router
     // says it belongs to another machine. The numbers survive a shutdown — the
     // mappings are removed, the memory is what makes the next start land on
@@ -764,8 +773,17 @@ public:
 
     /// Router-side (external) media port remembered for a stream slot, 0 if none.
     quint16 rememberedMediaPort(int slot) const;
+    /// Every slot that has one, with it: (stream slot, router-side port).
+    QList<QPair<int, quint16>> rememberedMediaPorts() const;
     void rememberMediaPort(int slot, quint16 port);
     void forgetMediaPort(int slot);
+
+    /// Router port remembered for one of the streams' shared ports
+    /// (ice_udp_mux): `which` is RouterPortCore::kMuxStandard or kMuxBlock.
+    /// 0 if none.
+    quint16 rememberedMuxPort(int which) const;
+    void rememberMuxPort(int which, quint16 port);
+    void forgetMuxPort(int which);
 
     /// The LAN address this host had when it obtained those ports. An entry
     /// the router still points at it after a DHCP renumbering is ours to take

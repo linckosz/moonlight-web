@@ -51,6 +51,13 @@ class QTimer;
  * hands the stream its external port before the worker is spawned — the
  * worker itself no longer touches the router at all.
  *
+ * The holes are removed when the host stops. A host that is killed leaves
+ * them, so each one is noted before it is made (RouterHoles.h), and the next
+ * start takes back what it finds of them, once the router has been found:
+ * only an entry that is this installation's by that record, by its address,
+ * by its port and by its description, and never on a doubt
+ * (RouterPortCore::sweep).
+ *
  * Threading: every call to the router is a SOAP round trip, and discovery is
  * two seconds. All of it runs on a thread of its own; the public methods here
  * are for the main thread, and results come back through callbacks on the
@@ -120,6 +127,26 @@ public:
     /// entry is rechecked behind that answer (recheck()).
     void claimMediaPort(int slot, uint16_t internalPort, QObject* context, Callback callback);
 
+    /// The hole of one of the streams' shared ports (ice_udp_mux): `which` is
+    /// RouterPortCore::kMuxStandard or kMuxBlock. The router forwards such a
+    /// port to itself, so the mux has to be the one bound to it: `hold` binds
+    /// a number the router has nothing against, `drop` lets go of one that
+    /// did not become a hole after all. Both run on the allocator's thread
+    /// (RouterPortCore::Request). `current` is the port the mux serves in
+    /// that role now, 0 for none: asked for first, so that the hole lands on
+    /// the socket the streams already have. Answered at once when the hole is
+    /// held, or when this kind of instance has no such port.
+    void claimMuxPort(int which, uint16_t current,
+                      std::function<RouterPortCore::Hold(uint16_t)> hold,
+                      std::function<void(uint16_t)> drop, QObject* context, Callback callback);
+
+    /// The streams share ports, and `holds(port)` says whether the mux has
+    /// that one bound (asked on the main thread). From then on a stream
+    /// slot's own hole takes no router-side number from the mux's stretch of
+    /// the block, and none is made to a port the mux holds: it would lead to
+    /// the mux.
+    void setStreamMux(std::function<bool(uint16_t)> holds) { m_MuxHolds = std::move(holds); }
+
     /// Renew every held hole now, as the half-hour timer does: the admin
     /// page's Force refresh, so a router that dropped its table gets the
     /// entries back without waiting for the timer.
@@ -141,13 +168,19 @@ public:
     /// Take a tunnel hole off the router. Remembered, like a media port.
     void releaseTunnelPort(quint16 externalPort);
 
+    /// Take a shared port's hole off the router. Remembered; the socket is
+    /// the mux's, and stays bound.
+    void releaseMuxPort(int which);
+
     /// UPnP or Internet Access was just switched. Off, whoever holds a hole it
     /// is not using gives it back (switchedOff); a stream or a tunnel still on
-    /// one gives it back when it ends.
+    /// one gives it back when it ends. On, whoever keeps holes for as long as
+    /// the process runs asks for them (switchedOn).
     void switchChanged();
 
     QList<Claim> heldTunnelPorts() const;
     std::optional<Claim> heldMediaPort(int slot) const;
+    std::optional<Claim> heldMuxPort(int which) const;
     /// Claims handed to the router and not yet answered.
     int inFlight(Purpose purpose) const;
 
@@ -159,6 +192,7 @@ signals:
     /// offering it.
     void portLost(int purpose, int slot, quint16 externalPort, const QString& owner);
     void switchedOff();
+    void switchedOn();
 
 private:
     class Worker;
@@ -168,8 +202,9 @@ private:
         QPointer<QObject> context;
         Callback callback;
         Purpose purpose;
-        /// Stream slot for a media claim, -1 for the tunnel. Kept here because
-        /// a failed claim carries no slot of its own to log or forget under.
+        /// Stream slot for a media claim, -1 for the tunnel, which of its two
+        /// ports for the mux. Kept here because a failed claim carries no slot
+        /// of its own to log or forget under.
         int slot = -1;
     };
 
@@ -207,6 +242,8 @@ private:
     QString m_GatewayAddress;
     /// Main-thread mirror of what the worker holds.
     QList<Claim> m_Held;
+    /// See setStreamMux(). Unset: no stream shares a port.
+    std::function<bool(uint16_t)> m_MuxHolds;
     QHash<quint64, Pending> m_Pending;
     quint64 m_NextToken = 1;
 };

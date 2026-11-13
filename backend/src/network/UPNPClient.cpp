@@ -207,20 +207,34 @@ bool UPNPClient::discover(int timeoutMs)
 #endif
 }
 
-bool UPNPClient::getExistingPortMapping(uint16_t externalPort, const std::string& protocol,
-                                        std::string& internalClient, std::string& internalPort,
-                                        std::string* leaseDuration)
+// A description as the logs show it. An entry MoonlightWeb wrote ends with a
+// tag of its installation (RouterHoles.h): the log says there is one, not
+// which, so that no log carries a mark an installation keeps for life.
+[[maybe_unused]] static std::string shownDescription(const std::string& desc)
+{
+    static const std::string product = "MoonlightWeb ";
+    if (desc.size() < product.size() + 7 || desc.compare(0, product.size(), product) != 0)
+        return desc;
+    const size_t tagAt = desc.size() - 6;
+    if (desc[tagAt - 1] != ' ') return desc;
+    for (size_t i = tagAt; i < desc.size(); ++i) {
+        const char c = desc[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return desc;
+    }
+    return desc.substr(0, tagAt) + "(tag)";
+}
+
+UPNPClient::Mapping UPNPClient::portMapping(uint16_t externalPort, const std::string& protocol,
+                                            MappingEntry& out)
 {
 #ifndef MW_HAVE_MINIUPNPC
     Q_UNUSED(externalPort);
     Q_UNUSED(protocol);
-    Q_UNUSED(internalClient);
-    Q_UNUSED(internalPort);
-    Q_UNUSED(leaseDuration);
-    return false;
+    Q_UNUSED(out);
+    return Mapping::Unknown;
 #else
     if (!m_Available || !m_Urls || !m_Data) {
-        return false;
+        return Mapping::Unknown;
     }
 
     char portStr[8];
@@ -238,24 +252,25 @@ bool UPNPClient::getExistingPortMapping(uint16_t externalPort, const std::string
                                                intClient, intPort, desc, enabled, leaseDur);
 
     if (ret != 0) {
-        // 714 = NoSuchEntryInArray (not an error, just means the port is free)
-        if (ret != 714) {
-            const char* errStr = strupnperror(ret);
-            qInfo() << "[UPNP] GetSpecificPortMappingEntry for port" << externalPort
-                    << protocol.c_str() << ":" << errStr << "(error=" << ret << ")";
-        }
-        return false;
+        // 714 = NoSuchEntryInArray: not an error, the port is free, and it is
+        // the one answer that says so. Anything else says nothing of the port.
+        if (ret == 714) return Mapping::None;
+        const char* errStr = strupnperror(ret);
+        qInfo() << "[UPNP] GetSpecificPortMappingEntry for port" << externalPort << protocol.c_str()
+                << ":" << errStr << "(error=" << ret << ")";
+        return Mapping::Unknown;
     }
 
-    internalClient = std::string(intClient);
-    internalPort = std::string(intPort);
-    if (leaseDuration) *leaseDuration = std::string(leaseDur);
+    out.internalClient = std::string(intClient);
+    out.internalPort = std::string(intPort);
+    out.description = std::string(desc);
+    out.leaseDuration = std::string(leaseDur);
 
     qInfo() << "[UPNP] Existing port mapping found:" << externalPort << protocol.c_str() << "->"
-            << intClient << ":" << intPort << "desc='" << desc << "' enabled='" << enabled
-            << "' lease='" << leaseDur << "'";
+            << intClient << ":" << intPort << "desc='" << shownDescription(out.description).c_str()
+            << "' enabled='" << enabled << "' lease='" << leaseDur << "'";
 
-    return true;
+    return Mapping::Found;
 #endif
 }
 
@@ -291,8 +306,8 @@ bool UPNPClient::addPortMapping(uint16_t externalPort, uint16_t internalPort,
     snprintf(intAddr, sizeof(intAddr), "%s", m_LanAddr);
 
     qInfo() << "[UPNP] Adding port mapping:" << externalPort << protocol.c_str() << "->" << intAddr
-            << ":" << internalPort << "(lease=" << leaseDurationSec << "s, desc=" << desc.c_str()
-            << ")";
+            << ":" << internalPort << "(lease=" << leaseDurationSec
+            << "s, desc=" << shownDescription(desc).c_str() << ")";
 
     int ret = UPNP_AddPortMapping(m_Urls->controlURL, m_Data->first.servicetype,
                                   portStr,          // external port (string)

@@ -1499,9 +1499,8 @@ body.streaming-active::after {
 :-webkit-full-screen .touch-pad-handle {
     display: inline-flex;
 }
-.stream-css-fs .touch-pad-handle {
-    display: inline-flex;
-}
+/* Not in CSS fullscreen (iOS): the top of the picture is the header's handle
+   there (.stream-fs-handle), and the header it brings holds the same button. */
 .touch-pad-handle.is-with-pad {
     display: inline-flex;
     padding-bottom: 8px;
@@ -1713,6 +1712,54 @@ body.streaming-active::after {
 /* ── Canvas CSS fallback fullscreen ────────────────────────────────────── */
 .stream-css-fs .stream-header {
     display: none !important;
+}
+/* The header brought back over the picture (#62): a three-finger tap or the
+   handle below, for a few seconds (StreamViewFullscreen._showFsBar). */
+.stream-css-fs.stream-fs-bar .stream-header {
+    display: flex !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10000;
+    background: rgba(17, 17, 17, 0.92);
+}
+/* Its handle: a small see-through tab at the top centre of the picture. */
+.stream-fs-handle {
+    display: none;
+    position: absolute;
+    top: max(2px, env(safe-area-inset-top));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 202;
+    width: 44px;
+    height: 20px;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+/* Its chevron points down: the header comes from there. */
+.stream-fs-handle::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 4px;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid rgba(255, 255, 255, 0.7);
+    border-bottom: 1.5px solid rgba(255, 255, 255, 0.7);
+    transform: translateX(-50%) rotate(45deg);
+}
+.stream-css-fs .stream-fs-handle {
+    display: block;
+}
+.stream-css-fs.stream-fs-bar .stream-fs-handle,
+.stream-input-gate:not([hidden]) ~ .stream-fs-handle {
+    display: none;
 }
 .stream-css-fs .stream-canvas-area {
     position: fixed !important;

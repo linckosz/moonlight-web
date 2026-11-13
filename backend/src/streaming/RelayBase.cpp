@@ -18,6 +18,7 @@
 #include "RelayBase.h"
 
 #include "IMediaEngine.h"
+#include "IceMuxClient.h"
 #include "IcePriority.h"
 #include "MicRtp.h"
 #include "MicUplink.h"
@@ -29,6 +30,7 @@
 #include <QHostAddress>
 #include <QJsonDocument>
 #include <QString>
+#include <QStringList>
 
 namespace {
 
@@ -85,8 +87,24 @@ void RelayBase::setPublicAddress(const std::string& publicIP, uint16_t publicPor
 {
     m_PublicIP = publicIP;
     m_PublicPort = publicPort;
+    m_OnSharedPorts = false;
+    m_SharedHoles.clear();
     qInfo() << "[Relay] UPnP public address set:" << QString::fromStdString(publicIP) << ":"
             << publicPort;
+}
+
+void RelayBase::setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports)
+{
+    m_PublicIP = publicIP;
+    m_PublicPort = 0;
+    m_OnSharedPorts = true;
+    m_SharedHoles = std::move(ports);
+    QStringList list;
+    for (const uint16_t port : m_SharedHoles)
+        list << QString::number(port);
+    qInfo().noquote() << "[Relay] Shared ports the router forwards:"
+                      << QString::fromStdString(publicIP) << "port"
+                      << list.join(QStringLiteral(", "));
 }
 
 void RelayBase::logSelectedCandidatePair(rtc::PeerConnection& pc, const char* logTag)
@@ -99,6 +117,8 @@ void RelayBase::logSelectedCandidatePair(rtc::PeerConnection& pc, const char* lo
     }
     qInfo() << logTag << "Selected candidate pair: local" << describeCandidate(local) << "-> remote"
             << describeCandidate(remote);
+    // On the server's shared ports, the peer it may now trust for this agent
+    mw::icemuxclient::confirmed(remote);
 }
 
 void RelayBase::wireMicUplink(rtc::Track& audioTrack, const char* logTag)
@@ -158,8 +178,13 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
 
     // If UPnP is active and this is a host candidate, rewrite it with the
     // public IP and mapped port. This gives the browser a reachable endpoint
-    // through the UPnP-opened router port.
-    if (m_ForceHostPublic && !m_PublicIP.empty() && m_PublicPort > 0 &&
+    // through the UPnP-opened router port. On the server's shared ports there
+    // are several, and each has its copy on its own number, when the router
+    // forwards it.
+    const bool hasHole = m_OnSharedPorts ? !m_SharedHoles.empty() : m_PublicPort > 0;
+    const uint16_t publicPort = mw::ice::publicPortFor(
+        candidate.port().value_or(0), m_OnSharedPorts, m_PublicPort, m_SharedHoles);
+    if (m_ForceHostPublic && !m_PublicIP.empty() && hasHole &&
         candidate.type() == rtc::Candidate::Type::Host) {
         if (kind == NetClassify::Kind::Tunnel) {
             // A mesh VPN interface carries its own NAT traversal and is already
@@ -186,8 +211,17 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
             // public peers) so the internal address is never leaked outside.
             if (m_EmitLanCandidate)
                 emit signalingIceCandidate(candidate.candidate(), std::string(candidate.mid()));
+            if (publicPort == 0) {
+                // A shared port the router does not forward: nothing at the
+                // public address leads to it. The peer of our own network has
+                // it above; no other is shown an internal address.
+                if (!m_EmitLanCandidate)
+                    qInfo() << logTag << "Host candidate on port" << candidate.port().value_or(0)
+                            << "withheld from a public peer: the router does not forward it";
+                return;
+            }
             try {
-                modCandidate.changeAddress(m_PublicIP, m_PublicPort);
+                modCandidate.changeAddress(m_PublicIP, publicPort);
                 // A reflexive address's priority, below the LAN host candidate
                 // just emitted: a same-LAN peer then prefers the direct pair to
                 // the router's hairpin instead of racing them (IcePriority.h).
@@ -195,7 +229,7 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
                 modCandidate = rtc::Candidate(
                     mw::ice::withPriority(modCandidate.candidate(), priority), candidate.mid());
                 qInfo() << logTag << "Host candidate ->" << QString::fromStdString(m_PublicIP)
-                        << ":" << m_PublicPort << "priority" << priority
+                        << ":" << publicPort << "priority" << priority
                         << (m_EmitLanCandidate ? "(+ LAN)" : "");
             } catch (const std::exception& e) {
                 qWarning() << logTag << "Failed to rewrite candidate:" << e.what();

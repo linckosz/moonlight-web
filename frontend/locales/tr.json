@@ -617,6 +617,8 @@
         "touchPadEditorReset": "Sıfırla",
         "touchPadEditorCancel": "İptal",
         "touchPadEditorDone": "Bitti"
+        "hideFsHandle": "Tam ekran tutamacını gizle",
+        "hideFsHandleDesc": "Yan tutulan bir telefon veya tablette tam ekrandayken, denetimleri geri getiren üstteki küçük saydam sekmeyi gizler. 3 parmakla dokunmak denetimleri yine de getirir."
     },
     "admin": {
         "title": "Sunucu Ayarları",
@@ -971,6 +973,8 @@
         "enhancerOff": "Kapalı",
         "enhancerPassthrough": "Kapalı (1:1)",
         "iosFullscreenHint": "Gerçek tam ekran için: Paylaş → Ana Ekrana Ekle, ardından Moonlight'ı simgeden başlatın.",
+        "fsHandle": "Denetimleri göster",
+        "fsThreeFingerHint": "Denetimleri göstermek için üç parmakla dokunun.",
         "exitFullscreenHint": "Tam ekrandan çıkmak için {{combo}} tuşlarına basın",
         "volume": "Ses düzeyi",
         "mute": "Sessize al",
@@ -1020,7 +1024,9 @@
         "tcDesktop": "Ana bilgisayar masaüstü",
         "tcDesktopVal": "3 parmakla yatay kaydır",
         "tcKeyboard": "Klavye",
-        "tcKeyboardVal": "3 parmakla dokun",
+        "tcKeyboardVal": "3 parmakla dokun (tam ekranda iki kez)",
+        "tcControls": "Yayın denetimleri",
+        "tcControlsVal": "3 parmakla dokun (tam ekran)",
         "tcTouchPad": "Ekran üstü denetleyici",
         "tcTouchPadVal": "4 parmakla dokun",
         "touchScreenTitle": "Dokunmatik ekran",

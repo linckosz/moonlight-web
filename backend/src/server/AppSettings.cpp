@@ -988,6 +988,12 @@ bool AppSettings::iceTcpPassive() const
     return obj.value("ice_tcp_passive").toBool(true);
 }
 
+bool AppSettings::iceUdpMux() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("ice_udp_mux").toBool(false);
+}
+
 bool AppSettings::debugIceDropUdp() const
 {
     QJsonObject obj = readAll();
@@ -1299,6 +1305,20 @@ quint16 AppSettings::rememberedMediaPort(int slot) const
     return (port > 0 && port <= 65535) ? static_cast<quint16>(port) : 0;
 }
 
+QList<QPair<int, quint16>> AppSettings::rememberedMediaPorts() const
+{
+    QList<QPair<int, quint16>> out;
+    const QJsonObject media = readAll().value(kRouterPortsKey).toObject().value("media").toObject();
+    for (auto it = media.constBegin(); it != media.constEnd(); ++it) {
+        bool number = false;
+        const int slot = it.key().toInt(&number);
+        const int port = it.value().toInt();
+        if (number && slot >= 0 && port > 0 && port <= 65535)
+            out.append({slot, static_cast<quint16>(port)});
+    }
+    return out;
+}
+
 void AppSettings::rememberMediaPort(int slot, quint16 port)
 {
     if (port == 0 || slot < 0) return;
@@ -1321,6 +1341,53 @@ void AppSettings::forgetMediaPort(int slot)
     if (!media.contains(QString::number(slot))) return;
     media.remove(QString::number(slot));
     rp["media"] = media;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
+/// The key of one of the streams' shared ports under router_ports.mux, empty
+/// for a number that is neither.
+static QString muxPortKey(int which)
+{
+    if (which == 0) return QStringLiteral("standard");
+    if (which == 1) return QStringLiteral("block");
+    return {};
+}
+
+quint16 AppSettings::rememberedMuxPort(int which) const
+{
+    const QString key = muxPortKey(which);
+    if (key.isEmpty()) return 0;
+    const QJsonObject mux = readAll().value(kRouterPortsKey).toObject().value("mux").toObject();
+    const int port = mux.value(key).toInt();
+    return (port > 0 && port <= 65535) ? static_cast<quint16>(port) : 0;
+}
+
+void AppSettings::rememberMuxPort(int which, quint16 port)
+{
+    const QString key = muxPortKey(which);
+    if (key.isEmpty() || port == 0) return;
+    if (rememberedMuxPort(which) == port) return;
+
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonObject mux = rp.value("mux").toObject();
+    mux[key] = static_cast<int>(port);
+    rp["mux"] = mux;
+    obj[kRouterPortsKey] = rp;
+    writeAll(obj);
+}
+
+void AppSettings::forgetMuxPort(int which)
+{
+    const QString key = muxPortKey(which);
+    if (key.isEmpty()) return;
+    QJsonObject obj = readAll();
+    QJsonObject rp = obj.value(kRouterPortsKey).toObject();
+    QJsonObject mux = rp.value("mux").toObject();
+    if (!mux.contains(key)) return;
+    mux.remove(key);
+    rp["mux"] = mux;
     obj[kRouterPortsKey] = rp;
     writeAll(obj);
 }

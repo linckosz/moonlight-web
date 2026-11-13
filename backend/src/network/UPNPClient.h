@@ -55,14 +55,29 @@ public:
                         const std::string& desc = "MoonlightWeb",
                         const std::string& protocol = "UDP");
 
-    // Check if a port mapping already exists on the IGD.
-    // Returns true if a mapping exists; internalClient and internalPort are set,
-    // and leaseDuration when given: the seconds left as the router reports them
-    // ("0" permanent, empty when it leaves the field out).
-    // Returns false if no mapping exists or the IGD is not available.
-    bool getExistingPortMapping(uint16_t externalPort, const std::string& protocol,
-                                std::string& internalClient, std::string& internalPort,
-                                std::string* leaseDuration = nullptr);
+    // What the IGD answered when asked for the mapping of one external port.
+    enum class Mapping
+    {
+        // It has no such mapping, and said exactly that (error 714).
+        None,
+        Found,
+        // Any other answer, none at all, or no IGD.
+        Unknown,
+    };
+
+    // A mapping as the IGD describes it, every field as it wrote it.
+    struct MappingEntry
+    {
+        std::string internalClient;
+        std::string internalPort;
+        std::string description;
+        // The seconds left ("0" permanent, empty when the field is left out).
+        std::string leaseDuration;
+    };
+
+    // Ask the IGD for the mapping of one external port
+    // (GetSpecificPortMappingEntry). `out` is filled when it is Found.
+    Mapping portMapping(uint16_t externalPort, const std::string& protocol, MappingEntry& out);
 
     // Remove a port mapping. protocol must match the original mapping.
     bool removePortMapping(uint16_t externalPort, const std::string& protocol = "UDP");
