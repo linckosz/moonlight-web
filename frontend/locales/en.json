@@ -602,7 +602,21 @@
         "othersOff": "Turn off the host's other screens",
         "othersOffDesc": "While you stream its virtual display, the PC's other screens go dark; they come back when you leave. The host's admin allows it. If they stay dark: Windows+P, Extend.",
         "fullscreenOnStart": "Start streams in fullscreen",
-        "fullscreenOnStartDesc": "The stream opens in fullscreen as soon as you launch it. On an iPhone, Safari keeps its bars: the stream fills the page instead (add MoonlightWeb to the Home Screen for a true fullscreen)."
+        "fullscreenOnStartDesc": "The stream opens in fullscreen as soon as you launch it. On an iPhone, Safari keeps its bars: the stream fills the page instead (add MoonlightWeb to the Home Screen for a true fullscreen).",
+        "touchPadLayout": "Layout",
+        "touchPadLayoutDesc": "Where the controls sit. Moved controls are kept for this device, separately for each orientation.",
+        "touchPadLayoutDefault": "Default",
+        "touchPadLayoutLeft": "Left-handed",
+        "touchPadLayoutCompact": "Compact",
+        "touchPadEdit": "Edit layout…",
+        "touchPadEditorTitle": "On-screen controller layout",
+        "touchPadEditorHint": "Drag a control to where your thumb rests, and tap one to resize it.",
+        "touchPadEditorLandscape": "Landscape",
+        "touchPadEditorPortrait": "Portrait",
+        "touchPadEditorSize": "Size",
+        "touchPadEditorReset": "Reset",
+        "touchPadEditorCancel": "Cancel",
+        "touchPadEditorDone": "Done"
     },
     "admin": {
         "title": "Server Settings",

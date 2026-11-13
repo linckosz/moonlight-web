@@ -602,7 +602,21 @@
         "othersOff": "Ana bilgisayarın diğer ekranlarını kapat",
         "othersOffDesc": "Sanal ekranını yayınlarken bilgisayarın diğer ekranları kararır; siz ayrılınca geri gelir. Ana bilgisayarın yöneticisi buna izin verir. Kararmış kalırlarsa: Windows+P, Genişlet.",
         "fullscreenOnStart": "Yayınları tam ekranda başlat",
-        "fullscreenOnStartDesc": "Yayın, başlattığınız anda tam ekran açılır. iPhone'da Safari çubuklarını korur: bunun yerine yayın sayfayı doldurur (gerçek tam ekran için MoonlightWeb'i Ana Ekrana ekleyin)."
+        "fullscreenOnStartDesc": "Yayın, başlattığınız anda tam ekran açılır. iPhone'da Safari çubuklarını korur: bunun yerine yayın sayfayı doldurur (gerçek tam ekran için MoonlightWeb'i Ana Ekrana ekleyin).",
+        "touchPadLayout": "Yerleşim",
+        "touchPadLayoutDesc": "Denetimlerin nerede duracağı. Taşıdığınız denetimler bu cihaz için, her iki yönelim için ayrı ayrı saklanır.",
+        "touchPadLayoutDefault": "Varsayılan",
+        "touchPadLayoutLeft": "Sol el",
+        "touchPadLayoutCompact": "Kompakt",
+        "touchPadEdit": "Yerleşimi düzenle…",
+        "touchPadEditorTitle": "Ekran üstü denetleyici yerleşimi",
+        "touchPadEditorHint": "Bir denetimi başparmağınızın durduğu yere sürükleyin, boyutunu değiştirmek için dokunun.",
+        "touchPadEditorLandscape": "Yatay",
+        "touchPadEditorPortrait": "Dikey",
+        "touchPadEditorSize": "Boyut",
+        "touchPadEditorReset": "Sıfırla",
+        "touchPadEditorCancel": "İptal",
+        "touchPadEditorDone": "Bitti"
     },
     "admin": {
         "title": "Sunucu Ayarları",

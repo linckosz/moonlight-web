@@ -7,6 +7,21 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+const { editors } = vi.hoisted(() => ({ editors: [] }));
+vi.mock('../js/ui/TouchPadLayoutEditor.js', () => ({
+    TouchPadLayoutEditor: class {
+        constructor(container, options) {
+            this.container = container;
+            this.options = options;
+            this.opened = false;
+            editors.push(this);
+        }
+        open() {
+            this.opened = true;
+        }
+    },
+}));
+
 vi.mock('../js/api/BackendClient.js', () => ({
     BackendClient: {
         getAuthStatus: vi.fn(async () => ({ has_session: false })),
@@ -132,5 +147,53 @@ describe('SettingsView on-screen controller section', () => {
         field('mode').dispatchEvent(new Event('change'));
         expect(view._refreshShortcutsSection).toHaveBeenCalled();
         expect(view._helpOpts().touchPad).toBe(false);
+    });
+
+    it('offers the presets, and starts from the one saved', () => {
+        setTouch(true);
+        view._touchPad = touchPadSettings({ touch_pad_layout: { preset: 'left' } });
+        paint();
+        expect(field('layout').value).toBe('left');
+        const values = Array.from(field('layout').options).map((o) => o.value);
+        expect(values).toEqual(['default', 'left', 'compact']);
+    });
+
+    it('takes a preset as a starting point, dropping the places it replaces', () => {
+        setTouch(true);
+        view._touchPad = touchPadSettings({
+            touch_pad_layout: { landscape: { a: { x: 0.5, y: 0.5, s: 1 } } },
+        });
+        paint();
+        field('layout').value = 'compact';
+        field('layout').dispatchEvent(new Event('change'));
+        expect(view._touchPad.layout).toEqual({
+            preset: 'compact',
+            landscape: {},
+            portrait: {},
+        });
+        expect(view._autoSave).toHaveBeenCalledTimes(1);
+    });
+
+    it('opens the editor with what is saved, and keeps what it gives back', () => {
+        setTouch(true);
+        view._touchPad = touchPadSettings({
+            touch_pad_layout: { landscape: { a: { x: 0.5, y: 0.5, s: 1 } } },
+        });
+        paint();
+        view.container.querySelector('#settings-touch-pad-edit').click();
+        expect(editors.length).toBe(1);
+        const editor = editors[0];
+        expect(editor.opened).toBe(true);
+        expect(editor.container).toBe(document.body);
+        expect(editor.options.layout).toEqual(view._touchPad.layout);
+
+        const layout = { preset: 'left', landscape: { a: { x: 0.2, y: 0.8, s: 1 } }, portrait: {} };
+        editor.options.onChange(layout);
+        expect(view._touchPad.layout).toEqual(layout);
+        expect(view._autoSave).toHaveBeenCalled();
+        expect(view._readTouchPadSection().layout).toEqual(layout);
+
+        editor.options.onClosed();
+        expect(view._touchPadEditor).toBeNull();
     });
 });

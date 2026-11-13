@@ -602,7 +602,21 @@
         "othersOff": "Éteindre les autres écrans de l'hôte",
         "othersOffDesc": "Pendant votre stream sur son écran virtuel, les autres écrans du PC s'éteignent ; ils se rallument quand vous partez. L'admin de l'hôte l'autorise. S'ils restent noirs : Windows+P, Étendre.",
         "fullscreenOnStart": "Démarrer les streams en plein écran",
-        "fullscreenOnStartDesc": "Le stream s'ouvre en plein écran dès son lancement. Sur iPhone, Safari garde ses barres : le stream remplit alors la page (ajoute MoonlightWeb à l'écran d'accueil pour un vrai plein écran)."
+        "fullscreenOnStartDesc": "Le stream s'ouvre en plein écran dès son lancement. Sur iPhone, Safari garde ses barres : le stream remplit alors la page (ajoute MoonlightWeb à l'écran d'accueil pour un vrai plein écran).",
+        "touchPadLayout": "Disposition",
+        "touchPadLayoutDesc": "Où se placent les commandes. Celles que vous déplacez sont gardées pour cet appareil, séparément pour chaque orientation.",
+        "touchPadLayoutDefault": "Par défaut",
+        "touchPadLayoutLeft": "Gaucher",
+        "touchPadLayoutCompact": "Compacte",
+        "touchPadEdit": "Modifier la disposition…",
+        "touchPadEditorTitle": "Disposition de la manette à l'écran",
+        "touchPadEditorHint": "Faites glisser une commande là où repose votre pouce, et touchez-en une pour la redimensionner.",
+        "touchPadEditorLandscape": "Paysage",
+        "touchPadEditorPortrait": "Portrait",
+        "touchPadEditorSize": "Taille",
+        "touchPadEditorReset": "Réinitialiser",
+        "touchPadEditorCancel": "Annuler",
+        "touchPadEditorDone": "Terminé"
     },
     "admin": {
         "title": "Paramètres serveur",

@@ -1536,6 +1536,93 @@ body.streaming-active::after {
     color: var(--kbd-on-edge);
     border-color: var(--kbd-on-edge);
 }
+/* The layout editor (Settings → On-screen controller → Edit layout). The pad is
+   drawn by TouchPadView, exactly as a stream draws it; the handles laid over it
+   take the fingers, so the layer itself is deaf while the editor is up. */
+.touch-pad.is-editing,
+.touch-pad.is-editing * {
+    pointer-events: none !important;
+}
+.tp-layout-editor {
+    position: fixed;
+    inset: 0;
+    z-index: 4000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+        max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background: rgba(8, 10, 14, 0.97);
+    color: #fff;
+    box-sizing: border-box;
+}
+.tp-layout-editor-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.tp-layout-editor-title {
+    font-size: 15px;
+}
+.tp-layout-editor-orientation {
+    font-size: 13px;
+    opacity: 0.7;
+}
+.tp-layout-editor-size {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+}
+.tp-layout-editor-size input {
+    width: 120px;
+}
+.tp-layout-editor-actions {
+    display: inline-flex;
+    gap: 8px;
+    margin-left: auto;
+}
+.tp-layout-editor-hint {
+    margin: 0;
+    font-size: 12px;
+    opacity: 0.7;
+}
+.tp-layout-editor-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    background-color: #101419;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 48px 48px;
+    touch-action: none;
+}
+.tp-layout-editor-handle {
+    position: absolute;
+    z-index: 210;
+    box-sizing: border-box;
+    border: 1.5px dashed rgba(255, 255, 255, 0.4);
+    border-radius: 50%;
+    cursor: grab;
+    touch-action: none;
+}
+.tp-layout-editor-handle:active {
+    cursor: grabbing;
+}
+.tp-layout-editor-handle.is-stick {
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.28);
+}
+.tp-layout-editor-handle.is-selected {
+    border-color: #7cc4ff;
+    border-style: solid;
+    box-shadow: 0 0 0 2px rgba(124, 196, 255, 0.35);
+}
 /* A guest's count of who is on the stream (SharePresence.GuestPresence): the
    pad button's frame, wide enough for the people icon and the number. */
 .stream-presence {

@@ -104,6 +104,7 @@ export class TouchPadView {
         this._gestureMax = 0;
         this._controls = [];
         this._toggle = null;
+        this._lastLayout = null;
         this._rect = null;
         // What the layout was last made for (see relayout).
         this._laidOutFor = '';
@@ -170,14 +171,21 @@ export class TouchPadView {
     }
 
     /**
+     * The layout the controls were last drawn from (`layoutTouchPad`'s result),
+     * or null before the layer first had a size. The layout editor reads it to
+     * lay its handles over exactly what is on screen.
+     */
+    lastLayout() {
+        return this._lastLayout || null;
+    }
+
+    /**
      * Take the viewer's own arrangement, or give the controls back to the
      * layout: the layer lays itself out again at once.
      * @param {{preset: string, landscape: object, portrait: object}|null} layout
      */
     setLayout(layout) {
-        const next = layout || null;
-        if (next === this._layout) return;
-        this._layout = next;
+        this._layout = layout || null;
         this._laidOutFor = '';
         this.relayout();
     }
@@ -247,6 +255,7 @@ export class TouchPadView {
         });
         this._controls = layout.controls;
         this._toggle = layout.toggle;
+        this._lastLayout = layout;
         this._draw(layout);
         if (this._onLaidOut) this._onLaidOut();
         if (this._onChanged) this._onChanged();
