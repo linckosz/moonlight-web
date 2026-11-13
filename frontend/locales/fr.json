@@ -616,7 +616,7 @@
         "touchPadEditorSize": "Taille",
         "touchPadEditorReset": "Réinitialiser",
         "touchPadEditorCancel": "Annuler",
-        "touchPadEditorDone": "Terminé"
+        "touchPadEditorDone": "Terminé",
         "hideFsHandle": "Masquer la poignée du plein écran",
         "hideFsHandleDesc": "En plein écran, sur un téléphone ou une tablette en paysage, masque la petite languette transparente en haut de l'image qui affiche les commandes. Un tap à trois doigts les affiche toujours."
     },
