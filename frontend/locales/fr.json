@@ -536,7 +536,7 @@
         "mouseSensitivity": "Sensibilité de la souris :",
         "mouseSensitivityDesc": "Distance parcourue par le pointeur de l'hôte à chaque pas de votre souris quand le stream la capture (jeux). Augmentez-la si la visée est lente avec cette souris ; 1 = inchangé.",
         "invertWheel": "Inverser le défilement de la molette",
-        "invertWheelDesc": "Inverse le sens de défilement d'une molette à crans dans le stream. Le trackpad, la Magic Mouse et une molette lissée par un utilitaire gardent leur sens. Disponible seulement dans Chrome, Edge et Safari sur Mac. Ailleurs, y compris sous Windows et Linux, le navigateur ne fait pas la différence entre une molette et un pavé tactile.",
+        "invertWheelDesc": "Inverse le sens de défilement d'une molette à crans dans le stream. Le trackpad, la Magic Mouse et une molette lissée par un utilitaire gardent leur sens.",
         "resetDefaults": "Réinitialiser les paramètres",
         "resetDefaultsDesc": "Restaure tous les paramètres de streaming à leurs valeurs par défaut.",
         "shortcutsDesc": "Ce que font les commandes pendant un stream. La même liste s’affiche brièvement sur l’image au démarrage d’un stream, puis s’efface.",
