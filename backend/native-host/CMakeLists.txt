@@ -643,6 +643,7 @@ if(MW_BUILD_TESTS)
         tests/test_pointer_presence.cpp
         tests/test_feed_header.cpp
         tests/test_feed_arbiter.cpp
+        tests/test_kms_verdict_cache.cpp
     )
     set_target_properties(mw-native-tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
     target_link_libraries(mw-native-tests PRIVATE mw-native-host)

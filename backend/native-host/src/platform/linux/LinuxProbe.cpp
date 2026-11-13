@@ -22,6 +22,7 @@
 #include "../../capture/linux/MutterScreenCast.h"
 #include "../../capture/linux/PortalScreenCast.h"
 #endif
+#include "../../core/KmsVerdictCache.h"
 #include "../../core/LinuxRouteChoice.h"
 #include "../../core/Log.h"
 #include "../../core/Probe.h"
@@ -476,14 +477,18 @@ Unavailability enumerate(Capabilities& caps)
     caps.hasBattery = hasSystemBattery();
 
     // The privilege check, once, so the host list can say why rather than a
-    // session failing at the click.
+    // session failing at the click. Kept a few seconds per card: the status
+    // route asks the probe at each request (KmsVerdictCache.h). A session's
+    // creation clears them first and gets the answer of now.
     for (const std::string& card : cards) {
-        std::string why;
-        if (capture::KmsCapture::canReadFramebuffers(card, why)) {
+        const KmsVerdictCache::Verdict verdict = kmsVerdicts().get(card, [&card](std::string& why) {
+            return capture::KmsCapture::canReadFramebuffers(card, why);
+        });
+        if (verdict.readable) {
             caps.capture = CaptureApi::Kms;
             break;
         }
-        caps.diagnostic = why;
+        caps.diagnostic = verdict.why;
     }
 
 #if defined(MW_NATIVE_LINUX_PORTAL)

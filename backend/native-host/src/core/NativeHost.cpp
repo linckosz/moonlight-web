@@ -18,6 +18,7 @@
 #include "mw/native/NativeHost.h"
 
 #include "../input/IInputSink.h"
+#include "KmsVerdictCache.h"
 #include "Log.h"
 #include "Probe.h"
 #include "Selector.h"
@@ -113,6 +114,9 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     // Probe again rather than caching: displays are hot-pluggable, and a
     // session built on a display list from minutes ago can name a monitor that
     // has since been unplugged. The probe is cheap by design for this reason.
+    // Linux keeps its KMS verdicts a few seconds for the status route; they
+    // are dropped here, so the capture is chosen on the answer of now.
+    kmsVerdicts().clear();
     Capabilities caps = mw::native::probe();
     if (!caps.available) {
         error = caps.diagnostic.empty() ? toString(caps.reason) : caps.diagnostic;

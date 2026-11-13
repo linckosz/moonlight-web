@@ -113,6 +113,7 @@ void run_system_mouse_tests();
 void run_system_keyboard_tests();
 void run_feed_header_tests();
 void run_feed_arbiter_tests();
+void run_kms_verdict_cache_tests();
 
 void installTestLogSink()
 {
@@ -215,6 +216,7 @@ int main(int argc, char** argv)
     RUN(system_keyboard);
     RUN(feed_header);
     RUN(feed_arbiter);
+    RUN(kms_verdict_cache);
     RUN(capture);
     RUN(color_convert);
     RUN(mwsr_stats);
