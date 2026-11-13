@@ -2,14 +2,15 @@
 # The FLEET half of a campaign: one REMOTE MoonlightWeb host, driven from the
 # Chrome on this machine.
 #
-#   <the command that mints the host's PIN> | powershell -NoProfile -File run-fleet.ps1 `
-#       -Label um790pro -AppUrl https://<addr>:49443/
+#   python fleet-run.py --machine <id> -- -Label um790pro [-AppUrl https://<addr>:49443/]
 #
-# The PIN comes on standard input, straight from the process that mints it
-# (fleet.py's mint_pin, or the host's own local channel), and that is the only
-# way it comes: no parameter, no prompt — the script refuses to start when its
-# input is a console, so nobody types it into a terminal, and no session of an
-# assistant ever sees it, copies it or puts it in a command. It is never shown,
+# fleet-run.py is the way in: it mints the machine's PIN in its own memory
+# (acceptance/fleet.py, mint_pin) and starts this script with the PIN written
+# to its standard input. That is the only way the PIN comes: no parameter, no
+# prompt, and no command that prints it for a pipe — the script refuses to
+# start when its input is a console, so nobody types it into a terminal, and
+# no session of an assistant ever sees it, copies it or puts it in a command,
+# nor captures it from an output. It is never shown,
 # typed into the page by cdp.py insert-stdin, and dropped at the end. The
 # client kiosk has a throwaway profile (.chrome-fleet): at the end, whatever
 # happened, the page logs out (the host revokes the session), the kiosk closes
