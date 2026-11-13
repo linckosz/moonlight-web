@@ -56,6 +56,7 @@ QString kindName(Kind kind)
     switch (kind) {
     case Kind::Tunnel: return QStringLiteral("tunnel");
     case Kind::Streams: return QStringLiteral("streams");
+    case Kind::Tcp443: return QStringLiteral("tcp443");
     case Kind::Media: break;
     }
     return QStringLiteral("media");
@@ -63,7 +64,7 @@ QString kindName(Kind kind)
 
 bool kindOf(const QString& name, Kind& out)
 {
-    for (const Kind kind : {Kind::Tunnel, Kind::Streams, Kind::Media}) {
+    for (const Kind kind : {Kind::Tunnel, Kind::Streams, Kind::Media, Kind::Tcp443}) {
         if (kindName(kind) != name) continue;
         out = kind;
         return true;
@@ -191,6 +192,7 @@ QString describe(Kind kind, int slot, const QString& tag)
     case Kind::Tunnel: text = QStringLiteral("MoonlightWeb tunnel"); break;
     case Kind::Streams: text = QStringLiteral("MoonlightWeb streams"); break;
     case Kind::Media: text = QStringLiteral("MoonlightWeb media slot %1").arg(slot); break;
+    case Kind::Tcp443: text = QStringLiteral("MoonlightWeb TCP 443"); break;
     }
     return tag.isEmpty() ? text : text + QLatin1Char(' ') + tag;
 }
@@ -234,6 +236,10 @@ bool allowed(bool devInstance, const Hole& hole)
         return hole.slot >= 0 && hole.slot < mw::routerports::kMediaPortCount &&
                mw::routerports::inMediaBlock(hole.internal) &&
                RouterPortCore::mediaPortAllowed(hole.external);
+    case Kind::Tcp443:
+        // That one number, in TCP, towards an installed host's block port
+        return !devInstance && hole.tcp && hole.external == 443 && hole.slot == -1 &&
+               RouterPortCore::muxPortAllowed(false, RouterPortCore::kMuxBlock, hole.internal);
     }
     return false;
 }

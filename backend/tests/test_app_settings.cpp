@@ -119,6 +119,7 @@ void run_app_settings_tests()
     s.setPacketMarking(false);
     CHECK_EQ(s.packetMarking(), false);
     CHECK_EQ(s.iceTcpPassive(), true);          // listens while the checks run, since 0.4.1
+    CHECK_EQ(s.iceTcp443(), false);             // not until the shared ports are the default
     CHECK_EQ(s.debugIceDropUdp(), false);       // a bench switch, never on by itself
     CHECK_EQ(s.debugDevStandardPorts(), false); // and so is this one
     s.setHdrEnabled(true);

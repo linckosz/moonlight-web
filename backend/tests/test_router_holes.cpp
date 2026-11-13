@@ -44,6 +44,18 @@ Hole streams(uint16_t port)
     return line;
 }
 
+/// TCP 443, towards a block port
+Hole tcp443(uint16_t internal)
+{
+    Hole line;
+    line.external = 443;
+    line.internal = internal;
+    line.tcp = true;
+    line.kind = Kind::Tcp443;
+    line.lan = kLan;
+    return line;
+}
+
 Hole media(int slot, uint16_t external, bool isTcp = false)
 {
     Hole line;
@@ -107,6 +119,8 @@ void run_router_holes_tests()
     CHECK(describe(Kind::Tunnel, -1, {}) == QStringLiteral("MoonlightWeb tunnel"));
     CHECK(describe(Kind::Streams, -1, {}) == QStringLiteral("MoonlightWeb streams"));
     CHECK(describe(Kind::Media, 3, {}) == QStringLiteral("MoonlightWeb media slot 3"));
+    CHECK(describe(Kind::Tcp443, -1, QStringLiteral("a3f9c1")) ==
+          QStringLiteral("MoonlightWeb TCP 443 a3f9c1"));
     CHECK(describe(Kind::Tunnel, -1, QStringLiteral("a3f9c1")) ==
           QStringLiteral("MoonlightWeb tunnel a3f9c1"));
     // The longest of them, which a router has to give back whole
@@ -165,6 +179,36 @@ void run_router_holes_tests()
         Hole slotted = tunnel(3478);
         slotted.slot = 0;
         CHECK(!allowed(false, slotted));
+        // TCP 443: that number, in TCP, to the installed host's stretch of
+        // the block, and never a DEV identity's line
+        CHECK(allowed(false, tcp443(kMediaBasePort)));
+        CHECK(allowed(false, tcp443(uint16_t(kMediaBasePort + kMuxBlockSpan - 1))));
+        CHECK(!allowed(false, tcp443(uint16_t(kMediaBasePort + kMuxBlockSpan))));
+        CHECK(!allowed(false, tcp443(443)) && !allowed(false, tcp443(3478)));
+        CHECK(!allowed(true, tcp443(kMediaBasePort)) && !allowed(true, tcp443(top)));
+        Hole inUdp = tcp443(kMediaBasePort);
+        inUdp.tcp = false;
+        CHECK(!allowed(false, inUdp));
+        Hole other = tcp443(kMediaBasePort);
+        other.external = 8443;
+        CHECK(!allowed(false, other));
+        Hole withSlot = tcp443(kMediaBasePort);
+        withSlot.slot = 0;
+        CHECK(!allowed(false, withSlot));
+        // And as it is written and read back: one line, whole
+        {
+            Content content;
+            content.owner = fingerprint(kMachine, QStringLiteral("/somewhere"));
+            content.tag = QStringLiteral("a3f9c1");
+            content.holes = {tunnel(3478), tcp443(kMediaBasePort)};
+            Content back;
+            CHECK(parse(serialize(content), false, back));
+            CHECK(back.holes == content.holes && back.others.isEmpty());
+            // To a DEV identity it is the other kind's: kept, never acted on
+            Content dev;
+            CHECK(parse(serialize(content), true, dev));
+            CHECK(dev.holes.isEmpty() && dev.others == content.holes);
+        }
         Hole nothing;
         CHECK(!allowed(false, nothing));
     }

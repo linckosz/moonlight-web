@@ -54,6 +54,9 @@ enum class Kind
     Streams,
     /// A stream slot's own port.
     Media,
+    /// TCP 443, forwarded to the block port the streams share
+    /// (network/Tcp443Guard): an installed host's alone, and never in UDP.
+    Tcp443,
 };
 
 /// One entry of the router's table, as this host wrote it.

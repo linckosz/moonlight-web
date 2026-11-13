@@ -994,6 +994,12 @@ bool AppSettings::iceUdpMux() const
     return obj.value("ice_udp_mux").toBool(false);
 }
 
+bool AppSettings::iceTcp443() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("ice_tcp_443").toBool(false);
+}
+
 bool AppSettings::debugIceDropUdp() const
 {
     QJsonObject obj = readAll();

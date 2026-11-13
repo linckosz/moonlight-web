@@ -126,6 +126,16 @@ public:
     // ICE agent shares them; without it each stream binds a port of its own,
     // as before. Read once, when the server starts.
     bool iceUdpMux() const;
+    // ── TCP 443 on the router ────────────────────────────────────────────────
+    // JSON bool "ice_tcp_443", file-only, DEFAULT false and not seeded for as
+    // long as "ice_udp_mux" is not. With it, and with ice_udp_mux and
+    // ice_tcp_passive, the host asks its router to forward TCP 443 to the
+    // port its streams share, for a browser on a network that lets out
+    // nothing else: only when it can show, alone, that nobody has 443 and that
+    // it then leads here (network/Tcp443Guard). false: 443 is never asked
+    // for, and an entry this installation holds there is taken off. A host
+    // whose 443 is forwarded by hand has nothing to gain from it.
+    bool iceTcp443() const;
     // A DEBUG switch for a bench, never for a user: JSON bool "debug_ice_drop_udp",
     // DEFAULT false, typed into the file by hand. Nothing writes it, not even its
     // default, and no API reads or sets it. With it, no UDP candidate crosses in

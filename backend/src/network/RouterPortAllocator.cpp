@@ -124,6 +124,7 @@ QString holeName(const mw::routerholes::Hole& hole)
     case mw::routerholes::Kind::Tunnel: what = QStringLiteral("tunnel"); break;
     case mw::routerholes::Kind::Streams: what = QStringLiteral("streams' shared port"); break;
     case mw::routerholes::Kind::Media: what = QStringLiteral("media slot %1").arg(hole.slot); break;
+    case mw::routerholes::Kind::Tcp443: what = QStringLiteral("streams over TCP 443"); break;
     }
     return QStringLiteral("%1 %2 (%3)")
         .arg(hole.tcp ? QStringLiteral("TCP") : QStringLiteral("UDP"))

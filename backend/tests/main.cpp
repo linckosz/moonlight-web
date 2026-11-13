@@ -95,6 +95,7 @@ void run_ice_mux_socket_tests();
 void run_ice_mux_tcp_core_tests();
 void run_ice_mux_tcp_tests();
 void run_ice_mux_ports_tests();
+void run_tcp443_guard_tests();
 void run_ice_mux_handles_tests();
 int run_ice_mux_adopt_child(int argc, char** argv);
 int run_ice_mux_connection_child(int argc, char** argv);
@@ -237,6 +238,7 @@ int main(int argc, char** argv)
     run_ice_mux_tcp_core_tests();
     run_ice_mux_tcp_tests();
     run_ice_mux_ports_tests();
+    run_tcp443_guard_tests();
     run_ice_mux_handles_tests();
     run_owner_account_tests();
     run_mdns_advertiser_tests();

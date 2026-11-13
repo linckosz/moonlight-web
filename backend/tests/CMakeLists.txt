@@ -138,6 +138,7 @@ add_executable(run_tests
     test_ice_mux_tcp_core.cpp
     test_ice_mux_tcp.cpp
     test_ice_mux_ports.cpp
+    test_tcp443_guard.cpp
     test_ice_mux_handles.cpp
     test_owner_account.cpp
     test_logger_rotation.cpp
@@ -173,6 +174,8 @@ add_executable(run_tests
     ${_src}/src/network/IceMuxTcp.cpp
     # Which ports the streams share, and which the router forwards.
     ${_src}/src/network/IceMuxPorts.cpp
+    # TCP 443 on the router: when the host asks for it, and what it takes back.
+    ${_src}/src/network/Tcp443Guard.cpp
     # A worker above the server takes the shared sockets out of it.
     ${_src}/src/streaming/IceMuxHandles.cpp
     # The account an installation was made by, as its installer recorded it.
