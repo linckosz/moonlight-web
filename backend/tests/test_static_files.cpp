@@ -69,6 +69,10 @@ void run_static_files_tests()
     // Missing files → 404 (not 500, not a leak).
     CHECK_EQ(h.serveFile("/does-not-exist.js").statusCode, 404);
 
+    // The pictures of the controller's editor are WebP, served as such.
+    writeFile(root + "/night.webp", "RIFF");
+    CHECK_EQ(h.serveFile("/night.webp").contentType, QStringLiteral("image/webp"));
+
     // Unknown extension → generic octet-stream.
     writeFile(root + "/blob.bin", "x");
     CHECK(h.serveFile("/blob.bin").contentType.startsWith("application/octet-stream"));

@@ -624,9 +624,9 @@
         "touchPadEditorPreset": "Préréglage",
         "touchPadEditorControlSize": "Commande touchée : {{name}} · {{size}} %",
         "touchPadEditorBackground": "Fond",
-        "touchPadEditorBgDefault": "Fond par défaut",
-        "touchPadEditorBgDark": "Fond sombre",
-        "touchPadEditorBgLight": "Fond clair",
+        "touchPadEditorBgDefault": "Grille",
+        "touchPadEditorBgNight": "Nuit",
+        "touchPadEditorBgDay": "Jour",
         "touchPadEditorFold": "Replier la barre",
         "touchPadEditorUnfold": "Réglages"
     },

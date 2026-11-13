@@ -624,9 +624,9 @@
         "touchPadEditorPreset": "Preset",
         "touchPadEditorControlSize": "Touched control: {{name}} · {{size}}%",
         "touchPadEditorBackground": "Background",
-        "touchPadEditorBgDefault": "Default background",
-        "touchPadEditorBgDark": "Dark background",
-        "touchPadEditorBgLight": "Light background",
+        "touchPadEditorBgDefault": "Grid",
+        "touchPadEditorBgNight": "Night",
+        "touchPadEditorBgDay": "Day",
         "touchPadEditorFold": "Fold the bar",
         "touchPadEditorUnfold": "Settings"
     },

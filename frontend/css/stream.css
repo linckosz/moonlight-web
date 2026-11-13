@@ -1557,8 +1557,10 @@ body.streaming-active::after {
     overflow: hidden;
     touch-action: none;
 }
-/* The pictures the controller is tried over, drawn here rather than taken from
-   a game: the app's own grid, a night and a day. A preview only. The swatches
+/* The pictures the controller is tried over: the app's own grid, a game at
+   night and a game by day, so the controller is seen over a dark and a bright
+   picture. A preview only. Each picture is centred on its character, who stays
+   in view on a phone held sideways and on a tablet held upright. The swatches
    in the bar wear the same backgrounds. */
 .tp-bg-default {
     background-color: #0d1014;
@@ -1567,20 +1569,11 @@ body.streaming-active::after {
         linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
     background-size: 32px 32px;
 }
-.tp-bg-dark {
-    background:
-        radial-gradient(circle at 82% 16%, #d9dde8 0 22px, transparent 23px),
-        radial-gradient(ellipse 60% 45% at 18% 108%, #18243a 0 99%, transparent 100%),
-        radial-gradient(ellipse 70% 50% at 85% 112%, #121c2e 0 99%, transparent 100%),
-        linear-gradient(#0b1430, #1b2846);
+.tp-bg-night {
+    background: #070a14 url('../assets/touchpad/night.webp') 50% 55% / cover no-repeat;
 }
-.tp-bg-light {
-    background:
-        radial-gradient(circle at 82% 16%, #fff4c2 0 34px, transparent 35px),
-        linear-gradient(transparent 82%, #e9dcae 82%),
-        radial-gradient(ellipse 60% 45% at 18% 108%, #9fcb8e 0 99%, transparent 100%),
-        radial-gradient(ellipse 70% 50% at 85% 112%, #b9d99a 0 99%, transparent 100%),
-        linear-gradient(#bfe3f5, #e6f3f8);
+.tp-bg-day {
+    background: #3a2c22 url('../assets/touchpad/day.webp') 65% 60% / cover no-repeat;
 }
 .tp-layout-editor-bar {
     position: absolute;

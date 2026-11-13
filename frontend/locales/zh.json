@@ -624,9 +624,9 @@
         "touchPadEditorPreset": "预设",
         "touchPadEditorControlSize": "所选控件：{{name}} · {{size}}%",
         "touchPadEditorBackground": "背景",
-        "touchPadEditorBgDefault": "默认背景",
-        "touchPadEditorBgDark": "深色背景",
-        "touchPadEditorBgLight": "浅色背景",
+        "touchPadEditorBgDefault": "网格",
+        "touchPadEditorBgNight": "夜晚",
+        "touchPadEditorBgDay": "白天",
         "touchPadEditorFold": "收起工具栏",
         "touchPadEditorUnfold": "设置"
     },

@@ -624,9 +624,9 @@
         "touchPadEditorPreset": "Hazır yerleşim",
         "touchPadEditorControlSize": "Dokunulan denetim: {{name}} · %{{size}}",
         "touchPadEditorBackground": "Arka plan",
-        "touchPadEditorBgDefault": "Varsayılan arka plan",
-        "touchPadEditorBgDark": "Koyu arka plan",
-        "touchPadEditorBgLight": "Açık arka plan",
+        "touchPadEditorBgDefault": "Izgara",
+        "touchPadEditorBgNight": "Gece",
+        "touchPadEditorBgDay": "Gündüz",
         "touchPadEditorFold": "Çubuğu daralt",
         "touchPadEditorUnfold": "Ayarlar"
     },

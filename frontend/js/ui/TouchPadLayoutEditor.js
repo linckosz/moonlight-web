@@ -55,11 +55,14 @@ const PRESETS = [
     ['compact', 'settings.touchPadLayoutCompact'],
 ];
 
-/** The pictures the controller can be tried over: a preview, never kept. */
+/**
+ * The pictures the controller can be tried over: the grid, a game at night, a
+ * game by day (assets/touchpad). A preview, never kept.
+ */
 const BACKGROUNDS = [
     ['default', 'settings.touchPadEditorBgDefault'],
-    ['dark', 'settings.touchPadEditorBgDark'],
-    ['light', 'settings.touchPadEditorBgLight'],
+    ['night', 'settings.touchPadEditorBgNight'],
+    ['day', 'settings.touchPadEditorBgDay'],
 ];
 
 /** What each drawn control is called in a screen reader. */

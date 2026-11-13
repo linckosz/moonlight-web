@@ -306,9 +306,10 @@ describe('TouchPadLayoutEditor', () => {
             build();
             const stageEl = container.querySelector('.tp-layout-editor-stage');
             expect(stageEl.classList.contains('tp-bg-default')).toBe(true);
-            expect(container.querySelectorAll('[data-bg]').length).toBe(3);
-            container.querySelector('[data-bg="light"]').click();
-            expect(stageEl.classList.contains('tp-bg-light')).toBe(true);
+            const ids = [...container.querySelectorAll('[data-bg]')].map((b) => b.dataset.bg);
+            expect(ids).toEqual(['default', 'night', 'day']);
+            container.querySelector('[data-bg="day"]').click();
+            expect(stageEl.classList.contains('tp-bg-day')).toBe(true);
             expect(stageEl.classList.contains('tp-bg-default')).toBe(false);
             container.querySelector('[data-act="done"]').click();
             expect(Object.keys(onChange.mock.calls[0][1]).sort()).toEqual(['opacity', 'scale']);
