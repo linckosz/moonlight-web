@@ -364,14 +364,15 @@ void RouterPortAllocator::claimTunnelPort(QObject* context, Callback callback)
     // A DEV identity walks its own block only (RouterPortPools.h), and forgets
     // what it remembers from before it had one.
     const bool dev = mw::edition::isDev();
+    const uint16_t mediaBase = m_Settings->mediaBasePort();
     QList<uint16_t> remembered;
     for (const quint16 p : m_Settings->rememberedTunnelPorts()) {
-        if (RouterPortCore::tunnelPortAllowed(dev, p))
+        if (RouterPortCore::tunnelPortAllowed(dev, p, mediaBase))
             remembered.append(p);
         else
             m_Settings->forgetTunnelPort(p);
     }
-    RouterPortCore::Request request = RouterPortCore::tunnelRequest(dev, remembered);
+    RouterPortCore::Request request = RouterPortCore::tunnelRequest(dev, remembered, mediaBase);
 
     const QString why = refusal();
     if (!why.isEmpty()) {
@@ -410,10 +411,15 @@ void RouterPortAllocator::claimMediaPort(int slot, uint16_t internalPort, QObjec
     // host upgraded from it remembers: asking for it again would keep the old
     // number on the router, pointed at the new block. Asked for from scratch.
     const quint16 remembered = m_Settings->rememberedMediaPort(slot);
-    if (remembered >= 48010 && remembered <= 48033)
+    if (remembered >= 48010 && remembered <= 48033) {
         m_Settings->forgetMediaPort(slot);
-    else if (remembered)
+    } else if (remembered != 0 && remembered != internalPort &&
+               (remembered < mw::routerports::kMediaPoolBegin ||
+                remembered > mw::routerports::kMediaPoolEnd)) {
+        m_Settings->forgetMediaPort(slot);
+    } else if (remembered) {
         request.remembered.append(remembered);
+    }
     request.preferred.append(internalPort);
     request.poolBegin = mw::routerports::kMediaPoolBegin;
     request.poolEnd = mw::routerports::kMediaPoolEnd;

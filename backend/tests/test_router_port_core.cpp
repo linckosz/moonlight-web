@@ -676,4 +676,67 @@ void run_router_port_core_tests()
         CHECK_EQ(installed.claim(RouterPortCore::tunnelRequest(false, {})).claim.external,
                  uint16_t(3479));
     }
+
+    // ── A custom media_base_port moves stream slots and is avoided by the
+    //    control tunnel (e.g. 3480 for restrictive corporate firewalls) ───
+    {
+        using namespace mw::routerports;
+
+        // With default mediaBasePort (48550), all kTunnelPreferred ports are allowed.
+        for (const uint16_t p : kTunnelPreferred) {
+            CHECK(RouterPortCore::tunnelPortAllowed(false, p));
+            CHECK(RouterPortCore::tunnelPortAllowed(false, p, kMediaBasePort));
+        }
+
+        // With mediaBasePort = 3480, stream slots take 3480..3503:
+        // 3480 and 3481 are masked from the tunnel, while 3478, 3479 and 5349 remain allowed.
+        CHECK(!RouterPortCore::tunnelPortAllowed(false, 3480, 3480));
+        CHECK(!RouterPortCore::tunnelPortAllowed(false, 3481, 3480));
+        CHECK(RouterPortCore::tunnelPortAllowed(false, 3478, 3480));
+        CHECK(RouterPortCore::tunnelPortAllowed(false, 3479, 3480));
+        CHECK(RouterPortCore::tunnelPortAllowed(false, 5349, 3480));
+        CHECK(
+            !RouterPortCore::tunnelPortAllowed(false, uint16_t(3480 + kMediaPortCount - 1), 3480));
+        // 3480 + kMediaPortCount (3504) is outside the tunnel pool entirely, so also not allowed.
+        CHECK(!RouterPortCore::tunnelPortAllowed(false, uint16_t(3480 + kMediaPortCount), 3480));
+        // When mediaBasePort lands in the tunnel pool, ports immediately past the media block
+        // remain allowed.
+        CHECK(!RouterPortCore::tunnelPortAllowed(
+            false, uint16_t(kTunnelPoolBegin + kMediaPortCount - 1), kTunnelPoolBegin));
+        CHECK(RouterPortCore::tunnelPortAllowed(false, uint16_t(kTunnelPoolBegin + kMediaPortCount),
+                                                kTunnelPoolBegin));
+
+        // tunnelRequest filters media ports out of remembered and preferred.
+        const auto req = RouterPortCore::tunnelRequest(false, {3480, 3479}, 3480);
+        CHECK_EQ(req.remembered, (QList<uint16_t>{3479}));
+        CHECK(!req.preferred.contains(3480));
+        CHECK(!req.preferred.contains(3481));
+        CHECK(req.preferred.contains(3478));
+        CHECK(req.preferred.contains(3479));
+        for (uint16_t p = 5349; p <= 5352; ++p)
+            CHECK(req.preferred.contains(p));
+        CHECK_EQ(req.preferred, (QList<uint16_t>{3478, 3479, 5349, 5350, 5351, 5352}));
+
+        // Default argument unchanged: 3480 remains in preferred and remembered.
+        const auto defReq = RouterPortCore::tunnelRequest(false, {3480});
+        CHECK(defReq.remembered.contains(3480));
+        CHECK(defReq.preferred.contains(3480));
+
+        // A media claim for internal port 3480 maps external == internal on the gateway.
+        FakeGateway gw;
+        RouterPortCore core(gw, kAlwaysFree);
+        RouterPortCore::Request mediaReq;
+        mediaReq.purpose = Purpose::Media;
+        mediaReq.slot = 0;
+        mediaReq.internalPort = 3480;
+        mediaReq.preferred.append(3480);
+        mediaReq.description = QStringLiteral("MoonlightWeb media slot 0");
+        const auto mediaClaim = core.claim(mediaReq);
+        CHECK(mediaClaim.ok);
+        CHECK_EQ(mediaClaim.claim.external, uint16_t(3480));
+        CHECK_EQ(mediaClaim.claim.internal, uint16_t(3480));
+        CHECK_EQ(mediaClaim.claim.slot, 0);
+        CHECK(gw.table.contains(qMakePair(uint16_t(3480), QStringLiteral("UDP"))));
+        CHECK(gw.table.contains(qMakePair(uint16_t(3480), QStringLiteral("TCP"))));
+    }
 }

@@ -47,9 +47,11 @@ RouterPortCore::RouterPortCore(IUpnpGateway& gateway, std::function<bool(uint16_
     , m_LeaseSec(mw::routerports::kLeaseSec)
 {}
 
-bool RouterPortCore::tunnelPortAllowed(bool devInstance, uint16_t port)
+bool RouterPortCore::tunnelPortAllowed(bool devInstance, uint16_t port, uint16_t mediaBasePort)
 {
     using namespace mw::routerports;
+    if (port >= mediaBasePort && port < static_cast<uint32_t>(mediaBasePort) + kMediaPortCount)
+        return false;
     if (devInstance) return port >= kDevTunnelPoolBegin && port <= kDevTunnelPoolEnd;
     for (const uint16_t p : kTunnelPreferred)
         if (p == port) return true;
@@ -57,21 +59,24 @@ bool RouterPortCore::tunnelPortAllowed(bool devInstance, uint16_t port)
 }
 
 RouterPortCore::Request RouterPortCore::tunnelRequest(bool devInstance,
-                                                      const QList<uint16_t>& remembered)
+                                                      const QList<uint16_t>& remembered,
+                                                      uint16_t mediaBasePort)
 {
     using namespace mw::routerports;
     Request request;
     request.purpose = Purpose::Tunnel;
+    request.devInstance = devInstance;
+    request.mediaBasePort = mediaBasePort;
     request.description = QStringLiteral("MoonlightWeb tunnel");
     for (const uint16_t p : remembered)
-        if (tunnelPortAllowed(devInstance, p)) request.remembered.append(p);
+        if (tunnelPortAllowed(devInstance, p, mediaBasePort)) request.remembered.append(p);
     if (devInstance) {
         request.poolBegin = kDevTunnelPoolBegin;
         request.poolEnd = kDevTunnelPoolEnd;
         return request;
     }
     for (const uint16_t p : kTunnelPreferred)
-        request.preferred.append(p);
+        if (tunnelPortAllowed(false, p, mediaBasePort)) request.preferred.append(p);
     request.poolBegin = kTunnelPoolBegin;
     request.poolEnd = kTunnelPoolEnd;
     return request;
@@ -160,8 +165,13 @@ RouterPortCore::Result RouterPortCore::claim(const Request& request)
         consider(p);
     for (const uint16_t p : request.preferred)
         consider(p);
-    for (int p = request.poolBegin; p <= request.poolEnd && p <= 65535; ++p)
-        consider(static_cast<uint16_t>(p));
+    for (int p = request.poolBegin; p <= request.poolEnd && p <= 65535; ++p) {
+        const auto port = static_cast<uint16_t>(p);
+        if (request.purpose == Purpose::Tunnel &&
+            !tunnelPortAllowed(request.devInstance, port, request.mediaBasePort))
+            continue;
+        consider(port);
+    }
 
     for (const uint16_t external : candidates) {
         if (tryOne(external, request, result)) {

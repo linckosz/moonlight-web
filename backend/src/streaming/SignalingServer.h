@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "network/RouterPortPools.h"
 #include "server/NetClassify.h"
 
 #include <QObject>
@@ -89,6 +90,11 @@ public:
     /// it; the router forwards the preset external port to it. Defaults to the
     /// base for the single-stream path.
     void setMediaPort(quint16 port) { m_MediaPort = port; }
+    /// Base UDP port for WebRTC media streams (default: mw::routerports::kMediaBasePort).
+    void setMediaBasePort(quint16 port = mw::routerports::kMediaBasePort)
+    {
+        m_MediaBasePort = port;
+    }
 
     /// Enable/disable ICE-TCP candidates.
     /// When true, ICE-TCP is enabled (UDP + TCP candidates).
@@ -276,9 +282,10 @@ private:
     /// Internet mode. A router mapping pins the socket to the media port the
     /// router forwards to, and the relay rewrites host candidates to the
     /// public address.
-    static rtc::Configuration buildIceConfig(bool isInternet, bool mapped, uint16_t mediaPort,
-                                             const QString& stunServerUrl, bool forceIceTcp = false,
-                                             bool iceTcpPassive = false);
+    static rtc::Configuration
+    buildIceConfig(bool isInternet, bool mapped, uint16_t mediaPort, const QString& stunServerUrl,
+                   bool forceIceTcp = false, bool iceTcpPassive = false,
+                   uint16_t mediaBasePort = mw::routerports::kMediaBasePort);
 
     // ── MW-BIND-v1 state ───────────────────────────────────────────────────
     /// Sign the pending SDP offer and hand it to the browser. Called once the
@@ -308,6 +315,7 @@ private:
     /// concurrent workers off each other's port; slot 0 takes 48550. See
     /// setMediaPort() and mw::routerports::kMediaBasePort.
     quint16 m_MediaPort = 48550;
+    quint16 m_MediaBasePort = mw::routerports::kMediaBasePort;
     NetClassify::Kind m_ClientKind = NetClassify::Kind::Public; // see setClientKind
     bool m_ClientSameNetwork = false;                           // see setClientSameNetwork
     /// The router hole, as handed down by the parent. See setPresetMapping().
