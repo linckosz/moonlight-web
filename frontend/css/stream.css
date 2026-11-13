@@ -1340,6 +1340,12 @@ body.streaming-active::after {
 .stream-kbd-toolbar.visible {
     display: flex;
 }
+/* The stats card goes behind the bar while it shows: in front of it (10000),
+   the card hid Win, Esc and Tab (iPhone, 13/11/2026). Outside the CSS-fallback
+   fullscreen only, where the card is to stay in front of the picture (9999). */
+.stream-overlay:not(.stream-css-fs):has(> .stream-kbd-toolbar.visible) > .stream-stats-overlay {
+    z-index: 59;
+}
 /* The header's controls stay above the bar, as the Share menu does (300,
    share.css): wherever a browser puts the bar, Stop and the keyboard toggle
    can still be reached. */
