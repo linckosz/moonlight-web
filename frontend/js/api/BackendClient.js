@@ -1047,6 +1047,25 @@ export class BackendClient {
         return this.post('/api/admin/settings', settings);
     }
 
+    // ── Connection history (Admin → Active Sessions) ─────────────────────────
+
+    /**
+     * The connection history (issue #42): one CSV line per stream of the last
+     * 90 days. Asked with a POST so that the admin key goes with it: the route
+     * answers the administrator alone.
+     * @returns {Promise<Blob>}
+     */
+    static async downloadConnectionHistory() {
+        const path = '/api/admin/connection-history';
+        /** @type {Record<string, string>} */
+        const headers = { 'Content-Type': 'application/json' };
+        const adminKey = await this._adminKey();
+        if (adminKey) headers['X-MW-Admin-Key'] = adminKey;
+        const resp = await fetch(path, { method: 'POST', headers, body: '{}', cache: 'no-store' });
+        if (!resp.ok) return this._handleError(resp, path);
+        return resp.blob();
+    }
+
     // ── Logs archive (Admin → Advanced) ─────────────────────────────────────────
 
     /** Start building the .zip; answers with its progress. 409 while one runs. */

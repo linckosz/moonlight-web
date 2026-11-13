@@ -714,6 +714,8 @@ void run_request_guard_tests()
     // The tray's Disconnect (issue #42), asked by the icon of a service.
     CHECK(localChannelRoute("POST", "/api/server/stream-disconnect"));
     CHECK(!localChannelRoute("GET", "/api/server/stream-disconnect"));
+    // The connection history: the administrator's, never the channel's.
+    CHECK(!localChannelRoute("POST", "/api/admin/connection-history"));
     CHECK(localChannelRoute("POST", "/api/local/focus"));
 
     // And nothing else. The other verb of a listed route.

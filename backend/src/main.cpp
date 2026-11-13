@@ -134,6 +134,7 @@
 #include "streaming/StreamWorkerHost.h"
 #include "streaming/WorkerService.h"
 #include "streaming/worker/StreamWorkerMain.h"
+#include "server/ConnectionHistory.h"
 #include "server/HomeScreenShell.h"
 #include "server/HostAppImage.h"
 #include "server/HostAppLauncher.h"
@@ -1571,6 +1572,15 @@ static void noteLanHttpStreamEnd(const AuthManager& auth, const StreamEnds& ends
     Logger::info(QString("[LanHttp] Stream ended for %1 after %2").arg(tv.boundIp, lasted));
 }
 
+// Whether a stream's line in the connection history says "Internet": a peer
+// that is neither this machine nor this LAN, or anyone through the tunnel. A
+// mesh VPN's address (Tunnel) can be anywhere, so it counts as the Internet.
+static bool streamFromInternet(const HttpRequest& req, NetClassify::Kind kind)
+{
+    return req.viaTunnel ||
+           (kind != NetClassify::Kind::Loopback && kind != NetClassify::Kind::Private);
+}
+
 static NetClassify::Kind streamClientKind(const HttpRequest& req)
 {
     const NetClassify::Kind kind = NetClassify::classify(req.clientAddress);
@@ -2799,6 +2809,60 @@ int main(int argc, char* argv[])
     // that crashed under it is started again, anything else ends as before.
     StreamEnds g_StreamEnds;
 
+    // ── The connection history (issue #42) ─────────────────────────────────
+    //
+    // A line per stream of this machine's screen, written when it ends and
+    // downloaded from the admin page (ConnectionHistory.h). What it says of
+    // the viewer is taken when the picture starts, from the request that
+    // started it: a guest has no session to ask later. How the stream ended
+    // is noted by whoever ends it, just before (noteEndedBy); one nobody noted
+    // ended by its client, or by the server when its worker crashed. Worker
+    // streams of this machine only, as the tray's (streamActivity below).
+    ConnectionHistory connectionHistory(ConnectionHistory::pathIn(
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)));
+    connectionHistory.purge(QDateTime::currentDateTime());
+    QTimer connectionHistoryPurge;
+    connectionHistoryPurge.setInterval(24 * 60 * 60 * 1000);
+    QObject::connect(&connectionHistoryPurge, &QTimer::timeout, qApp, [&connectionHistory]() {
+        connectionHistory.purge(QDateTime::currentDateTime());
+    });
+    connectionHistoryPurge.start();
+    QHash<QString, ConnectionHistory::Entry> g_HistoryOpen;      // by stream id
+    QHash<QString, ConnectionHistory::EndedBy> g_HistoryEndedBy; // by stream id
+    // @p line holds the address and the kind of link. The device's name and
+    // whether it is a TV on plain HTTP are its session's, or a guest's row's.
+    auto historyBegin = [&g_HistoryOpen,
+                         &authManager](const QString& streamId, ConnectionHistory::Entry line,
+                                       const QString& token, const QString& guestName) {
+        if (streamId.isEmpty()) return;
+        const SessionInfo session = authManager.sessionForToken(token);
+        line.device = token.isEmpty() ? guestName : session.machineName;
+        line.plainHttp = session.lanHttp;
+        line.start = QDateTime::currentDateTime();
+        g_HistoryOpen.insert(streamId, line);
+    };
+    // How the stream of @p slot is about to end. The first word said stays.
+    auto noteEndedBy = [&g_Pool, &g_HistoryOpen,
+                        &g_HistoryEndedBy](int slot, ConnectionHistory::EndedBy why) {
+        const auto* worker = g_Pool.workerAs<StreamWorkerHost>(slot);
+        if (!worker || !g_HistoryOpen.contains(worker->streamId())) return;
+        if (!g_HistoryEndedBy.contains(worker->streamId()))
+            g_HistoryEndedBy.insert(worker->streamId(), why);
+    };
+    // The stream's line, written once: @p otherwise unless its end was noted.
+    auto historyEnd = [&connectionHistory, &g_HistoryOpen, &g_HistoryEndedBy](
+                          const QString& streamId, ConnectionHistory::EndedBy otherwise) {
+        const bool noted = g_HistoryEndedBy.contains(streamId);
+        const ConnectionHistory::EndedBy why = noted ? g_HistoryEndedBy.take(streamId) : otherwise;
+        if (!g_HistoryOpen.contains(streamId)) return;
+        ConnectionHistory::Entry line = g_HistoryOpen.take(streamId);
+        line.end = QDateTime::currentDateTime();
+        line.endedBy = why;
+        if (!connectionHistory.append(line))
+            Logger::warning(
+                QStringLiteral("[ConnectionHistory] A stream's line could not be written"));
+    };
+
     // Close a co-op backend's session host-side once its stream is over.
     //
     // This exists because the obvious mechanism does not work on such a
@@ -2837,8 +2901,8 @@ int main(int argc, char* argv[])
     // down. Suppresses the slot's normal ended-cleanup (no Sunshine /cancel:
     // take-over and standby-restart both want the Sunshine session kept alive
     // for the /resume that follows). The host object self-deletes on exit.
-    auto detachWorkerSlot = [&g_Pool, &authManager, &g_StreamEnds](int i, bool takenOver,
-                                                                   bool sessionEnded = false) {
+    auto detachWorkerSlot = [&g_Pool, &authManager, &g_StreamEnds,
+                             &historyEnd](int i, bool takenOver, bool sessionEnded = false) {
         SessionPool::Slot& sl = g_Pool.at(i);
         StreamWorkerHost* old = g_Pool.workerAs<StreamWorkerHost>(i);
         const QString token = sl.sessionToken;
@@ -2862,6 +2926,11 @@ int main(int argc, char* argv[])
         // Whatever its worker does next, this stream was stopped here.
         const qint64 stoppedAt = QDateTime::currentMSecsSinceEpoch();
         noteLanHttpStreamEnd(authManager, g_StreamEnds, old->streamId(), token, stoppedAt);
+        // A guest whose share the owner ended went by the owner's doing. Any
+        // other stop by this door is the viewer's own (quit, take-over, Leave),
+        // unless its caller said otherwise (noteEndedBy).
+        historyEnd(old->streamId(), sessionEnded ? ConnectionHistory::EndedBy::Admin
+                                                 : ConnectionHistory::EndedBy::Client);
         g_StreamEnds.end(old->streamId(), StreamEnds::State::Stopped, stoppedAt);
         QObject::disconnect(old, &StreamWorkerHost::ended, nullptr, nullptr);
         QObject::connect(old, &StreamWorkerHost::ended, qApp, [token, &authManager]() {
@@ -2946,7 +3015,7 @@ int main(int argc, char* argv[])
     // stream ended, another took its slot) ends nothing. Both legs of an
     // owner's stream go together, being one viewer; the session is not
     // revoked, and the device may come back. Returns the slots stopped.
-    auto disconnectStream = [&g_Pool, &authManager, &detachWorkerSlot,
+    auto disconnectStream = [&g_Pool, &authManager, &detachWorkerSlot, &noteEndedBy,
                              &streamInstanceSalt](const QString& instance) -> int {
         if (instance.isEmpty()) return 0;
         int target = -1;
@@ -2979,6 +3048,7 @@ int main(int argc, char* argv[])
             Logger::info(QString("[TrayManager] Stream of slot %1 (%2) stopped from the tray")
                              .arg(i)
                              .arg(kind));
+            noteEndedBy(i, ConnectionHistory::EndedBy::Tray);
             detachWorkerSlot(i, false);
         }
         return static_cast<int>(stopped.size());
@@ -3001,11 +3071,13 @@ int main(int argc, char* argv[])
     // The feed died three times running: its guests leave, and rejoin on
     // encoders of their own (their page's Join).
     QObject::connect(&sharedFeed, &SharedFeed::failedForGood, qApp,
-                     [&g_Pool, &detachWorkerSlot](const QSet<int>& guestSlots) {
+                     [&g_Pool, &detachWorkerSlot, &noteEndedBy](const QSet<int>& guestSlots) {
                          for (int slot : guestSlots)
                              if (slot >= kOwnerSlots && slot < kTotalSlots &&
-                                 g_Pool.at(slot).worker)
+                                 g_Pool.at(slot).worker) {
+                                 noteEndedBy(slot, ConnectionHistory::EndedBy::Server);
                                  detachWorkerSlot(slot, false, false);
+                             }
                      });
 
     // The owner picked another height for the guests' picture: the feed they
@@ -3067,8 +3139,8 @@ int main(int argc, char* argv[])
     // a double Sunshine /cancel is harmless.
     const auto endStreamsOf = [&computerManager, &g_ActiveRelay, &g_ActiveMediaTrackRelay,
                                &g_ActiveStreamRelay, &g_ActiveSession, &g_ActiveClientUniqueId,
-                               &g_ActiveSessionToken, &g_ActiveHostUuid,
-                               &g_Pool](const QString& id) {
+                               &g_ActiveSessionToken, &g_ActiveHostUuid, &g_Pool,
+                               &noteEndedBy](const QString& id) {
         const bool everyone = id.isEmpty();
         const auto ofThatSession = [&id](const QString& token) {
             return AuthManager::isTokenOf(token, id);
@@ -3090,6 +3162,7 @@ int main(int argc, char* argv[])
             if (!w) continue;
             qInfo() << "[main] Revoke teardown: stopping stream worker (slot" << i
                     << ", uid=" << g_Pool.at(i).clientUniqueId << ")";
+            noteEndedBy(i, ConnectionHistory::EndedBy::Admin);
             w->notifyRevoked();
         }
 
@@ -3648,8 +3721,8 @@ int main(int argc, char* argv[])
                             &g_StreamEnds, &dropPendingHostCancel, &detachWorkerSlot,
                             &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &slotSignalingPort,
                             &slotWsPath, &anyOtherSlotLive, &reapCoopSession, &server, &appSettings,
-                            &authManager, &sessionMetrics, &routerPorts,
-                            stunServer](const HttpRequest& req, ResponseCallback respond) {
+                            &authManager, &sessionMetrics, &routerPorts, stunServer, &historyBegin,
+                            &historyEnd](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -4331,6 +4404,10 @@ int main(int argc, char* argv[])
         const NetClassify::Kind clientKind = streamClientKind(req);
         const bool clientSameNetwork =
             streamClientSameNetwork(req, clientKind, {routerPorts.publicIp()});
+        // Its line in the connection history, once its picture starts.
+        ConnectionHistory::Entry historyLine;
+        historyLine.address = AuthManager::cleanClientAddress(req.clientAddress);
+        historyLine.internet = streamFromInternet(req, clientKind);
 
         // ── Session census ─────────────────────────────────────────────────────
         // The shape of this session, for the aggregate counts (SessionMetrics.h:
@@ -5102,7 +5179,7 @@ int main(int argc, char* argv[])
                  &g_LiveSunshineUids, &g_StreamEnds, &authManager, &sessionMetrics, sessionFacts,
                  sessionStartedAt, reqSlot, standby, hostUuidCopy, uid, sessionToken, streamId,
                  hostAppCommand, hostAppOnVirtual, hostAppCloseCommand, hostAppStillOpen,
-                 signInStream](int code, QJsonObject bodyObj) {
+                 signInStream, historyLine, &historyBegin](int code, QJsonObject bodyObj) {
                     const bool ok =
                         code == 200 && bodyObj["status"].toString() == QLatin1String("streaming");
                     // Count a session once it actually carries a picture, and
@@ -5127,6 +5204,8 @@ int main(int argc, char* argv[])
                         g_StreamEnds.begin(streamId, hostUuidCopy, reqSlot, uid, sessionToken,
                                            QDateTime::currentMSecsSinceEpoch(), signInStream);
                         authManager.setSessionStreaming(sessionToken, true);
+                        if (hostUuidCopy == NativeHostBackend::hostUuid())
+                            historyBegin(streamId, historyLine, sessionToken, QString());
                         // A TV on plain HTTP: its address, once its picture runs.
                         if (const SessionInfo tv = authManager.sessionForToken(sessionToken);
                             tv.lanHttp)
@@ -5183,7 +5262,7 @@ int main(int argc, char* argv[])
                  &computerManager, &authManager, &reapCoopSession, &sessionMetrics, sessionFacts,
                  sessionStartedAt, reqSlot, host, hostUuidCopy, uid, sessionToken, streamId,
                  coopSessionId, backendResumable, quitAppOnEnd, &quitsPerDevice, &quitDeviceApp,
-                 &releaseSeatIfIdle]() {
+                 &releaseSeatIfIdle, &historyEnd]() {
                     qInfo() << "[main] Stream worker ended (slot" << reqSlot << ", uid=" << uid
                             << ")";
                     // A crash under a stream that was flowing brings its page
@@ -5196,6 +5275,8 @@ int main(int argc, char* argv[])
                         g_StreamEnds.find(streamId, endedAt).state == StreamEnds::State::Live;
                     noteLanHttpStreamEnd(authManager, g_StreamEnds, streamId, sessionToken,
                                          endedAt);
+                    historyEnd(streamId, worker->crashed() ? ConnectionHistory::EndedBy::Server
+                                                           : ConnectionHistory::EndedBy::Client);
                     g_StreamEnds.end(streamId,
                                      worker->crashed() ? StreamEnds::State::Crashed
                                                        : StreamEnds::State::Ended,
@@ -6590,8 +6671,8 @@ int main(int argc, char* argv[])
                                    signalingPort, stunServer, &g_HostAspect, &routerPorts,
                                    &g_PlayerUids, &g_PlayerJoiners, &cancelGuestHostSessionSoon,
                                    &dropPendingHostCancel, &releaseGuestHoleSoon, &keepGuestHole,
-                                   &g_PlayerRetiring, &g_StreamEnds,
-                                   &sharedFeed](int slot, int height, QString aspect,
+                                   &g_PlayerRetiring, &g_StreamEnds, &sharedFeed, &historyBegin,
+                                   &historyEnd](int slot, int height, QString aspect,
                                                 ShareManager::Permissions perms, QString serverHost,
                                                 int transportIndex, const HttpRequest& req,
                                                 ResponseCallback respond) {
@@ -6754,6 +6835,10 @@ int main(int argc, char* argv[])
         const NetClassify::Kind clientKind = streamClientKind(req);
         const bool clientSameNetwork =
             streamClientSameNetwork(req, clientKind, {routerPorts.publicIp()});
+        // As the owner's: its line in the connection history.
+        ConnectionHistory::Entry historyLine;
+        historyLine.address = AuthManager::cleanClientAddress(req.clientAddress);
+        historyLine.internet = streamFromInternet(req, clientKind);
         auto sessionFacts = std::make_shared<SessionMetrics::Facts>();
         sessionFacts->height = height;
         sessionFacts->fps = 60;
@@ -6969,7 +7054,7 @@ int main(int argc, char* argv[])
         QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,
                          [respond, &g_LiveSunshineUids, &g_StreamEnds, &shareManager,
                           &sessionMetrics, sessionFacts, sessionStartedAt, slot, uid, hostUuid,
-                          streamId](int code, QJsonObject bodyObj) {
+                          streamId, historyLine, &historyBegin](int code, QJsonObject bodyObj) {
                              const bool ok = code == 200 && bodyObj["status"].toString() ==
                                                                 QLatin1String("streaming");
                              sessionFacts->codec = bodyObj["videoCodec"].toString();
@@ -6987,6 +7072,9 @@ int main(int argc, char* argv[])
                                                     QDateTime::currentMSecsSinceEpoch());
                                  g_LiveSunshineUids.insert(uid);
                                  shareManager.setStreaming(slot, true);
+                                 if (hostUuid == NativeHostBackend::hostUuid())
+                                     historyBegin(streamId, historyLine, QString(),
+                                                  shareManager.name(slot));
                              }
                              respond(HttpResponse::json(bodyObj, ok ? 200 : code));
                          });
@@ -6995,7 +7083,7 @@ int main(int argc, char* argv[])
             worker, &StreamWorkerHost::ended, qApp,
             [worker, &g_Pool, &shareManager, &reapCoopSession, &sessionMetrics, &g_StreamEnds,
              &cancelGuestHostSessionSoon, &sharedFeed, sessionFacts, sessionStartedAt, slot, host,
-             uid, coopSessionId, streamId]() {
+             uid, coopSessionId, streamId, &historyEnd]() {
                 qInfo() << "[main] Player worker ended (slot" << slot << ")";
                 // As the owner's: a crash under a flowing stream brings the
                 // guest's page back, and what the stream held waits longer.
@@ -7003,6 +7091,8 @@ int main(int argc, char* argv[])
                 const bool comesBack =
                     worker->crashed() &&
                     g_StreamEnds.find(streamId, endedAt).state == StreamEnds::State::Live;
+                historyEnd(streamId, worker->crashed() ? ConnectionHistory::EndedBy::Server
+                                                       : ConnectionHistory::EndedBy::Client);
                 g_StreamEnds.end(streamId,
                                  worker->crashed() ? StreamEnds::State::Crashed
                                                    : StreamEnds::State::Ended,
@@ -7554,6 +7644,28 @@ int main(int argc, char* argv[])
             return HttpResponse::json(QJsonObject{{"stopped", true}});
         });
 
+    // POST /api/admin/connection-history — the connection history as a file
+    // (issue #42), the administrator's alone (ConnectionHistory::mayDownload):
+    // a POST, so that the admin key comes with it. Personal data, never kept
+    // in a cache. A byte-order mark first, or a spreadsheet reads the names in
+    // its own code page.
+    server.router()->post(
+        "/api/admin/connection-history",
+        [&connectionHistory](const HttpRequest& req) -> HttpResponse {
+            if (!ConnectionHistory::mayDownload(req.isLocal, req.localChannel, req.lanHttp))
+                return HttpResponse::error(403, "Only available to the administrator");
+            Logger::info(QStringLiteral("[ConnectionHistory] Downloaded from the admin page"));
+            HttpResponse resp;
+            resp.statusCode = 200;
+            resp.contentType = "text/csv; charset=utf-8";
+            resp.headers["Content-Disposition"] =
+                "attachment; filename=\"moonlightweb-connections.csv\"";
+            resp.headers["Cache-Control"] = "no-store";
+            resp.body = QByteArrayLiteral("\xEF\xBB\xBF") +
+                        connectionHistory.download(QDateTime::currentDateTime());
+            return resp;
+        });
+
     if (rendezvousShouldRun()) rendezvous.start();
 
     // Write the Desktop admin shortcut with the best URL known at this point.
@@ -7924,6 +8036,10 @@ int main(int argc, char* argv[])
     }
 
     const int exitCode = app.exec();
+    // A stream still running as the server stops: its line says so.
+    const QStringList stillOpen = g_HistoryOpen.keys();
+    for (const QString& streamId : stillOpen)
+        historyEnd(streamId, ConnectionHistory::EndedBy::Server);
     // Joins the overlay thread: a joinable std::thread left to a static
     // destructor would terminate the process on its way out.
     LatencyFlag::setEnabled(false);

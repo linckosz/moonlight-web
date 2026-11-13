@@ -329,6 +329,7 @@ add_executable(mw-server
     src/server/RequestGuard.cpp
     src/server/LanHttp.cpp
     src/server/LanHttpPairing.cpp
+    src/server/ConnectionHistory.cpp
     src/server/CertManager.cpp
     src/server/StaticFileHandler.cpp
     src/server/HomeScreenShell.cpp

@@ -125,6 +125,7 @@ void run_owner_link_wait_tests();
 void run_local_request_tests();
 void run_lan_http_tests();
 void run_lan_http_pairing_tests();
+void run_connection_history_tests();
 void run_lan_http_routes_tests();
 void run_input_policy_tests();
 
@@ -266,6 +267,7 @@ int main(int argc, char** argv)
     run_local_request_tests();
     run_lan_http_tests();
     run_lan_http_pairing_tests();
+    run_connection_history_tests();
     run_lan_http_routes_tests();
     run_input_policy_tests();
     // Last: it repoints the Logger singleton at its own temp files.

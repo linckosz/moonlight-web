@@ -1235,6 +1235,30 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     box-shadow: 0 0 0 1px var(--c-accent, var(--border-1));
 }
 
+/* A TV signed in over plain HTTP (issue #42). */
+.session-plain-http-badge {
+    display: inline-block;
+    margin-left: var(--space-2);
+    padding: 1px 8px;
+    border-radius: var(--radius-pill);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--c-warning-text);
+    background: var(--c-warning-soft);
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+/* The connection history's link under Active Sessions: discreet (issue #42). */
+.admin-connection-history {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    align-items: baseline;
+    margin: var(--space-3) 0 0;
+    font-size: 0.85rem;
+}
+
 .session-streaming-badge {
     display: inline-block;
     margin-left: var(--space-2);

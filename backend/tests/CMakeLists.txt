@@ -158,6 +158,7 @@ add_executable(run_tests
     test_local_request.cpp
     test_lan_http.cpp
     test_lan_http_pairing.cpp
+    test_connection_history.cpp
     test_lan_http_routes.cpp
     test_input_policy.cpp
     # In-scope production units (+ their real deps)
@@ -238,6 +239,7 @@ add_executable(run_tests
     ${_src}/src/server/RequestGuard.cpp
     ${_src}/src/server/LanHttp.cpp
     ${_src}/src/server/LanHttpPairing.cpp
+    ${_src}/src/server/ConnectionHistory.cpp
     ${_src}/src/server/routes/LanHttpRoutes.cpp
     ${_src}/src/server/SessionPool.cpp
     # The single-tab control channel: the port it lands on when its own is taken.

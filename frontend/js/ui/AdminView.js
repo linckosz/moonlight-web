@@ -1155,6 +1155,11 @@ export class AdminView {
                             <div id="admin-sessions-table">
                                 ${this._buildSessionsAreaHtml()}
                             </div>
+                            <p class="admin-connection-history">
+                                <a href="#" id="link-connection-history">${t('admin.connectionHistory')}</a>
+                                <span class="settings-hint">${t('admin.connectionHistoryScope')}</span>
+                            </p>
+                            <p class="settings-hint">${t('admin.connectionHistoryHint')}</p>
                         </div>
                     </div>
                 `
@@ -1301,12 +1306,17 @@ export class AdminView {
                 const streamingBadge = s.streaming
                     ? `<span class="session-streaming-badge" title="${this.esc(t('admin.streamingTitle'))}">${t('admin.streaming')}</span>`
                     : '';
+                // A TV signed in over plain HTTP (issue #42): the tray's
+                // "Streaming" entry leads here, and this is how it is found.
+                const plainHttpBadge = s.lan_http
+                    ? `<span class="session-plain-http-badge" title="${this.esc(t('admin.plainHttpTitle'))}">${t('admin.plainHttp')}</span>`
+                    : '';
                 return `
             <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
                 <td><span class="session-name-edit" contenteditable="plaintext-only"
                           spellcheck="false"
                           data-token="${this.esc(s.token)}"
-                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${streamingBadge}</td>
+                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${plainHttpBadge}${streamingBadge}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>
@@ -1615,6 +1625,12 @@ export class AdminView {
             const chk = /** @type {HTMLInputElement|null} */ (this.container.querySelector(id));
             if (chk) chk.addEventListener('change', () => void this._saveDiagMode(chk));
         }
+        const historyLink = this.container.querySelector('#link-connection-history');
+        if (historyLink)
+            historyLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                void this._downloadConnectionHistory();
+            });
         const logsBtn = this.container.querySelector('#btn-download-logs');
         if (logsBtn) logsBtn.addEventListener('click', () => void this._downloadLogs());
 
@@ -2613,6 +2629,26 @@ export class AdminView {
                     ${this._hostAppsSupported ? this._renderHostApps() : ''}
                 </div>
         `;
+    }
+
+    /**
+     * The connection history as a file (issue #42): who streamed this screen,
+     * when, from where, over what, and how it ended.
+     */
+    async _downloadConnectionHistory() {
+        try {
+            const blob = await BackendClient.downloadConnectionHistory();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'moonlightweb-connections.csv';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch {
+            Toast.error(t('admin.connectionHistoryFailed'));
+        }
     }
 
     _renderAdvanced() {
