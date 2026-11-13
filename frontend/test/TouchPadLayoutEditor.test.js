@@ -141,6 +141,16 @@ describe('TouchPadLayoutEditor', () => {
         expect(container.querySelector('.touch-pad').classList.contains('is-editing')).toBe(true);
     });
 
+    it("names the controls as printed, or in the viewer's language", () => {
+        build();
+        expect(handle('a').getAttribute('aria-label')).toBe('A');
+        expect(handle('lb').getAttribute('aria-label')).toBe('LB');
+        expect(handle('dpad').getAttribute('aria-label')).toBe('text:settings.touchPadControlDpad');
+        expect(handle('stick-right').getAttribute('aria-label')).toBe(
+            'text:settings.touchPadControlStickRight',
+        );
+    });
+
     it('writes a drag as a share of the stage, and follows the finger', () => {
         build();
         dragTo('a', 590, 410);

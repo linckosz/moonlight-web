@@ -628,7 +628,12 @@
         "touchPadEditorBgNight": "Gece",
         "touchPadEditorBgDay": "Gündüz",
         "touchPadEditorFold": "Çubuğu daralt",
-        "touchPadEditorUnfold": "Ayarlar"
+        "touchPadEditorUnfold": "Ayarlar",
+        "touchPadControlView": "Görünüm",
+        "touchPadControlMenu": "Menü",
+        "touchPadControlDpad": "Yön tuşları",
+        "touchPadControlStickLeft": "Sol çubuk",
+        "touchPadControlStickRight": "Sağ çubuk"
     },
     "admin": {
         "title": "Sunucu Ayarları",

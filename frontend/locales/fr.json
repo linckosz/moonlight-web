@@ -628,7 +628,12 @@
         "touchPadEditorBgNight": "Nuit",
         "touchPadEditorBgDay": "Jour",
         "touchPadEditorFold": "Replier la barre",
-        "touchPadEditorUnfold": "Réglages"
+        "touchPadEditorUnfold": "Réglages",
+        "touchPadControlView": "Vue",
+        "touchPadControlMenu": "Menu",
+        "touchPadControlDpad": "Croix directionnelle",
+        "touchPadControlStickLeft": "Stick gauche",
+        "touchPadControlStickRight": "Stick droit"
     },
     "admin": {
         "title": "Paramètres serveur",

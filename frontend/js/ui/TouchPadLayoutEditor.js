@@ -65,24 +65,18 @@ const BACKGROUNDS = [
     ['day', 'settings.touchPadEditorBgDay'],
 ];
 
-/** What each drawn control is called in a screen reader. */
-const NAMES = {
-    a: 'A',
-    b: 'B',
-    x: 'X',
-    y: 'Y',
-    lb: 'LB',
-    rb: 'RB',
-    lt: 'LT',
-    rt: 'RT',
-    l3: 'L3',
-    r3: 'R3',
-    view: 'View',
-    menu: 'Menu',
-    dpad: 'D-pad',
-    'stick-left': 'Left stick',
-    'stick-right': 'Right stick',
+/**
+ * What each drawn control is called, in the bar and in a screen reader: the
+ * letters as printed on the pad, the rest in the viewer's language.
+ */
+const NAME_KEYS = {
+    view: 'settings.touchPadControlView',
+    menu: 'settings.touchPadControlMenu',
+    dpad: 'settings.touchPadControlDpad',
+    'stick-left': 'settings.touchPadControlStickLeft',
+    'stick-right': 'settings.touchPadControlStickRight',
 };
+const nameOf = (id) => (NAME_KEYS[id] ? t(NAME_KEYS[id]) : id.toUpperCase());
 
 const GRIP = `<svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor" aria-hidden="true">
     <circle cx="3" cy="3" r="1.6"/><circle cx="9" cy="3" r="1.6"/>
@@ -478,7 +472,7 @@ export class TouchPadLayoutEditor {
         handle.className = 'tp-layout-editor-handle' + (stick ? ' is-stick' : '');
         handle.dataset.control = id;
         handle.setAttribute('role', 'button');
-        handle.setAttribute('aria-label', NAMES[id] || id);
+        handle.setAttribute('aria-label', nameOf(id));
         handle.addEventListener('pointerdown', (e) => this._grab(e, handle, id));
         this._stage.appendChild(handle);
         return handle;
@@ -578,7 +572,7 @@ export class TouchPadLayoutEditor {
         input.value = String(size);
         text.textContent = this._selected
             ? t('settings.touchPadEditorControlSize', {
-                  name: NAMES[this._selected] || this._selected,
+                  name: nameOf(this._selected),
                   size: Math.round(size * 100),
               })
             : t('settings.touchPadEditorHint');

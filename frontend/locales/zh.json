@@ -628,7 +628,12 @@
         "touchPadEditorBgNight": "夜晚",
         "touchPadEditorBgDay": "白天",
         "touchPadEditorFold": "收起工具栏",
-        "touchPadEditorUnfold": "设置"
+        "touchPadEditorUnfold": "设置",
+        "touchPadControlView": "视图",
+        "touchPadControlMenu": "菜单",
+        "touchPadControlDpad": "方向键",
+        "touchPadControlStickLeft": "左摇杆",
+        "touchPadControlStickRight": "右摇杆"
     },
     "admin": {
         "title": "服务器设置",

@@ -628,7 +628,12 @@
         "touchPadEditorBgNight": "Night",
         "touchPadEditorBgDay": "Day",
         "touchPadEditorFold": "Fold the bar",
-        "touchPadEditorUnfold": "Settings"
+        "touchPadEditorUnfold": "Settings",
+        "touchPadControlView": "View",
+        "touchPadControlMenu": "Menu",
+        "touchPadControlDpad": "D-pad",
+        "touchPadControlStickLeft": "Left stick",
+        "touchPadControlStickRight": "Right stick"
     },
     "admin": {
         "title": "Server Settings",
