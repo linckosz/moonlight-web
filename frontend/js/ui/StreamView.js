@@ -33,6 +33,7 @@ import { AudioPipeline } from '../audio/AudioPipeline.js';
 import * as streamVolume from '../audio/streamVolume.js';
 import { MicUplink, loadMicDevice, micSupported } from '../audio/MicUplink.js';
 import { JitterController } from '../stream/JitterController.js';
+import { TouchScreenPointer } from '../stream/TouchScreenPointer.js';
 import { FramePacer, pacerTunables, pacingCapOf } from '../stream/FramePacer.js';
 import {
     currentRefreshMilliHz,
@@ -652,6 +653,9 @@ export class StreamView {
         // tapping where it points, and the trackpad model clicked wherever the
         // host's pointer already was instead (03/10/2026, a Mi TV).
         this._touchScreen = touchScreen === true || IS_TV;
+        // There the finger is the pointer, and the host's is hidden (issue
+        // #61). Not on a TV: its remote steers the host's pointer and needs it.
+        this._touchScreenPointer = new TouchScreenPointer(this._touchScreen && !IS_TV);
         // iOS/iPadOS never grants the pointer lock: there a refusal is final,
         // and the mouse turns to relative look (A23). Elsewhere a refusal is
         // a moment (Chrome right after Escape), and the next click asks again.
@@ -10207,6 +10211,7 @@ export class StreamView {
             fh = this._pictureHeight();
         const show =
             this._clientCursorActive() &&
+            !this._touchScreenPointer.hidden() &&
             this._hostDrawsCursor &&
             this._hostCursorVisible &&
             !!pos &&
@@ -10400,7 +10405,26 @@ export class StreamView {
             }
         };
 
+        // Touch Screen Mode hides the host's pointer; a mouse or a trackpad
+        // moving brings it back, under itself (issue #61). The pointer event
+        // names its device, which the mouse events Safari makes up after a tap
+        // do not.
+        this._onTouchScreenPointerMove = (e) => {
+            if (e.pointerType !== 'mouse') return;
+            this._touchScreenPointer.moved(e.pointerType);
+            if (this._touchScreenPointer.hidden()) return;
+            const rect = this._mediaRect();
+            if (!rect || !(rect.width > 0) || !(rect.height > 0)) return;
+            const fx = (e.clientX - rect.left) / rect.width;
+            const fy = (e.clientY - rect.top) / rect.height;
+            if (!(fx >= 0 && fy >= 0 && fx <= 1 && fy <= 1)) return;
+            this._clientCursorPlacedAt(fx, fy);
+        };
+
         this.inputEl.addEventListener('mousemove', this._onNormalMouseMove);
+        if (this._touchScreenPointer.on()) {
+            this.inputEl.addEventListener('pointermove', this._onTouchScreenPointerMove);
+        }
         this.inputEl.addEventListener('mousedown', this._onNormalMouseDown);
         this.inputEl.addEventListener('mouseup', this._onNormalMouseUp);
         this.inputEl.addEventListener('mouseenter', this._onNormalMouseEnter);
@@ -10486,6 +10510,8 @@ export class StreamView {
             } else {
                 if (this._onNormalMouseMove)
                     this.inputEl.removeEventListener('mousemove', this._onNormalMouseMove);
+                if (this._onTouchScreenPointerMove)
+                    this.inputEl.removeEventListener('pointermove', this._onTouchScreenPointerMove);
                 if (this._onNormalMouseDown)
                     this.inputEl.removeEventListener('mousedown', this._onNormalMouseDown);
                 if (this._onNormalMouseUp)
@@ -13047,6 +13073,8 @@ export class StreamView {
         } else {
             if (this._onNormalMouseMove)
                 this.inputEl.removeEventListener('mousemove', this._onNormalMouseMove);
+            if (this._onTouchScreenPointerMove)
+                this.inputEl.removeEventListener('pointermove', this._onTouchScreenPointerMove);
             if (this._onNormalMouseDown)
                 this.inputEl.removeEventListener('mousedown', this._onNormalMouseDown);
             if (this._onNormalMouseUp)

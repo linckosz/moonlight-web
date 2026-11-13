@@ -37,6 +37,11 @@ export class StreamViewTouch {
      * @this {StreamViewInstance}
      */
     handleTouchStart(e) {
+        // Touch Screen Mode: the pointer a mouse brought back goes with the
+        // first touch (issue #61).
+        if (this._touchScreenPointer && this._touchScreenPointer.touched()) {
+            this._placeClientCursor();
+        }
         // A touch anywhere on screen dismisses the gesture hint, not just a tap
         // on the slide itself (it takes up real estate on mobile).
         if (

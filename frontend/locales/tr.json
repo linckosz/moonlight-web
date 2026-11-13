@@ -530,7 +530,7 @@
         "gamingMode": "Fare Oyun Modu",
         "gamingModeDesc": "Fareyi ve her tuş vuruşunu — Windows tuşu dahil — yakalayarak yerel deneyime benzer bir deneyim sunar. Yalnızca çıkış kısayolu bu cihazda kalır.",
         "touchScreen": "Dokunmatik Ekran Modu",
-        "touchScreenDesc": "Göreli dokunmatik yüzey modeli yerine doğrudan görüntüde istediğiniz yere dokunun (mutlak). Böylece tek parmakla sürükleme her yönde kaydırır.",
+        "touchScreenDesc": "Göreli dokunmatik yüzey modeli yerine doğrudan görüntüde istediğiniz yere dokunun (mutlak). Böylece tek parmakla sürükleme her yönde kaydırır. Ana makinenin işaretçisi gizlenir: parmağınız onun yerini alır. Bir fare veya dokunmatik yüzey hareket ettiği sürece geri gelir.",
         "pointerSensitivity": "İşaretçi Hassasiyeti:",
         "pointerSensitivityDesc": "Dokunmatik yüzey/dokunma imleci hızı (yüksek = daha hızlı işaretçi hareketi).",
         "mouseSensitivity": "Fare hassasiyeti:",

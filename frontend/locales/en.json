@@ -530,7 +530,7 @@
         "gamingMode": "Mouse Gaming Mode",
         "gamingModeDesc": "Captures the mouse and every keystroke — even the Windows key — for a native-like experience. Only the exit shortcut stays on this device.",
         "touchScreen": "Touch Screen Mode",
-        "touchScreenDesc": "Tap directly where you want on the picture (absolute) instead of the relative trackpad model. A 1-finger drag then scrolls, in any direction.",
+        "touchScreenDesc": "Tap directly where you want on the picture (absolute) instead of the relative trackpad model. A 1-finger drag then scrolls, in any direction. The host's pointer is hidden: your finger takes its place. It comes back while a mouse or a trackpad moves.",
         "pointerSensitivity": "Pointer Sensitivity:",
         "pointerSensitivityDesc": "Trackpad/touch cursor speed (higher = faster pointer movement).",
         "mouseSensitivity": "Mouse sensitivity:",

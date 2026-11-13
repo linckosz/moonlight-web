@@ -530,7 +530,7 @@
         "gamingMode": "Mode jeu souris",
         "gamingModeDesc": "Capture la souris et toutes les touches — même la touche Windows — pour une expérience native. Seul le raccourci de sortie reste sur cet appareil.",
         "touchScreen": "Mode écran tactile",
-        "touchScreenDesc": "Touchez directement l'endroit voulu sur l'image (absolu) au lieu du modèle trackpad relatif. Le glisser à 1 doigt fait alors défiler, dans toutes les directions.",
+        "touchScreenDesc": "Touchez directement l'endroit voulu sur l'image (absolu) au lieu du modèle trackpad relatif. Le glisser à 1 doigt fait alors défiler, dans toutes les directions. Le pointeur de l'hôte est masqué : votre doigt en tient lieu. Il revient tant qu'une souris ou un trackpad bouge.",
         "pointerSensitivity": "Sensibilité du pointeur :",
         "pointerSensitivityDesc": "Vitesse du curseur trackpad/tactile (plus élevé = déplacement plus rapide).",
         "mouseSensitivity": "Sensibilité de la souris :",

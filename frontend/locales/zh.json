@@ -530,7 +530,7 @@
         "gamingMode": "鼠标游戏模式",
         "gamingModeDesc": "捕获鼠标和所有按键——包括 Windows 键——以获得接近原生的体验。只有退出快捷键仍保留在本设备上。",
         "touchScreen": "触屏模式",
-        "touchScreenDesc": "直接点按画面中你想要的位置（绝对定位），而非相对触控板模式。此时单指拖动即可向任意方向滚动。",
+        "touchScreenDesc": "直接点按画面中你想要的位置（绝对定位），而非相对触控板模式。此时单指拖动即可向任意方向滚动。主机指针会被隐藏，由你的手指代替；鼠标或触控板移动时它会重新出现。",
         "pointerSensitivity": "指针灵敏度：",
         "pointerSensitivityDesc": "触控板/触摸光标速度（越高指针移动越快）。",
         "mouseSensitivity": "鼠标灵敏度：",
