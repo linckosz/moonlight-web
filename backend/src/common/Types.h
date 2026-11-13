@@ -67,9 +67,12 @@ struct HttpRequest
                                 // for (MW-TLS-v1) and a PIN is bound to (MW-PIN-v1).
                                 // Empty on plain HTTP and on the tunnel.
     bool malformed = false;     // The request line/headers could not be trusted —
-                                // currently set when the percent-decoded path
-                                // carries control characters (CR/LF smuggled in
-                                // as %0d/%0a). Answered with 400 and never routed.
+                                // set when the percent-decoded path carries
+                                // control characters (CR/LF smuggled in as
+                                // %0d/%0a), when the request line holds one, when
+                                // the method is not a word of capitals, or when a
+                                // header's name or value holds one (a tab apart in
+                                // a value). Answered with 400 and never routed.
 };
 
 struct HttpResponse

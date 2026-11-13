@@ -117,4 +117,121 @@ void run_http_parser_tests()
         // a space in a filename must keep working.
         CHECK(!HttpParser::parse(raw("GET /a%20b.png HTTP/1.1\r\n\r\n")).malformed);
     }
+
+    // ── Lines end with CR LF alone ──────────────────────────────────────────
+    // The request is cut at CR LF, so a lone LF (or any other control
+    // character) stays inside whatever it was sent in: the method, a header's
+    // name, a header's value. None of them is one any more.
+    {
+        // The method: a word of capitals, 1 to 16 of them, read upper-cased.
+        CHECK(HttpParser::parse(raw("GE\nT /api/health HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("GE\n[2026-01-01]\tX /api/health HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("ABCDEFGHIJKLMNOPQ /api/health HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(!HttpParser::parse(raw("ABCDEFGHIJKLMNOP /api/health HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("G-T /api/health HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("G1T /api/health HTTP/1.1\r\n\r\n")).malformed);
+        // As before: a lower-case method is read upper-cased, and is one.
+        const HttpRequest lower = HttpParser::parse(raw("get /api/health HTTP/1.1\r\n\r\n"));
+        CHECK(!lower.malformed);
+        CHECK_EQ(lower.method, QString("GET"));
+
+        // The rest of the request line.
+        CHECK(HttpParser::parse(raw("GET /api/health HTTP/1.1\n\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("GET /api/health\tHTTP/1.1\r\n\r\n")).malformed);
+        const QByteArray nulLine("GET /api/health HTTP/1.1\0x\r\n\r\n", 30);
+        CHECK(HttpParser::parse(nulLine).malformed);
+
+        // A header's value: a lone LF, a CR, a NUL, a DEL; a tab stays allowed.
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nOrigin: https://a\n[2026-01-01] x\r\n\r\n"))
+                  .malformed);
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nOrigin: https://a\rb\r\n\r\n")).malformed);
+        const QByteArray nulValue("GET / HTTP/1.1\r\nX-H: a\0b\r\n\r\n", 28);
+        CHECK(HttpParser::parse(nulValue).malformed);
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nX-H: a\x7f"
+                                    "b\r\n\r\n"))
+                  .malformed);
+        const HttpRequest tab =
+            HttpParser::parse(raw("GET / HTTP/1.1\r\nUser-Agent: a\tb\r\n\r\n"));
+        CHECK(!tab.malformed);
+        CHECK_EQ(tab.headers.value("user-agent"), QString("a\tb"));
+
+        // A header's name, tab included.
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nX\nH: a\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nX\tH: a\r\n\r\n")).malformed);
+
+        // What some readers of a log take for a line break too: NEL (C1) and
+        // the line separator, in UTF-8, in the request line, a name, a value.
+        CHECK(HttpParser::parse(raw("GET /api/health\xc2\x85x HTTP/1.1\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nX\xe2\x80\xa8H: a\r\n\r\n")).malformed);
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nOrigin: a\xc2\x85"
+                                    "b\r\n\r\n"))
+                  .malformed);
+        CHECK(HttpParser::parse(raw("GET / HTTP/1.1\r\nOrigin: a\xe2\x80\xa9"
+                                    "b\r\n\r\n"))
+                  .malformed);
+        // Other characters past ASCII stay a value's own.
+        CHECK(!HttpParser::parse(raw("GET / HTTP/1.1\r\nX-Name: caf\xc3\xa9\r\n\r\n")).malformed);
+
+        // A request line of one word: no method, and so not served, an upgrade
+        // included (HttpServer judges both on mayBeServed).
+        CHECK(!HttpParser::mayBeServed(
+            HttpParser::parse(raw("GARBAGE\r\nUpgrade: websocket\r\n\r\n"))));
+
+        // The body is not a header: control characters there are its own.
+        CHECK(!HttpParser::parse(raw("POST /x HTTP/1.1\r\n\r\na\nb\tc")).malformed);
+
+        // The two checks the server also runs on requests it did not parse.
+        CHECK(HttpParser::isMethod(QStringLiteral("GET")));
+        CHECK(HttpParser::isMethod(QStringLiteral("OPTIONS")));
+        CHECK(!HttpParser::isMethod(QString()));
+        CHECK(!HttpParser::isMethod(QStringLiteral("get")));
+        CHECK(!HttpParser::isMethod(QStringLiteral("GE\nT")));
+        CHECK(!HttpParser::isMethod(QString(17, QLatin1Char('A'))));
+        CHECK(HttpParser::isHeaderLine(QStringLiteral("origin"), QStringLiteral("https://a")));
+        CHECK(HttpParser::isHeaderLine(QStringLiteral("user-agent"), QStringLiteral("a\tb")));
+        CHECK(!HttpParser::isHeaderLine(QStringLiteral("origin"), QStringLiteral("a\nb")));
+        CHECK(!HttpParser::isHeaderLine(QStringLiteral("x\th"), QStringLiteral("a")));
+    }
+
+    // ── A request built by its caller, as the tunnel builds its own ─────────
+    // HttpServer::serveRequest serves only what mayBeServed says: a request
+    // that never went through parse() is judged on the same rules.
+    {
+        HttpRequest built;
+        built.method = QStringLiteral("GET");
+        built.path = QStringLiteral("/api/health");
+        built.headers.insert(QStringLiteral("origin"), QStringLiteral("https://a"));
+        CHECK(HttpParser::mayBeServed(built));
+
+        HttpRequest method = built;
+        method.method = QStringLiteral("GE\n[2026-01-01] x");
+        CHECK(!HttpParser::mayBeServed(method));
+        method.method = QString(17, QLatin1Char('A'));
+        CHECK(!HttpParser::mayBeServed(method));
+        method.method = QString();
+        CHECK(!HttpParser::mayBeServed(method));
+
+        HttpRequest value = built;
+        value.headers.insert(QStringLiteral("origin"), QStringLiteral("https://a\n[2026-01-01] x"));
+        CHECK(!HttpParser::mayBeServed(value));
+        HttpRequest name = built;
+        name.headers.insert(QStringLiteral("x\nh"), QStringLiteral("a"));
+        CHECK(!HttpParser::mayBeServed(name));
+        HttpRequest path = built;
+        path.path = QStringLiteral("/api/x\r\nSet-Cookie: a=1");
+        CHECK(!HttpParser::mayBeServed(path));
+        path.path = QStringLiteral("/api/x") + QChar(0x85) + QStringLiteral("y");
+        CHECK(!HttpParser::mayBeServed(path));
+        path.path = QStringLiteral("/api/x") + QChar(0x2028) + QStringLiteral("y");
+        CHECK(!HttpParser::mayBeServed(path));
+        path.path = QStringLiteral("/api/x") + QChar(0) + QStringLiteral("y");
+        CHECK(!HttpParser::mayBeServed(path));
+        HttpRequest flagged = built;
+        flagged.malformed = true;
+        CHECK(!HttpParser::mayBeServed(flagged));
+
+        // What parse() lets through, mayBeServed serves.
+        CHECK(HttpParser::mayBeServed(HttpParser::parse(
+            raw("POST /api/auth/validate HTTP/1.1\r\nUser-Agent: a\tb\r\n\r\n{}"))));
+    }
 }

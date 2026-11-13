@@ -27,6 +27,23 @@
 /// here — the caller fills it from the socket peer.
 namespace HttpParser {
 
+/// The request as it came. `malformed` is set when its target decodes to a
+/// control character, when its request line holds one, when its method is not
+/// a word of capitals (isMethod, read once upper-cased), or when a header's
+/// name or value holds one (isHeaderLine).
 HttpRequest parse(const QByteArray& raw);
+
+/// A method as a request may name it: 1 to 16 capitals, A to Z.
+bool isMethod(const QString& method);
+
+/// A header as a request may carry it: no control character in its name, and
+/// none but the tab in its value. Control characters are C0, DEL, C1 and the
+/// line and paragraph separators (U+2028, U+2029).
+bool isHeaderLine(const QString& name, const QString& value);
+
+/// Whether a request, parsed here or built by its caller (the tunnel builds
+/// its own), may be served: not malformed, no control character in its path, a method
+/// (isMethod) and headers (isHeaderLine) as a request may carry them.
+bool mayBeServed(const HttpRequest& req);
 
 } // namespace HttpParser

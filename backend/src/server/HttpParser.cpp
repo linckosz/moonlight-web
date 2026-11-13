@@ -25,7 +25,14 @@ namespace HttpParser {
 
 namespace {
 
-/// True when @p s carries a C0 control character or DEL.
+/// C0 and DEL; C1 (NEL among them) and the line and paragraph separators,
+/// which some readers of a log take for a line break.
+bool isControl(char16_t u)
+{
+    return u < 0x20 || (u >= 0x7F && u <= 0x9F) || u == 0x2028 || u == 0x2029;
+}
+
+/// True when @p s carries a control character (isControl).
 ///
 /// QUrl::path() percent-decodes, so a request target of "/x%0d%0aEvil:1" yields
 /// a path with real CR/LF in it. Anything that later echoes the path into a
@@ -35,11 +42,40 @@ namespace {
 bool hasControlChars(const QString& s)
 {
     for (const QChar c : s)
-        if (c.unicode() < 0x20 || c.unicode() == 0x7F) return true;
+        if (isControl(c.unicode())) return true;
+    return false;
+}
+
+/// The same, a tab apart: what a header's value may hold.
+bool hasControlCharsButTab(const QString& s)
+{
+    for (const QChar c : s)
+        if (c != QLatin1Char('\t') && isControl(c.unicode())) return true;
     return false;
 }
 
 } // namespace
+
+bool isMethod(const QString& method)
+{
+    if (method.isEmpty() || method.size() > 16) return false;
+    for (const QChar c : method)
+        if (c < QLatin1Char('A') || c > QLatin1Char('Z')) return false;
+    return true;
+}
+
+bool isHeaderLine(const QString& name, const QString& value)
+{
+    return !hasControlChars(name) && !hasControlCharsButTab(value);
+}
+
+bool mayBeServed(const HttpRequest& req)
+{
+    if (req.malformed || hasControlChars(req.path) || !isMethod(req.method)) return false;
+    for (auto it = req.headers.cbegin(); it != req.headers.cend(); ++it)
+        if (!isHeaderLine(it.key(), it.value())) return false;
+    return true;
+}
 
 HttpRequest parse(const QByteArray& raw)
 {
@@ -48,9 +84,13 @@ HttpRequest parse(const QByteArray& raw)
     QStringList lines = data.split("\r\n");
 
     if (!lines.isEmpty()) {
+        // Lines end with CR LF alone: a request line that holds any other
+        // control character (a lone LF among them) is not one.
+        if (hasControlChars(lines[0])) req.malformed = true;
         QStringList parts = lines[0].split(' ');
         if (parts.size() >= 2) {
             req.method = parts[0].toUpper();
+            if (!isMethod(req.method)) req.malformed = true;
             QUrl url(parts[1]);
             req.path = url.path();
             if (req.path.isEmpty()) req.path = "/";
@@ -71,6 +111,7 @@ HttpRequest parse(const QByteArray& raw)
         if (colon > 0) {
             QString key = lines[i].left(colon).trimmed();
             QString value = lines[i].mid(colon + 1).trimmed();
+            if (!isHeaderLine(key, value)) req.malformed = true;
             req.headers[key.toLower()] = value;
         }
     }

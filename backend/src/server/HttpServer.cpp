@@ -1207,12 +1207,12 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     const bool viaTunnel = (arrival == Arrival::Tunnel);
     req.viaTunnel = viaTunnel;
 
-    // A target carrying control characters is refused before anything reads it.
-    // The socket path already catches this at parse time; the tunnel builds its
-    // requests itself, so the check belongs here too rather than resting on the
-    // caller having done it.
-    if (req.malformed || req.path.contains(QLatin1Char('\r')) ||
-        req.path.contains(QLatin1Char('\n'))) {
+    // A target carrying control characters is refused before anything reads it,
+    // and so is a method that is not a word of capitals or a header that holds
+    // one. The socket path already catches this at parse time; the tunnel builds
+    // its requests itself, so the check belongs here too rather than resting on
+    // the caller having done it.
+    if (!HttpParser::mayBeServed(req)) {
         Logger::warning(QString("[HttpServer] Malformed request target refused from %1")
                             .arg(req.clientAddress));
         m_ConnGuard.reportAuthFailure(req.clientAddress);
@@ -1560,7 +1560,7 @@ void HttpServer::handleWebSocketUpgrade(QTcpSocket* clientSocket, const QByteArr
 
     // Same refusal as the REST path: a control character in the target means the
     // handshake was crafted, and it is forwarded verbatim to the WS server below.
-    if (up.malformed) {
+    if (!HttpParser::mayBeServed(up)) {
         Logger::warning(QString("[HttpServer] Malformed WebSocket upgrade target refused from %1")
                             .arg(peerAddr));
         m_ConnGuard.reportAuthFailure(peerAddr);
