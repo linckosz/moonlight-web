@@ -346,11 +346,13 @@ bool localChannelRoute(const QString& method, const QString& path)
         const char* path;
     };
     // Exact paths, exact verbs: what main.cpp's command-line verbs, tray client
-    // and second launch call, and the one read a script of this machine asks
-    // besides (--local-request): what this machine can capture and encode.
+    // and second launch call, and the two reads a script of this machine asks
+    // besides (--local-request): what this machine can capture and encode, and
+    // the state of its virtual display (read only: changing it is a session's).
     static const Route kRoutes[] = {
         {"GET", "/api/health"},
         {"GET", "/api/native/status"},
+        {"GET", "/api/native/virtual-display"},
         {"GET", "/api/server/status"},
         {"GET", "/api/server/remote-link"},
         {"GET", "/api/server/stream-activity"},

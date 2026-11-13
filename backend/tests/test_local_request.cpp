@@ -44,9 +44,9 @@ void run_local_request_tests()
     SECTION("local request: the channel's routes, less the four that are not a script's to ask");
     {
         for (const char* ok :
-             {"GET /api/health", "GET /api/native/status", "GET /api/server/status",
-              "GET /api/server/stream-activity", "GET /api/setup/status", "GET /api/auth/status",
-              "GET /api/internet/status", "GET /api/settings/streaming",
+             {"GET /api/health", "GET /api/native/status", "GET /api/native/virtual-display",
+              "GET /api/server/status", "GET /api/server/stream-activity", "GET /api/setup/status",
+              "GET /api/auth/status", "GET /api/internet/status", "GET /api/settings/streaming",
               "POST /api/settings/streaming", "POST /api/admin/pin/generate",
               "POST /api/system/restart", "POST /api/system/quit", "POST /api/local/focus"}) {
             const std::optional<Asked> asked = parse(QString::fromLatin1(ok));
@@ -77,7 +77,8 @@ void run_local_request_tests()
              {"GET /api/admin/token", "GET /api/admin/settings", "GET /api/hosts",
               "POST /api/auth/validate", "POST /api/auth/host-key", "GET /api/auth/sessions",
               "POST /api/server/status", "GET /api/admin/pin/generate", "GET /api/system/quit",
-              "GET /api/settings/streaming/x", "GET /api/healthz", "GET /", "GET /admin"}) {
+              "GET /api/settings/streaming/x", "GET /api/healthz", "GET /", "GET /admin",
+              "POST /api/native/virtual-display", "GET /api/native/virtual-display/enable"}) {
             const std::optional<Asked> asked = parse(QString::fromLatin1(no));
             if (asked) CHECK(!allowed(*asked));
         }

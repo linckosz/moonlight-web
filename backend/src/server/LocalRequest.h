@@ -81,6 +81,14 @@ qsizetype maxBodyBytes();
 ///                                 of an owner's certificate, never its contents
 ///   /api/native/status            displays, GPU, encoder, who is at the
 ///                                 console: a diagnosis
+///   /api/native/virtual-display   booleans (supported, installed, enabled,
+///                                 active, can_manage), the method, the fixed
+///                                 name of the product's display, and the last
+///                                 job: state, action, its two dates, "display"
+///                                 once done, and "error" once failed: the
+///                                 helper's or Windows' own text, which may
+///                                 hold a local path. A bench prints the
+///                                 booleans and the job's state only
 ///   /api/server/stream-activity   device names, and an id that is a salted
 ///                                 hash made for this one use
 ///   /api/health, /api/server/status, /api/settings/streaming, and the answers

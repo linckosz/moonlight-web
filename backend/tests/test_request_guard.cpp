@@ -687,8 +687,13 @@ void run_request_guard_tests()
     // read alone, never the routes that change its displays.
     CHECK(localChannelRoute("GET", "/api/native/status"));
     CHECK(!localChannelRoute("POST", "/api/native/status"));
+    // And the state of its virtual display: the read of that one path, nothing
+    // below it, and never the route that changes it.
+    CHECK(localChannelRoute("GET", "/api/native/virtual-display"));
     CHECK(!localChannelRoute("POST", "/api/native/virtual-display"));
-    CHECK(!localChannelRoute("GET", "/api/native/virtual-display"));
+    CHECK(!localChannelRoute("GET", "/api/native/virtual-display/"));
+    CHECK(!localChannelRoute("GET", "/api/native/virtual-display/enable"));
+    CHECK(!localChannelRoute("GET", "/api/native/virtual-display/x/y"));
     CHECK(localChannelRoute("GET", "/api/server/status"));
     CHECK(localChannelRoute("GET", "/api/server/remote-link"));
     CHECK(localChannelRoute("GET", "/api/server/stream-activity"));
