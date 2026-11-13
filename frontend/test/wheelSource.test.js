@@ -11,6 +11,8 @@ import {
     WHEEL_CONTINUOUS,
     WHEEL_GESTURE_GAP_MS,
     WHEEL_NOTCHED,
+    WHEEL_PENDING,
+    WheelInverter,
     WheelSourceTracker,
     wheelEventKind,
     wheelSourceSupport,
@@ -22,10 +24,11 @@ function fixture(name) {
     );
 }
 
-// Real events from Chrome 126 on a MacBook Air M3, an M590 notched wheel and
-// the trackpad, at page zoom 100 % and 110 %; and from Chrome 157 on Windows,
-// a Logitech M331 wheel.
+// Real events from a MacBook Air M3, an M590 notched wheel and the trackpad:
+// Chrome 126 at page zoom 100 % and 110 %, Safari 27 at 100 % and 115 %; and
+// from Chrome 157 on Windows, a Logitech M331 wheel.
 const MAC = fixture('wheel-chrome-mac.json').recordings;
+const SAFARI = fixture('wheel-safari-mac.json').recordings;
 const WINDOWS = fixture('wheel-chrome-windows.json').events;
 
 /** A wheel event as the page sees it, from one recorded row. */
@@ -42,6 +45,39 @@ function trackAll(rows) {
 /** The rows that open a gesture: the first, and each one after a pause. */
 function gestureStarts(rows) {
     return rows.filter((r, i) => i === 0 || r[5] - rows[i - 1][5] > WHEEL_GESTURE_GAP_MS);
+}
+
+/** The rows of a recording, cut into gestures at each pause. */
+function gestures(rows) {
+    const out = [];
+    rows.forEach((r, i) => {
+        if (i === 0 || r[5] - rows[i - 1][5] > WHEEL_GESTURE_GAP_MS) out.push([]);
+        out[out.length - 1].push(r);
+    });
+    return out;
+}
+
+/** A plain move, as WheelInverter gives it back. */
+const move = (dx, dy) => ({ deltaX: dx, deltaY: dy, deltaMode: 0 });
+
+/** A recorded row's move, turned the other way when `inverted`. */
+const rowMove = (r, inverted) => (inverted ? move(-r[0] || 0, -r[1] || 0) : move(r[0], r[1]));
+
+/**
+ * What a recording sends through an inverter, flushed at each pause as the
+ * stream's timer would, with whether each push left travel held back.
+ */
+function invertAll(support, rows) {
+    const inv = new WheelInverter(support);
+    const sent = [];
+    const held = [];
+    rows.forEach((r, i) => {
+        const next = rows[i + 1];
+        sent.push(...inv.push(ev(r), r[5]));
+        held.push(inv.holding);
+        if (!next || next[5] - r[5] > WHEEL_GESTURE_GAP_MS) sent.push(...inv.flush());
+    });
+    return { sent, held };
 }
 
 const KIND = { wheel: WHEEL_NOTCHED, trackpad: WHEEL_CONTINUOUS };
@@ -67,8 +103,11 @@ describe('where the kind of a wheel event can be read', () => {
         expect(wheelSourceSupport(UA.edgeMac, 0)).toBe('chromium-mac');
     });
 
-    it('is not Safari, Firefox, nor Chromium on Windows or Linux', () => {
-        expect(wheelSourceSupport(UA.safariMac, 0)).toBeNull();
+    it('is Safari on macOS', () => {
+        expect(wheelSourceSupport(UA.safariMac, 0)).toBe('safari-mac');
+    });
+
+    it('is not Firefox, nor Chromium on Windows or Linux', () => {
         expect(wheelSourceSupport(UA.firefoxMac, 0)).toBeNull();
         expect(wheelSourceSupport(UA.chromeWindows, 0)).toBeNull();
         expect(wheelSourceSupport(UA.chromeLinux, 0)).toBeNull();
@@ -76,6 +115,13 @@ describe('where the kind of a wheel event can be read', () => {
 
     it('is not an iPad asking for the desktop site, which reads like a Mac', () => {
         expect(wheelSourceSupport(UA.chromeMac, 5)).toBeNull();
+        expect(wheelSourceSupport(UA.safariMac, 5)).toBeNull();
+    });
+
+    it('is not another Mac browser on WebKit, which was not measured', () => {
+        const webView =
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)';
+        expect(wheelSourceSupport(webView, 0)).toBeNull();
     });
 });
 
@@ -188,5 +234,172 @@ describe('the kind of a gesture', () => {
         );
         const kinds = trackAll(WINDOWS);
         expect(new Set(kinds)).toEqual(new Set([WHEEL_NOTCHED]));
+    });
+});
+
+describe('the recorded gestures, Safari 27 on macOS', () => {
+    for (const rec of SAFARI) {
+        const wheel = rec.device === 'wheel';
+
+        it(`${wheel ? 'inverts' : 'leaves'} every event of "${rec.name}"`, () => {
+            const { sent } = invertAll('safari-mac', rec.events);
+            expect(sent).toEqual(rec.events.map((r) => rowMove(r, wheel)));
+            expect(sent.length).toBeGreaterThan(60);
+        });
+    }
+
+    it('holds nothing back from the trackpad, at 100 % and 115 %', () => {
+        const pads = SAFARI.filter((r) => r.device === 'trackpad');
+        expect(pads.map((r) => r.zoom).sort()).toEqual([1, 1.15]);
+        for (const rec of pads) {
+            expect(invertAll('safari-mac', rec.events).held).not.toContain(true);
+        }
+    });
+
+    it('reads the opening event of every trackpad gesture on its own as continuous', () => {
+        const starts = SAFARI.filter((r) => r.device === 'trackpad').flatMap((r) =>
+            gestureStarts(r.events),
+        );
+        expect(starts.length).toBeGreaterThan(20);
+        expect(starts.map((r) => wheelEventKind(ev(r), 'safari-mac'))).toEqual(
+            starts.map(() => WHEEL_CONTINUOUS),
+        );
+    });
+
+    it('holds back no more than the two opening steps of a wheel gesture, 8 px', () => {
+        // Rounded to 3 decimals, as the fixture keeps them, the opening steps
+        // read exactly 4 px: the hold is what the recordings exercise here.
+        for (const rec of SAFARI.filter((r) => r.device === 'wheel')) {
+            const { held } = invertAll('safari-mac', rec.events);
+            let at = 0;
+            for (const g of gestures(rec.events)) {
+                const h = held.slice(at, at + g.length);
+                at += g.length;
+                const waited = h.indexOf(false) === -1 ? h.length : h.indexOf(false);
+                expect(waited).toBeGreaterThanOrEqual(1);
+                expect(waited).toBeLessThanOrEqual(2);
+                expect(h.slice(waited)).not.toContain(true);
+                expect(g.slice(0, waited).map((r) => Math.abs(r[1]))).toEqual(
+                    g.slice(0, waited).map(() => 4),
+                );
+            }
+        }
+    });
+});
+
+describe('the kind of one Safari event', () => {
+    const kind = (dx, dy) => wheelEventKind(move(dx, dy), 'safari-mac');
+
+    it('reads a fraction as notched, an opening notch before rounding included', () => {
+        expect(kind(0, 23.605)).toBe(WHEEL_NOTCHED);
+        expect(kind(0, 4.000244140625)).toBe(WHEEL_NOTCHED);
+        expect(kind(0.5, 3)).toBe(WHEEL_NOTCHED);
+    });
+
+    it('waits on an exact 4 px step along one axis', () => {
+        expect(kind(0, 4)).toBe(WHEEL_PENDING);
+        expect(kind(0, -4)).toBe(WHEEL_PENDING);
+        expect(kind(-4, 0)).toBe(WHEEL_PENDING);
+    });
+
+    it('reads any other whole number as continuous', () => {
+        expect(kind(0, 1)).toBe(WHEEL_CONTINUOUS);
+        expect(kind(4, 4)).toBe(WHEEL_CONTINUOUS);
+        expect(kind(0, 8)).toBe(WHEEL_CONTINUOUS);
+        expect(kind(-1, 5)).toBe(WHEEL_CONTINUOUS);
+    });
+
+    it('cannot tell in lines, nor from an event that does not move', () => {
+        expect(wheelEventKind({ deltaX: 0, deltaY: 3, deltaMode: 1 }, 'safari-mac')).toBeNull();
+        expect(kind(0, 0)).toBeNull();
+    });
+});
+
+describe('the kind of a Safari gesture', () => {
+    it('is decided by the event after an opening step, and held', () => {
+        const t = new WheelSourceTracker('safari-mac');
+        expect(t.kindOf(move(0, 4), 0)).toBe(WHEEL_PENDING);
+        expect(t.kindOf(move(0, 23.605), 58)).toBe(WHEEL_NOTCHED);
+        expect(t.kindOf(move(0, 4), 216)).toBe(WHEEL_NOTCHED);
+    });
+
+    it('is continuous when whole pixels follow the step', () => {
+        const t = new WheelSourceTracker('safari-mac');
+        expect(t.kindOf(move(0, 4), 0)).toBe(WHEEL_PENDING);
+        expect(t.kindOf(move(1, 5), 16)).toBe(WHEEL_CONTINUOUS);
+    });
+
+    it('is notched on a third step in a row: a wheel turned slowly', () => {
+        const t = new WheelSourceTracker('safari-mac');
+        expect(t.kindOf(move(0, -4), 0)).toBe(WHEEL_PENDING);
+        expect(t.kindOf(move(0, -4), 164)).toBe(WHEEL_PENDING);
+        expect(t.kindOf(move(0, -4), 328)).toBe(WHEEL_NOTCHED);
+    });
+
+    it('keeps waiting through an event that cannot tell', () => {
+        const t = new WheelSourceTracker('safari-mac');
+        expect(t.kindOf(move(0, 0), 0)).toBeNull();
+        expect(t.kindOf(move(0, 4), 10)).toBe(WHEEL_PENDING);
+        expect(t.kindOf(move(0, 0), 20)).toBe(WHEEL_PENDING);
+        expect(t.kindOf(move(0, 17.5), 30)).toBe(WHEEL_NOTCHED);
+    });
+});
+
+describe('inverting the notched wheel', () => {
+    it('inverts the Chrome wheel and leaves its trackpad, holding nothing back', () => {
+        for (const rec of MAC) {
+            const { sent, held } = invertAll('chromium-mac', rec.events);
+            expect(sent).toEqual(rec.events.map((r) => rowMove(r, rec.device === 'wheel')));
+            expect(held).not.toContain(true);
+        }
+    });
+
+    it('sends a held step with the event that tells, in order', () => {
+        const inv = new WheelInverter('safari-mac');
+        expect(inv.push(move(0, 4), 0)).toEqual([]);
+        expect(inv.holding).toBe(true);
+        expect(inv.push(move(0, 23.605), 58)).toEqual([move(0, -4), move(0, -23.605)]);
+        expect(inv.holding).toBe(false);
+    });
+
+    it('sends a held step unchanged when whole pixels follow', () => {
+        const inv = new WheelInverter('safari-mac');
+        expect(inv.push(move(0, 4), 0)).toEqual([]);
+        expect(inv.push(move(1, 5), 16)).toEqual([move(0, 4), move(1, 5)]);
+    });
+
+    it('sends a lone step as a notch once the gesture ends', () => {
+        const inv = new WheelInverter('safari-mac');
+        expect(inv.push(move(0, -4), 0)).toEqual([]);
+        expect(inv.flush()).toEqual([move(0, 4)]);
+        expect(inv.holding).toBe(false);
+        expect(inv.flush()).toEqual([]);
+    });
+
+    it('keeps the gesture notched after a flush, should the timer beat the next event', () => {
+        const inv = new WheelInverter('safari-mac');
+        inv.push(move(0, 4), 0);
+        inv.flush();
+        expect(inv.push(move(0, 6), 100)).toEqual([move(0, -6)]);
+    });
+
+    it('sends a step a late timer left behind before the next gesture', () => {
+        const inv = new WheelInverter('safari-mac');
+        inv.push(move(0, 4), 0);
+        const later = WHEEL_GESTURE_GAP_MS + 1;
+        expect(inv.push(move(0, 1), later)).toEqual([move(0, -4), move(0, 1)]);
+    });
+
+    it('never sends a negative zero on the idle axis', () => {
+        const inv = new WheelInverter('chromium-mac');
+        const [d] = inv.push(ev([0, 4, 0, 0, -120, 0]), 0);
+        expect(Object.is(d.deltaX, 0)).toBe(true);
+        expect(d.deltaY).toBe(-4);
+    });
+
+    it('leaves alone an event whose kind cannot be read', () => {
+        const inv = new WheelInverter('chromium-mac');
+        const lines = { deltaX: 0, deltaY: 3, deltaMode: 1 };
+        expect(inv.push(lines, 0)).toEqual([lines]);
     });
 });
