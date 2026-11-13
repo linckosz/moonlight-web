@@ -37,6 +37,7 @@ const FALLBACK_LANG = 'en';
 export const AVAILABLE_LANGUAGES = [
     { code: 'en', label: 'English' },
     { code: 'fr', label: 'Français' },
+    { code: 'tr', label: 'Türkçe' },
     { code: 'zh', label: '简体中文' },
 ];
 

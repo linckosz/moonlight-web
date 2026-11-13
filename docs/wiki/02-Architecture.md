@@ -142,7 +142,7 @@ moonlight-web/
 │   ├── index.html              # single page: header + #main-content + footer
 │   ├── js/                     # app.js + api/ audio/ i18n/ models/ stream/ ui/ util/
 │   ├── css/                    # design tokens + per-view stylesheets
-│   ├── locales/                # en/fr/zh runtime i18n catalogs (Tolgee-compatible)
+│   ├── locales/                # en/fr/tr/zh runtime i18n catalogs (Tolgee-compatible)
 │   └── test/                   # Vitest unit tests (jsdom)
 ├── bootstrap/                  # the entry page: ~5 files, the only code loaded from a server
 ├── deploy/powerdns/            # infrastructure stack (Docker) + installer

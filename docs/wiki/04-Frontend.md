@@ -51,7 +51,7 @@ frontend/
 │   ├── util/                   # Mp4Muxer (NAL/avcC/hvcC/codec strings), Av1Utils (OBU parse),
 │   │                           # SdpUtils (forceOpusStereo), AutoBitrate (recommended kbps),
 │   │                           # BrowserDetect, VersionGuard, escapeHtml
-│   ├── i18n/i18n.js            # homemade runtime i18n (en/fr/zh, Tolgee-compatible JSON)
+│   ├── i18n/i18n.js            # homemade runtime i18n (en/fr/tr/zh, Tolgee-compatible JSON)
 │   └── vendor/opus-decoder.min.js
 ├── locales/{en,fr,zh}.json     # ~1,000 keys, nested namespaces
 ├── test/                       # Vitest suites (jsdom) for the pure-logic modules
