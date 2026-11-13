@@ -73,7 +73,10 @@ param(
     [string]   $KioskDisplay = '',
     # The kiosk's screen may be this machine's primary one (a bench with one
     # screen). Without it, a primary -KioskDisplay is refused.
-    [switch]   $KioskOnPrimary
+    [switch]   $KioskOnPrimary,
+    # How long the run waits, before the first table, for a person's click to
+    # give the kiosk the foreground (it never takes it). 0: no wait.
+    [ValidateRange(0, 120)] [int] $FocusWaitSecs = 60
 )
 
 $ErrorActionPreference = 'Stop'
@@ -285,6 +288,16 @@ try {
     if (Test-Path $jsonl) { Remove-Item $jsonl }
     $kioskPid = Get-KioskPid
     Write-Host "kiosk        : browser process $kioskPid, screen $KioskDisplay"
+
+    # The kiosk is given the foreground by a person's click, never taken: until
+    # it has it, up to -FocusWaitSecs, nothing is typed and the run says what it
+    # waits for. Read twice a second; the first table's own check follows.
+    if ($FocusWaitSecs -gt 0 -and (Test-KioskForeground $kioskPid)) {
+        Write-Host "waiting      : up to $FocusWaitSecs s for a click on the kiosk window on $KioskDisplay - no key until then"
+        $focusDeadline = (Get-Date).AddSeconds($FocusWaitSecs)
+        while ((Get-Date) -lt $focusDeadline -and (Test-KioskForeground $kioskPid)) { Start-Sleep -Milliseconds 500 }
+        Write-Host "waiting      : the kiosk has the foreground: $(-not (Test-KioskForeground $kioskPid))"
+    }
 
     foreach ($profileName in $Profiles) {
         $tablePath = Join-Path $PSScriptRoot "keyboard\$profileName.json"
