@@ -601,7 +601,19 @@ export const MoonlightApp = {
             return true;
         }
         this._initRouter();
+        // The PC's name and version in the header, which the stream's bar
+        // repeats: the one part of _initAsync that is a TV's too.
+        this._readServerIdentity();
         return true;
+    },
+
+    /** /api/health for the header alone, on a TV. Never holds the page up. */
+    async _readServerIdentity() {
+        try {
+            this._showServerIdentity(await BackendClient.get('/api/health'), { alone: true });
+        } catch (err) {
+            console.warn('[MW] Server health check failed:', err);
+        }
     },
 
     // =========================================================================
@@ -1422,25 +1434,7 @@ export const MoonlightApp = {
         try {
             const health = await BackendClient.get('/api/health');
             console.log('[MW] Server:', health);
-            // Reflect the real backend version in the header. The HTML ships an
-            // empty, hidden placeholder so we never flash a stale/wrong number:
-            // the tag stays invisible until the real version arrives here.
-            if (health && health.version) {
-                const versionEl = /** @type {HTMLElement} */ (
-                    document.querySelector('.app-header .version')
-                );
-                if (versionEl) {
-                    versionEl.textContent = 'v' + health.version;
-                    versionEl.hidden = false;
-                }
-            }
-            // The name this machine calls itself, from the same answer. Written
-            // to the register first and drawn from it second, so the menu
-            // includes the machine it is being drawn on — and so a machine
-            // renamed in its admin page is renamed in this browser's menu the
-            // next time the browser visits it, which is the only moment the new
-            // name can be learned.
-            if (health && health.name) this._showInstanceName(health.name);
+            this._showServerIdentity(health);
         } catch (err) {
             console.warn('[MW] Server health check failed:', err);
         }
@@ -1454,22 +1448,56 @@ export const MoonlightApp = {
     },
 
     /**
+     * The header's version and machine name, from /api/health's answer: what
+     * the stream's bar repeats while the header is hidden.
+     *
+     * @param {{version?: string, name?: string} | null} health
+     * @param {{alone?: boolean}} [opts] see _showInstanceName
+     */
+    _showServerIdentity(health, { alone = false } = {}) {
+        // Reflect the real backend version in the header. The HTML ships an
+        // empty, hidden placeholder so we never flash a stale/wrong number:
+        // the tag stays invisible until the real version arrives here.
+        if (health && health.version) {
+            const versionEl = /** @type {HTMLElement} */ (
+                document.querySelector('.app-header .version')
+            );
+            if (versionEl) {
+                versionEl.textContent = 'v' + health.version;
+                versionEl.hidden = false;
+            }
+        }
+        // The name this machine calls itself, from the same answer. Written
+        // to the register first and drawn from it second, so the menu
+        // includes the machine it is being drawn on — and so a machine
+        // renamed in its admin page is renamed in this browser's menu the
+        // next time the browser visits it, which is the only moment the new
+        // name can be learned.
+        if (health && health.name) this._showInstanceName(health.name, { alone });
+    },
+
+    /**
      * Put this machine's name in the header, and make it a menu if there is
      * anywhere to go.
      *
      * Both steps in one place because the order matters: the register is
      * written before the menu is drawn, so the machine on screen appears in its
      * own list — ticked — rather than being the one entry missing from it.
+     *
+     * @param {string} name
+     * @param {{alone?: boolean}} [opts] alone: the name and nothing else, for a
+     *        TV on plain HTTP — no menu of machines it could not open from there,
+     *        and nothing written to its register.
      */
-    _showInstanceName(name) {
+    _showInstanceName(name, { alone = false } = {}) {
         const mount = document.getElementById('instance-menu');
         if (!mount) return;
 
         const ref = currentInstanceRef(tunnelHostId());
-        rememberInstance({ ...ref, name });
+        if (!alone) rememberInstance({ ...ref, name });
 
         if (!this.instanceMenu) this.instanceMenu = new InstanceMenu(mount);
-        this.instanceMenu.render(ref.id, name);
+        this.instanceMenu.render(ref.id, name, alone ? [] : undefined);
     },
 
     // =========================================================================
