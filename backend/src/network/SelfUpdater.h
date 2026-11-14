@@ -27,6 +27,11 @@ class QNetworkReply;
 class QProcess;
 class QTimer;
 class UpdateChecker;
+#ifdef Q_OS_WIN
+namespace mw {
+class OwnedChild;
+}
+#endif
 
 /**
  * Applies a MoonlightWeb update on the host, driven from the web app.
@@ -179,6 +184,12 @@ private:
     QTimer* m_recheckGuard = nullptr;      // bounds the wait on a forced check
     QMetaObject::Connection m_recheckWait; // that check's one-shot subscription
     bool m_recheckDone = false;            // one retry per start(), never a loop
+#ifdef Q_OS_WIN
+    // The Windows installer, or the schtasks that starts its task: a child this
+    // process never ends, not even by quitting (OwnedChild.h), since quitting
+    // is what that installer asks of it.
+    mw::OwnedChild* m_ownedInstaller = nullptr;
+#endif
 
     State m_state = State::Idle;
     int m_percent = 0;

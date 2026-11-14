@@ -83,6 +83,7 @@
 #include "server/LocalChannel.h"
 #include "server/LocalRequest.h"
 #include "server/OwnerLinkWait.h"
+#include "server/QuitServer.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
@@ -1813,6 +1814,14 @@ int main(int argc, char* argv[])
     if (mw::inheritedenv::mustScrub(mw::inheritedenv::isElevatedHelper(argc, argv),
                                     mw::inheritedenv::startedElevated()))
         mw::inheritedenv::scrub();
+
+#ifdef Q_OS_WIN
+    // The installer asks the running server to quit, before an uninstall or
+    // an update kills it (server/QuitServer.h). Before everything else this
+    // process does on start: no application object, no log file, no crash
+    // folder, no settings, no instance lock. Only as the one argument.
+    if (mw::quitserver::isTheVerb(argc, argv)) return mw::quitserver::runVerb();
+#endif
 
     // First, while this is still the only thread: if the Linux launcher handed
     // us CAP_SYS_NICE (GPU priority) — it does for the native stream worker
@@ -8102,6 +8111,12 @@ int main(int argc, char* argv[])
     }
 
     const int exitCode = app.exec();
+    // The router first, before anything else is torn down: what this host
+    // holds there is taken off within a budget, so that an uninstall or an
+    // update that asked this process to quit (--quit-server) leaves nothing
+    // on the box. A router that does not answer in time leaves the rest to
+    // the record, for the next start.
+    routerPorts.releaseBeforeExit(4000);
     // A stream still running as the server stops: its line says so.
     const QStringList stillOpen = g_HistoryOpen.keys();
     for (const QString& streamId : stillOpen)

@@ -221,4 +221,15 @@ inline constexpr char kOtherAccount[] = "the channel belongs to another account"
 Reply request(const QString& endpoint, const Request& request, int timeoutMs,
               QString* error = nullptr);
 
+#ifdef Q_OS_WIN
+/// As request(), and the server's process with it: opened to be waited for
+/// (SYNCHRONIZE), from the PID the pipe itself gives, once the pipe is known
+/// to be this install's server and before anything is sent — so that what is
+/// waited for is the process that was asked, never one that took its PID
+/// after it went. @p serverProcess gets a HANDLE the caller closes; it stays
+/// null when the reply has status 0.
+Reply requestHoldingServer(const QString& endpoint, const Request& request, int timeoutMs,
+                           void** serverProcess, QString* error = nullptr);
+#endif
+
 } // namespace mw::localchannel

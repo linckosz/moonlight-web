@@ -314,6 +314,8 @@ void RouterPortCore::dropTcpOf(const Claim& lost)
 RouterPortCore::Result RouterPortCore::claim(const Request& request)
 {
     Result result;
+    // Quitting: nothing new on the router.
+    if (m_Closed) return result;
 
     // Remembered first, so a restart lands where it was; then the preferred
     // list; then the pool. Each list in its own order, nothing tried twice.
@@ -491,6 +493,7 @@ bool RouterPortCore::rewrite(const Claim& c, QString& owner)
 QList<RouterPortCore::Lost> RouterPortCore::renew()
 {
     QList<Lost> lost;
+    if (m_Closed) return lost;
     bool ok = true;
 
     // Checked after the write, once per half hour, because a machine that comes
@@ -531,6 +534,7 @@ QList<RouterPortCore::Lost> RouterPortCore::renew()
 
 QList<RouterPortCore::Lost> RouterPortCore::renew(uint16_t externalPort)
 {
+    if (m_Closed) return {};
     for (const Claim& held : std::as_const(m_Held)) {
         if (held.external != externalPort) continue;
         const Claim c = held;
@@ -563,6 +567,47 @@ void RouterPortCore::releaseAll()
         release(c);
 }
 
+RouterPortCore::Released RouterPortCore::releaseBeforeExit(const std::function<bool()>& expired)
+{
+    close();
+    Released out;
+    // The streams' shared ports, then the tunnel's, then the slots': what
+    // every stream stands on first.
+    QList<Claim> order;
+    for (const Purpose p : {Purpose::Mux, Purpose::Tunnel, Purpose::Media})
+        for (const Claim& c : std::as_const(m_Held))
+            if (c.purpose == p) order.append(c);
+    for (const Claim& c : std::as_const(order)) {
+        // Not held any more either way: what is left of it is the record's.
+        m_Held.removeAll(c);
+        if (expired && expired()) {
+            out.left.append(c);
+            continue;
+        }
+        // As release(), with the deadline asked before each call: a removal
+        // the router does not acknowledge stays in the record. A TCP entry
+        // that is not this host's (tcpWritable) is not ours to take off, and
+        // not counted as left.
+        bool gone = m_Gateway.remove(c.external, kUdp);
+        if (gone) strike(c.external, false);
+        if (c.tcp) {
+            if (expired && expired()) {
+                gone = false;
+            } else if (tcpWritable(c.external)) {
+                if (m_Gateway.remove(c.external, kTcp))
+                    strike(c.external, true);
+                else
+                    gone = false;
+            }
+        }
+        if (gone)
+            ++out.released;
+        else
+            out.left.append(c);
+    }
+    return out;
+}
+
 QList<Hole> RouterPortCore::sweepList() const
 {
     QList<Hole> out;
@@ -592,7 +637,7 @@ bool RouterPortCore::sweepBelieved(const QList<Hole>& holes)
 
 RouterPortCore::SweepResult RouterPortCore::sweep(const Hole& hole)
 {
-    if (!m_Record) return {Swept::Unknown, {}};
+    if (!m_Record || m_Closed) return {Swept::Unknown, {}};
     // A claim served since the list was made may have written the entry anew
     // (it is held), or found it another machine's (its line is gone).
     if (holdsLine(hole.external, hole.tcp)) return {Swept::HeldAgain, {}};

@@ -905,10 +905,18 @@ QString Server::endpoint() const
     return m_Impl->endpoint;
 }
 
-Reply request(const QString& endpoint, const Request& request, int timeoutMs, QString* error)
+namespace {
+
+Reply ask(const QString& endpoint, const Request& request, int timeoutMs, HANDLE* serverProcess,
+          QString* error)
 {
-    auto fail = [error](const QString& why) {
+    if (serverProcess) *serverProcess = nullptr;
+    auto fail = [error, serverProcess](const QString& why) {
         if (error) *error = why;
+        if (serverProcess && *serverProcess) {
+            ::CloseHandle(*serverProcess);
+            *serverProcess = nullptr;
+        }
         return Reply{};
     };
     const std::wstring path = endpoint.toStdWString();
@@ -938,6 +946,18 @@ Reply request(const QString& endpoint, const Request& request, int timeoutMs, QS
         ::CloseHandle(pipe);
         return fail(why);
     }
+    // The process to wait for, from the pipe and before the request: a PID
+    // read once the server is gone could be another process's.
+    if (serverProcess) {
+        ULONG pid = 0;
+        if (::GetNamedPipeServerProcessId(pipe, &pid))
+            *serverProcess =
+                ::OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (!*serverProcess) {
+            ::CloseHandle(pipe);
+            return fail(QStringLiteral("the server cannot be waited for"));
+        }
+    }
 
     const QByteArray payload = encodeRequest(request);
     if (static_cast<quint32>(payload.size()) > kMaxRequestBytes) {
@@ -962,6 +982,26 @@ Reply request(const QString& endpoint, const Request& request, int timeoutMs, QS
     const std::optional<Reply> reply = decodeReply(reader.payload());
     if (!reply) return fail(QStringLiteral("the answer is not one of this channel's"));
     return *reply;
+}
+
+} // namespace
+
+Reply request(const QString& endpoint, const Request& request, int timeoutMs, QString* error)
+{
+    return ask(endpoint, request, timeoutMs, nullptr, error);
+}
+
+Reply requestHoldingServer(const QString& endpoint, const Request& request, int timeoutMs,
+                           void** serverProcess, QString* error)
+{
+    HANDLE process = nullptr;
+    const Reply reply = ask(endpoint, request, timeoutMs, &process, error);
+    if (serverProcess) {
+        *serverProcess = process;
+    } else if (process) {
+        ::CloseHandle(process);
+    }
+    return reply;
 }
 
 #else // !Q_OS_WIN

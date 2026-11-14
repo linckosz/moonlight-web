@@ -25,6 +25,7 @@
 #include <QPointer>
 #include <QString>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -93,6 +94,16 @@ public:
 
     explicit RouterPortAllocator(AppSettings* settings, QObject* parent = nullptr);
     ~RouterPortAllocator() override;
+
+    /// The process is quitting (called once the event loop has returned):
+    /// every hole this host holds is taken off the router, TCP 443 first,
+    /// within @p budgetMs. From the moment it is called nothing new is asked
+    /// of the router: a claim is answered "quitting", and what was queued on
+    /// the router's thread before finds the door shut. What is not taken off
+    /// in time stays in the record, for the next start. The destructor then
+    /// only waits for that thread: a call to the router still under way is
+    /// not cut (nothing can cut one), and is waited for there.
+    void releaseBeforeExit(int budgetMs);
 
     /// Whether the router may be touched at all: UPnP on, Internet Access on
     /// (which a LAN-only edition never is). Read live, so the admin toggle
@@ -284,4 +295,7 @@ private:
     bool m_Tcp443Refused = false;
     QHash<quint64, Pending> m_Pending;
     quint64 m_NextToken = 1;
+    /// Set by releaseBeforeExit(), read on both threads: the worker shuts the
+    /// door with it on what was queued before the release.
+    std::atomic<bool> m_Closing{false};
 };

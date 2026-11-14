@@ -41,6 +41,8 @@
 #include <cmath>
 
 #ifdef Q_OS_WIN
+#include "common/OwnedChild.h"
+
 #include <windows.h>
 #else
 #include <sys/stat.h>
@@ -647,28 +649,42 @@ void SelfUpdater::runInstaller()
         return;
     }
 
-    QString program = m_pkgPath; // "direct" — UAC consent on the host desktop
+    QString program = QFileInfo(m_pkgPath).absoluteFilePath(); // "direct" — UAC consent
     QStringList args = silent;
     if (m_method == QLatin1String("scheduled-task")) {
         // The task's action already carries the installer path + silent switches.
-        program = QStringLiteral("schtasks.exe");
+        // schtasks by its full path in System32, never looked up along PATH.
+        wchar_t system[MAX_PATH];
+        const UINT n = ::GetSystemDirectoryW(system, MAX_PATH);
+        if (n == 0 || n >= MAX_PATH) {
+            fail(QStringLiteral("Could not find the system folder"));
+            return;
+        }
+        program =
+            QString::fromWCharArray(system, static_cast<int>(n)) + QStringLiteral("\\schtasks.exe");
         args = {QStringLiteral("/Run"), QStringLiteral("/TN"), updateTaskName()};
     }
 
     // A tracked child rather than startDetached: an installer that declines to
     // run leaves NO trace anywhere (/SUPPRESSMSGBOXES turns every diagnostic
     // into an exit code and nothing else), and that code is the only thing that
-    // tells the difference between "still working" and "never started". Nothing
-    // depends on the child outliving us — Inno's SetupLdr waits for the real
-    // setup and forwards its exit code, and the setup that replaces this process
-    // is a grandchild that survives us being killed.
-    m_installer = new QProcess(this);
-    connect(m_installer, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
-        onInstallerFinished(code, status != QProcess::NormalExit);
-    });
-    m_installer->start(program, args);
-    if (!m_installer->waitForStarted(10000)) {
-        fail(QStringLiteral("Could not launch the installer: %1").arg(m_installer->errorString()));
+    // tells the difference between "still working" and "never started". But a
+    // child this process never ends (OwnedChild), not a QProcess: the installer
+    // asks this server to quit before it replaces it (--quit-server), and a
+    // QProcess would end the installer as this process quits cleanly. Inno's
+    // SetupLdr waits for the real setup and forwards its exit code.
+    delete m_ownedInstaller;
+    m_ownedInstaller = new mw::OwnedChild(this);
+    QString why;
+    if (!m_ownedInstaller->start(
+            program, args,
+            [this](quint32 code) {
+                // An exception code (0xC0000005 and the like) is a crash, as
+                // QProcess reported it.
+                onInstallerFinished(static_cast<int>(code), code >= 0xC0000000u);
+            },
+            &why)) {
+        fail(QStringLiteral("Could not launch the installer: %1").arg(why));
         return;
     }
 #else

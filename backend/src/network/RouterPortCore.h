@@ -296,6 +296,28 @@ public:
     void release(const Claim& claim);
     void releaseAll();
 
+    /// What a release before the process quits came to.
+    struct Released
+    {
+        /// Claims whose every entry the router acknowledged as taken off.
+        int released = 0;
+        /// Claims with an entry left on the router: not tried before the
+        /// deadline, or not acknowledged. Their lines stay in the record.
+        QList<Claim> left;
+    };
+
+    /// The process is quitting: from now on nothing is written to the router
+    /// (claim(), renew() and sweep() give nothing), then every held mapping
+    /// is taken off, the streams' shared ports first, then the tunnel's, then
+    /// the slots'. No call to the router is begun once @p expired says true;
+    /// one under way is not cut. Removals the router does not acknowledge
+    /// stay in the record, as with release().
+    Released releaseBeforeExit(const std::function<bool()>& expired);
+
+    /// No more writes to the router (releaseBeforeExit() begins with it).
+    void close() { m_Closed = true; }
+    bool closed() const { return m_Closed; }
+
     /// What became of one line of the record at the sweep.
     enum class Swept
     {
@@ -413,4 +435,5 @@ private:
     QList<Claim> m_Held;
     uint32_t m_LeaseSec;
     int m_RenewFailures = 0;
+    bool m_Closed = false;
 };

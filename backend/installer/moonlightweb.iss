@@ -135,6 +135,11 @@ Name: "fr"; MessagesFile: "compiler:Languages\French.isl"
 Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 
 [CustomMessages]
+; Shown after an uninstall that may have left port forwards on the router
+; (QuitServer below). The English one stands for every language that has none
+; of its own.
+RouterEntriesLeft=Some port forwards MoonlightWeb made may still be on your router. To remove them, open your router's port forwarding (UPnP) page and delete the entries named MoonlightWeb.
+fr.RouterEntriesLeft=Des redirections de ports créées par MoonlightWeb peuvent rester sur votre box. Pour les retirer, ouvrez la page de redirection de ports (UPnP) de votre box et supprimez les entrées nommées MoonlightWeb.
 ; InternetPageBody keeps the literal product name in both editions: it is the
 ; consent the app's own setup wizard shows word for word, and the text recorded
 ; as agreed to (frontend/test/InternetConsentText.test.js holds the two together).
@@ -1232,12 +1237,81 @@ begin
   Log(Format('virtual HID helper (%s): exit %d', [verb, rc]));
 end;
 
+// --- Asking the server to quit before it is killed ---------------------------
+//
+// A server that is killed takes nothing off the router: the port forwards it
+// holds stay on the box. Asked to quit, it takes them off first (within a few
+// seconds, server/QuitServer.h), and the kill that follows finds nothing.
+//
+// Only an exe known to have the verb is ever started with it: one this
+// installer, or a later one, copied — its SHA-256 is recorded under
+// VDisplaySetupKey when it is copied, and compared right before each start.
+// An older version's exe (no value), an exe put back by an older installer
+// or by hand (another hash): not asked, killed as before, without a wait. An
+// exe that does not know an option shows a box on the desktop.
+const
+  QuitVerbValue = 'QuitVerbExe';
+
+procedure RecordQuitVerbExe();
+var
+  exe: String;
+begin
+  exe := ExpandConstant('{app}\{#MyAppExe}');
+  try
+    RegWriteStringValue(HKEY_LOCAL_MACHINE, VDisplaySetupKey, QuitVerbValue,
+                        GetSHA256OfFile(exe));
+  except
+    Log('quit-server: the exe could not be hashed; it will not be asked to quit');
+    RegDeleteValue(HKEY_LOCAL_MACHINE, VDisplaySetupKey, QuitVerbValue);
+  end;
+end;
+
+function CanQuitCleanly(): Boolean;
+var
+  exe, recorded, current: String;
+begin
+  Result := False;
+  exe := ExpandConstant('{app}\{#MyAppExe}');
+  if not FileExists(exe) then Exit;
+  if not RegQueryStringValue(HKEY_LOCAL_MACHINE, VDisplaySetupKey, QuitVerbValue, recorded) then
+    Exit;
+  try
+    current := GetSHA256OfFile(exe);
+  except
+    Exit;
+  end;
+  Result := CompareText(recorded, current) = 0;
+end;
+
+// The verb's exit code (QuitServer.h: 0 gone, 1 entries left, 2 nobody to ask,
+// 3 still running at its limit, 4 refused, 5 record unreadable, 6 nobody to
+// ask and entries left, 7 gone but another account's, whose record is not
+// read), or -1 when it was not asked. The verb ends itself
+// within 17 s whatever happens. Whatever it says, the kill comes after it.
+function QuitServer(): Integer;
+var
+  rc: Integer;
+begin
+  Result := -1;
+  if not CanQuitCleanly() then begin
+    Log('quit-server: not asked (the installed exe is not one known to have the verb)');
+    Exit;
+  end;
+  if Exec(ExpandConstant('{app}\{#MyAppExe}'), '--quit-server', '', SW_HIDE,
+          ewWaitUntilTerminated, rc) then
+    Result := rc;
+  Log(Format('quit-server: exit %d', [Result]));
+end;
+
 // Release the files under {app} before the copy: a running server holds its exe
 // and Qt DLLs open and Inno would fail (or defer to a reboot) on every one.
+// Asked to quit first, so that its port forwards leave the router; an update's
+// next start takes off whatever stayed, so nothing is said here.
 procedure StopRunningInstance();
 var
   rc: Integer;
 begin
+  QuitServer();
   if ServiceInstalled then
     Exec(ExpandConstant('{sys}\net.exe'), 'stop {#MyAppName}', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
@@ -1582,6 +1656,8 @@ begin
   // The account this installation is made by, for a server that runs as a
   // service.
   RecordOwnerAccount();
+  // That this exe may be asked to quit before the next update or uninstall.
+  RecordQuitVerbExe();
   // The policy under which that service may press Ctrl+Alt+Suppr.
   ClaimSasPolicy();
   // "MoonlightWeb Virtual Display" itself: on Accept, and again on every
@@ -1750,13 +1826,28 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  rc: Integer;
-  removeConfig: Boolean;
+  rc, quitCode: Integer;
+  removeConfig, recordThere, entriesLeft: Boolean;
 begin
   if CurUninstallStep = usUninstall then begin
     // Asked before anything is torn down, so the wizard is not left idling on a
     // half-removed install while the dialog waits for an answer.
     removeConfig := AskRemoveConfig();
+
+    // Asked to quit before anything else, while its exe and its task are
+    // there: its port forwards leave the router. What may be left there is
+    // said at the end, config kept or not: a reinstall, whose start would
+    // take them off, may never come.
+    quitCode := QuitServer();
+    recordThere := FileExists(
+      ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\router_holes.json'));
+    // Left, or not known to be gone: lines counted by the verb (1, 6), a
+    // server still running at its limit (3), another account's server whose
+    // record was not read (7), or no clean quit (not asked, refused, record
+    // unreadable) with a record there. 2: nobody answered, and the record
+    // has no line.
+    entriesLeft := (quitCode = 1) or (quitCode = 3) or (quitCode = 6) or (quitCode = 7) or
+                   (((quitCode = -1) or (quitCode = 4) or (quitCode = 5)) and recordThere);
 
     // Stop the running server first: remove the logon task (so it cannot be
     // relaunched), end any task-started instance, then force-kill the tray
@@ -1819,6 +1910,12 @@ begin
       // itself if nothing else is left in it.
       RegDeleteKeyIncludingSubkeys(HKCU, 'Software\MoonlightWeb\{#MyAppName}');
       RegDeleteKeyIfEmpty(HKCU, 'Software\MoonlightWeb');
+    end;
+
+    if entriesLeft then begin
+      Log('quit-server: port forwards may be left on the router');
+      if not UninstallSilent then
+        MsgBox(CustomMessage('RouterEntriesLeft'), mbInformation, MB_OK);
     end;
   end;
 end;

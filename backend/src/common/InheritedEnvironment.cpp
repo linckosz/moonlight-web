@@ -52,10 +52,11 @@ bool isElevatedHelper(int argc, char** argv)
 {
     // The modes an installer task (RunLevel=HighestAvailable), the installer
     // itself or the SYSTEM launcher service start elevated: the update and the
-    // two driver helpers, and the stream worker that injects input. Both
-    // spellings, "--vhid-apply install" and "--vhid-apply=install".
+    // two driver helpers, the stream worker that injects input, and the
+    // installer's request that the running server quit. Both spellings,
+    // "--vhid-apply install" and "--vhid-apply=install".
     static const char* const kModes[] = {"--update-apply", "--vdisplay-apply", "--vhid-apply",
-                                         "--stream-worker"};
+                                         "--stream-worker", "--quit-server"};
     for (int i = 1; i < argc; ++i) {
         for (const char* mode : kModes) {
             const std::size_t n = std::strlen(mode);

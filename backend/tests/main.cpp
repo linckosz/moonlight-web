@@ -124,6 +124,10 @@ void run_local_channel_tests();
 void run_host_key_vault_tests();
 void run_owner_link_wait_tests();
 void run_local_request_tests();
+void run_quit_server_tests();
+void run_router_quit_tests();
+int run_quit_server_child(int argc, char** argv);
+int run_owned_child_sleep(int argc, char** argv);
 void run_lan_http_tests();
 void run_lan_http_pairing_tests();
 void run_connection_history_tests();
@@ -156,6 +160,12 @@ int main(int argc, char** argv)
         return run_ice_mux_started_child(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "--holds-socket") == 0)
         return run_ice_mux_holds_child(argc, argv);
+    // The verb's test (test_quit_server.cpp): a server of the runner's own,
+    // and a child that sleeps then ends with a code.
+    if (argc > 1 && std::strcmp(argv[1], "--quit-server-child") == 0)
+        return run_quit_server_child(argc, argv);
+    if (argc > 1 && std::strcmp(argv[1], "--owned-child-sleep") == 0)
+        return run_owned_child_sleep(argc, argv);
 
     QCoreApplication app(argc, argv);
     // Keep app data hermetic-ish for any path the units resolve internally.
@@ -267,6 +277,8 @@ int main(int argc, char** argv)
     run_host_key_vault_tests();
     run_owner_link_wait_tests();
     run_local_request_tests();
+    run_quit_server_tests();
+    run_router_quit_tests();
     run_lan_http_tests();
     run_lan_http_pairing_tests();
     run_connection_history_tests();

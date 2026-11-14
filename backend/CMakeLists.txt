@@ -558,6 +558,12 @@ endif()
 # into a PipeWire virtual source, libpipewire opened with dlopen — headers only
 # here, as for the native host, so a machine without it still starts. Without
 # the headers the build carries the stub, which says why.
+# The installer's request that the running server quit, and the child the
+# self-update starts and never ends (server/QuitServer.h, common/OwnedChild.h).
+if(WIN32)
+    target_sources(mw-server PRIVATE src/server/QuitServer.cpp src/common/OwnedChild.cpp)
+endif()
+
 if(WIN32)
     target_sources(mw-server PRIVATE src/streaming/MicOutputWindows.cpp)
 elseif(UNIX AND NOT APPLE)

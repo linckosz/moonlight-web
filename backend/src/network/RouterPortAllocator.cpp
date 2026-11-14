@@ -16,6 +16,7 @@
  */
 
 #include "RouterPortAllocator.h"
+#include "BoundedRun.h"
 #include "RouterHoles.h"
 #include "PortIdentity.h"
 #include "RouterPortPools.h"
@@ -28,6 +29,8 @@
 #include "server/AppSettings.h"
 
 #include <QCoreApplication>
+#include <QDeadlineTimer>
+#include <QMap>
 #include <QMetaObject>
 #include <QStandardPaths>
 #include <QSysInfo>
@@ -321,6 +324,7 @@ public:
 
     void sweepFirst()
     {
+        if (closing()) m_Sweep.clear();
         if (!m_Core || m_Sweep.isEmpty()) return;
         if (!m_Core->sweepBelieved(m_Sweep)) {
             Logger::info(QStringLiteral("[UPNP] Asked about a port no MoonlightWeb ever maps, the "
@@ -335,6 +339,7 @@ public:
 
     void sweepNext()
     {
+        if (closing()) m_Sweep.clear();
         if (!m_Core || m_Sweep.isEmpty()) return;
         const mw::routerholes::Hole hole = m_Sweep.takeFirst();
         logSwept(hole, m_Core->sweep(hole));
@@ -356,7 +361,8 @@ public:
     void claim(quint64 token, const RouterPortCore::Request& request)
     {
         RouterPortCore::Result result;
-        if (m_Core) result = m_Core->claim(request);
+        // Queued before the process began to quit, run after: nothing new.
+        if (m_Core && !closing()) result = m_Core->claim(request);
         QMetaObject::invokeMethod(
             m_Owner, [o = m_Owner, token, result]() { o->onClaimed(token, result); },
             Qt::QueuedConnection);
@@ -364,7 +370,7 @@ public:
 
     void renew()
     {
-        if (!m_Core) return;
+        if (!m_Core || closing()) return;
         const QList<RouterPortCore::Lost> lost = m_Core->renew();
         if (m_Core->renewFailures() == 2 && m_Core->leaseSec() == 0)
             Logger::warning(QStringLiteral("[UPNP] Renewal failed twice — switching to permanent "
@@ -386,7 +392,7 @@ public:
     /// taken back and nothing else is done.
     void tcp443(mw::tcp443::Situation now, bool ask)
     {
-        if (!m_Guard443 || !m_Upnp || !m_Core) return;
+        if (!m_Guard443 || !m_Upnp || !m_Core || closing()) return;
         // What an earlier run left on the router is looked at first, a line
         // at a time: an entry it left on 443 is that sweep's to take back,
         // and nothing is asked for there before it has. Until then this look
@@ -400,7 +406,7 @@ public:
 
     void look443(mw::tcp443::Situation now, bool ask)
     {
-        if (!m_Guard443 || !m_Upnp || !m_Core) return;
+        if (!m_Guard443 || !m_Upnp || !m_Core || closing()) return;
         // What is due is the keeper's to decide (Tcp443Guard.h): renewed,
         // taken off, asked for, or left alone for now. A run it begins does
         // not end here: its dials are made elsewhere (dialled443()).
@@ -412,7 +418,8 @@ public:
     /// the run goes on, a step, on this thread.
     void dialled443(uint32_t run, bool result)
     {
-        if (!m_Guard443) return;
+        // Quitting: the run was given up with the release, its entry with it.
+        if (!m_Guard443 || closing()) return;
         said443(m_Guard443->dialled(run, result, monotonicMs()));
     }
 
@@ -435,7 +442,7 @@ public:
 
     void renew(uint16_t externalPort)
     {
-        if (!m_Core) return;
+        if (!m_Core || closing()) return;
         const QList<RouterPortCore::Lost> lost = m_Core->renew(externalPort);
         if (lost.isEmpty()) return;
         QMetaObject::invokeMethod(
@@ -465,7 +472,57 @@ public:
         if (m_Core) m_Core->releaseAll();
     }
 
+    /// The process is quitting (RouterPortAllocator::releaseBeforeExit()).
+    ///
+    /// The main thread waits for this only until its budget is spent, then
+    /// goes on tearing down while a call to the router may still run here.
+    /// That is safe because nothing this thread touches belongs to the main
+    /// thread: the client, the core, the record and what TCP 443 is checked
+    /// with are this object's, the log is the process's, and m_Owner is only
+    /// ever posted to (queued), and outlives this thread: its destructor
+    /// ends the thread first. It must stay so: no direct connection from
+    /// here to an object of the main thread, and no read of the settings.
+    void releaseBeforeExit(QDeadlineTimer deadline)
+    {
+        if (m_Renew) m_Renew->stop();
+        m_Sweep.clear();
+        mw::tcp443::Situation dropped;
+        bool droppedAsk = false;
+        m_Waiting443.take(dropped, droppedAsk);
+        // TCP 443 before the port it leads to, as in releaseAll().
+        if (m_Guard443) {
+            for (const mw::tcp443::Keeper::Line& line : m_Guard443->release()) {
+                if (line.warning)
+                    Logger::warning(QStringLiteral("[UPNP] ") + line.text);
+                else
+                    Logger::info(QStringLiteral("[UPNP] ") + line.text);
+            }
+        }
+        if (!m_Core) return;
+        const RouterPortCore::Released out =
+            m_Core->releaseBeforeExit([deadline]() { return deadline.hasExpired(); });
+        if (out.released > 0)
+            Logger::info(QStringLiteral("[UPNP] Before quitting: %1 hole(s) taken off the router")
+                             .arg(out.released));
+        if (!out.left.isEmpty()) {
+            QMap<QString, int> byKind;
+            for (const RouterPortCore::Claim& c : out.left)
+                ++byKind[purposeName(c.purpose, c.slot)];
+            QStringList kinds;
+            for (auto it = byKind.cbegin(); it != byKind.cend(); ++it)
+                kinds << QStringLiteral("%1 x%2").arg(it.key()).arg(it.value());
+            Logger::warning(QStringLiteral("[UPNP] Before quitting: %1 hole(s) not taken off the "
+                                           "router (%2): they stay in the record, and the next "
+                                           "start takes them off")
+                                .arg(out.left.size())
+                                .arg(kinds.join(QStringLiteral(", "))));
+        }
+    }
+
 private:
+    /// The process began to quit: nothing new is asked of the router.
+    bool closing() const { return m_Owner->m_Closing.load(); }
+
     RouterPortAllocator* m_Owner;
     std::unique_ptr<UPNPClient> m_Upnp;
     std::unique_ptr<UpnpGatewayAdapter> m_Gateway;
@@ -497,11 +554,29 @@ RouterPortAllocator::~RouterPortAllocator()
     if (!m_Thread) return;
     // The mappings are removed on the way out — the numbers stay in the
     // settings, which is what makes the next start land on the same ones.
-    QMetaObject::invokeMethod(
-        m_Worker, [w = m_Worker]() { w->releaseAll(); }, Qt::BlockingQueuedConnection);
+    // Already done within its budget when the process quit: what is left
+    // is the record's, and only the thread is waited for (a call to the
+    // router it may still be in cannot be cut).
+    if (!m_Closing.load())
+        QMetaObject::invokeMethod(
+            m_Worker, [w = m_Worker]() { w->releaseAll(); }, Qt::BlockingQueuedConnection);
     m_Thread->quit();
     m_Thread->wait();
     delete m_Thread;
+}
+
+void RouterPortAllocator::releaseBeforeExit(int budgetMs)
+{
+    if (m_Closing.exchange(true)) return;
+    if (!m_Thread || !m_Worker) return;
+    const QDeadlineTimer deadline(budgetMs);
+    const bool inTime = mw::runWithin(
+        m_Worker, [w = m_Worker, deadline]() { w->releaseBeforeExit(deadline); }, budgetMs);
+    if (!inTime)
+        Logger::warning(QStringLiteral("[UPNP] Before quitting: the router did not answer within "
+                                       "%1 ms; what was not taken off stays in the record, and "
+                                       "the next start takes it off")
+                            .arg(budgetMs));
 }
 
 bool RouterPortAllocator::enabled() const
@@ -518,7 +593,7 @@ void RouterPortAllocator::ensureStarted()
 
 void RouterPortAllocator::discover()
 {
-    if (mw::edition::lanOnly()) return;
+    if (mw::edition::lanOnly() || m_Closing.load()) return;
     if (m_State == GatewayState::Unknown) {
         startWorker();
         return;
@@ -586,7 +661,7 @@ void RouterPortAllocator::onDiscovered(bool ok, const QString& publicIp, const Q
 
 void RouterPortAllocator::consider443()
 {
-    if (!m_Probe443 || !m_Worker || m_State != GatewayState::Ready) return;
+    if (!m_Probe443 || !m_Worker || m_State != GatewayState::Ready || m_Closing.load()) return;
     mw::tcp443::Situation now;
     // The router may be asked while UPnP and Internet Access are on. Off, an
     // entry that is held is taken back, as every hole is, and nothing else.
@@ -659,6 +734,7 @@ void RouterPortAllocator::answerLater(Purpose purpose, int slot, QObject* contex
 
 QString RouterPortAllocator::refusal()
 {
+    if (m_Closing.load()) return QStringLiteral("quitting");
     if (!enabled()) return QStringLiteral("UPnP is off");
     ensureStarted();
     if (m_State == GatewayState::Missing) return QStringLiteral("no IGD");
@@ -792,14 +868,14 @@ void RouterPortAllocator::claimMuxPort(int which, uint16_t current,
 
 void RouterPortAllocator::renewNow()
 {
-    if (m_State != GatewayState::Ready || !enabled()) return;
+    if (m_State != GatewayState::Ready || !enabled() || m_Closing.load()) return;
     Logger::info(QStringLiteral("[UPNP] Renewing every held hole now"));
     QMetaObject::invokeMethod(m_Worker, [w = m_Worker]() { w->renew(); }, Qt::QueuedConnection);
 }
 
 void RouterPortAllocator::recheck(uint16_t externalPort)
 {
-    if (m_State != GatewayState::Ready || !enabled()) return;
+    if (m_State != GatewayState::Ready || !enabled() || m_Closing.load()) return;
     QMetaObject::invokeMethod(
         m_Worker, [w = m_Worker, externalPort]() { w->renew(externalPort); }, Qt::QueuedConnection);
 }

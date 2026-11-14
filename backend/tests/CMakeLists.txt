@@ -157,6 +157,8 @@ add_executable(run_tests
     test_host_key_vault.cpp
     test_owner_link_wait.cpp
     test_local_request.cpp
+    test_quit_server.cpp
+    test_router_quit.cpp
     test_lan_http.cpp
     test_lan_http_pairing.cpp
     test_connection_history.cpp
@@ -337,7 +339,12 @@ target_link_libraries(run_tests PRIVATE
 )
 
 if(WIN32)
-    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi)
+    # The installer's request that the running server quit (the verb's pieces,
+    # against a server of the runner's own), and the self-update's child.
+    target_sources(run_tests PRIVATE
+        ${_src}/src/server/QuitServer.cpp
+        ${_src}/src/common/OwnedChild.cpp)
+    target_link_libraries(run_tests PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi shell32 ole32)
     # Emit PDB debug info even in release so OpenCppCoverage can map line coverage.
     target_compile_options(run_tests PRIVATE /Zi)
     target_link_options(run_tests PRIVATE /DEBUG)

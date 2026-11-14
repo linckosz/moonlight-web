@@ -224,6 +224,10 @@ void run_update_apply_tests()
         CHECK(mw::inheritedenv::isElevatedHelper(3, vh));
         CHECK(mw::inheritedenv::isElevatedHelper(2, vhe));
         CHECK(mw::inheritedenv::isElevatedHelper(3, sw));
+        // The installer's request that the running server quit.
+        char quit[] = "--quit-server";
+        char* qs[] = {exe, quit};
+        CHECK(mw::inheritedenv::isElevatedHelper(2, qs));
         // A longer flag that merely starts like one is not that mode.
         char lookalike[] = "--stream-worker-x";
         char serviceFlag[] = "--worker-service";
