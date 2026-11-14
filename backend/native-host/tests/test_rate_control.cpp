@@ -784,24 +784,30 @@ void run_rate_control_tests()
         CHECK(g.report(rising, 15500));
         CHECK_EQ(g.targetKbps(), 19200);
         CHECK_EQ(g.goodKbps(), 24000); // a delay alone still proves nothing
-        // Back fast to the good rate, then the slow steps above it:
-        // 19 200 → 24 000, then 25 200 → 26 460 → 27 783 → 29 172 → 30 000.
+        // Back fast to the good rate, then the slow steps above it — one per
+        // five seconds since the overflow, near the rate that overflowed
+        // (DebitRemonte2): 19 200 → 24 000, then 25 200 at 20 000 → 26 460 →
+        // 27 783 → 29 172 → 30 000 at 40 000.
         CHECK(!g.report(quiet, 18000));
         CHECK(g.report(quiet, 18500));
         CHECK(g.lastRaiseFast());
         CHECK_EQ(g.targetKbps(), 24000);
-        CHECK(g.report(quiet, 19000));
+        CHECK(!g.report(quiet, 19000));
         CHECK(!g.lastRaiseFast());
+        CHECK_EQ(g.targetKbps(), 24000);
+        CHECK(g.report(quiet, 20000));
         CHECK_EQ(g.targetKbps(), 25200);
-        int64_t t = 19500;
-        int steps = 0;
-        while (g.limiting() && steps < 100) {
-            g.report(quiet, t);
-            t += 500;
-            steps++;
+        int raises = 0;
+        int64_t last = 0;
+        for (int64_t t = 20500; t <= 45000; t += 500) {
+            if (g.report(quiet, t)) {
+                raises++;
+                last = t;
+            }
         }
         CHECK_EQ(g.targetKbps(), 30000);
-        CHECK_EQ(steps, 4);
+        CHECK_EQ(raises, 4);
+        CHECK_EQ(last, 40000);
         // Without the key, the same reports went from 24 000 straight back.
         RateGovernor off;
         off.start(30000, 0);
@@ -834,6 +840,207 @@ void run_rate_control_tests()
         shed.overflows = 2;
         CHECK(g.report(shed, 14500));
         CHECK_EQ(g.goodKbps(), 4000); // where the climb started, under 6 250
+    }
+
+    SECTION("RateGovernor — near the rate that overflowed, one step per wait (the N95 of 13/11)");
+    {
+        // iPhone in 5G, 18 Mbit/s set: cut to 14 400, back at 17 502 six
+        // seconds later and overflowed again, three times in 18 s.
+        RateGovernor g;
+        g.start(18000, 0);
+        g.setOverflowLowersGood(true);
+        LinkFeedback quiet;
+        for (int64_t t = 500; t <= 6000; t += 500)
+            g.report(quiet, t);
+        CHECK_EQ(g.goodKbps(), 18000);
+        LinkFeedback shed;
+        shed.overflows = 1;
+        CHECK(g.report(shed, 6500));
+        CHECK_EQ(g.targetKbps(), 14400);
+        CHECK_EQ(g.goodKbps(), 14400);
+        CHECK_EQ(g.overflowKbps(), 18000);
+        CHECK_EQ(g.overflowWaitMs(), RateGovernor::kOverflowStepMs);
+        // Nothing before five seconds, where the old climb was back at 17 502.
+        for (int64_t t = 7000; t < 11500; t += 500)
+            CHECK(!g.report(quiet, t));
+        CHECK_EQ(g.targetKbps(), 14400);
+        CHECK(g.report(quiet, 11500));
+        CHECK_EQ(g.targetKbps(), 15120);
+        // Then one step per five seconds: 15 876, 16 669, 17 502, 18 000.
+        int raises = 0;
+        int64_t first = 0;
+        for (int64_t t = 12000; t <= 32000; t += 500) {
+            if (g.report(quiet, t)) {
+                if (first == 0) first = t;
+                raises++;
+            }
+        }
+        CHECK_EQ(raises, 4);
+        CHECK_EQ(first, 16500);
+        CHECK_EQ(g.targetKbps(), 18000);
+        // Overflowed again within 30 s: the wait doubles.
+        CHECK(g.report(shed, 33000));
+        CHECK_EQ(g.targetKbps(), 14400);
+        CHECK_EQ(g.overflowWaitMs(), 2 * RateGovernor::kOverflowStepMs);
+        CHECK_EQ(g.overflowEpisodes(), 2);
+        for (int64_t t = 33500; t < 43000; t += 500)
+            CHECK(!g.report(quiet, t));
+        CHECK(g.report(quiet, 43000));
+        CHECK_EQ(g.targetKbps(), 15120);
+    }
+
+    SECTION("RateGovernor — one overflow is one episode, however many reports it spans");
+    {
+        RateGovernor g;
+        g.start(18000, 0);
+        g.setOverflowLowersGood(true);
+        LinkFeedback quiet;
+        for (int64_t t = 500; t <= 6000; t += 500)
+            g.report(quiet, t);
+        LinkFeedback shed;
+        shed.overflows = 1;
+        CHECK(g.report(shed, 6500));
+        CHECK(g.report(shed, 7000));
+        CHECK(g.report(shed, 7500));
+        CHECK_EQ(g.targetKbps(), 9216);
+        // The queue draining at lower rates is the same overflow: the good
+        // rate and the rate remembered stay where it began.
+        CHECK_EQ(g.goodKbps(), 14400);
+        CHECK_EQ(g.overflowKbps(), 18000);
+        CHECK_EQ(g.overflowEpisodes(), 1);
+        CHECK_EQ(g.overflows(), 3);
+        CHECK_EQ(g.overflowWaitMs(), RateGovernor::kOverflowStepMs);
+        // Fast back to one cut under it, then the wait from the last report.
+        CHECK(!g.report(quiet, 10000));
+        CHECK(g.report(quiet, 10500));
+        CHECK(g.lastRaiseFast());
+        CHECK_EQ(g.targetKbps(), 11520);
+        CHECK(g.report(quiet, 11000));
+        CHECK_EQ(g.targetKbps(), 14400);
+        CHECK(!g.report(quiet, 11500));
+        CHECK(!g.report(quiet, 12000));
+        CHECK(g.report(quiet, 12500));
+        CHECK_EQ(g.targetKbps(), 15120);
+    }
+
+    SECTION("RateGovernor — a minute without an overflow forgets it");
+    {
+        RateGovernor g;
+        g.start(30000, 0);
+        g.setOverflowLowersGood(true);
+        LinkFeedback rising;
+        rising.owdRiseMs = 45;
+        CHECK(g.report(rising, 500));
+        CHECK_EQ(g.targetKbps(), 24000);
+        LinkFeedback shed;
+        shed.overflows = 1;
+        CHECK(g.report(shed, 3000)); // overflowed at 24 000, under the setting
+        CHECK_EQ(g.targetKbps(), 19200);
+        CHECK_EQ(g.overflowKbps(), 24000);
+        LinkFeedback quiet;
+        for (int64_t t = 3500; t <= 62500; t += 500)
+            g.report(quiet, t);
+        // Back at the rate that overflowed, and no further while remembered.
+        CHECK_EQ(g.targetKbps(), 24000);
+        CHECK(g.limiting());
+        CHECK_EQ(g.overflowKbps(), 24000);
+        // Sixty seconds after it: forgotten, the ordinary climb again.
+        CHECK(g.report(quiet, 63000));
+        CHECK_EQ(g.overflowKbps(), 0);
+        CHECK_EQ(g.targetKbps(), 25200);
+        CHECK(g.report(quiet, 63500));
+        CHECK_EQ(g.targetKbps(), 26460);
+        // An overflow long after the last: the first wait, not a doubled one.
+        CHECK(g.report(shed, 64000));
+        CHECK_EQ(g.overflowWaitMs(), RateGovernor::kOverflowStepMs);
+        CHECK_EQ(g.overflowEpisodes(), 2);
+    }
+
+    SECTION("RateGovernor — the host's own backlog cuts without a report, down to 2 Mbit/s");
+    {
+        RateGovernor g;
+        g.start(18000, 0);
+        g.setOverflowLowersGood(true);
+        CHECK_EQ(g.floorKbps(), 3600);
+        CHECK(!g.backlog(900, 1000)); // under a second: the relay's own business
+        CHECK(!g.backlogged());
+        CHECK(g.backlog(1200, 1300));
+        CHECK(g.backlogged());
+        CHECK_EQ(g.targetKbps(), 14400);
+        CHECK_EQ(g.overflowKbps(), 18000);
+        CHECK(!g.backlog(1400, 1500)); // a cut under half a second ago
+        // A cut every half second, past the ordinary floor down to 2 Mbit/s.
+        for (int64_t t = 1800; t <= 8000; t += 500)
+            g.backlog(t - 100, t);
+        CHECK_EQ(g.targetKbps(), RateGovernor::kBacklogFloorKbps);
+        CHECK(!g.backlog(8200, 8300)); // nothing left to cut
+        // A report with no frame in its window reads quiet: it raises nothing.
+        LinkFeedback quiet;
+        CHECK(!g.report(quiet, 8400));
+        CHECK_EQ(g.targetKbps(), RateGovernor::kBacklogFloorKbps);
+        // Drained: the episode, once.
+        CHECK(!g.backlog(0, 8500));
+        CHECK(!g.backlogged());
+        RateGovernor::BacklogEpisode ep;
+        CHECK(g.takeEndedBacklog(ep));
+        CHECK(!g.takeEndedBacklog(ep));
+        CHECK_EQ(ep.startMs, 100);
+        CHECK_EQ(ep.endMs, 8500);
+        CHECK_EQ(ep.fromKbps, 18000);
+        CHECK_EQ(ep.lowestKbps, RateGovernor::kBacklogFloorKbps);
+        CHECK_EQ(ep.cuts, 10);
+        CHECK_EQ(g.backlogCuts(), 10);
+        CHECK_EQ(g.backlogs(), 1);
+        CHECK_EQ(g.overflowEpisodes(), 1);
+        // Quiet counts from the drain; the climb starts under the ordinary
+        // floor, where the backlog left it.
+        CHECK(!g.report(quiet, 11000));
+        CHECK(g.report(quiet, 11500));
+        CHECK_EQ(g.targetKbps(), 2100);
+        // An overuse down there does not "cut" it back up to that floor.
+        LinkFeedback rising;
+        rising.owdRiseMs = 45;
+        CHECK(!g.report(rising, 12000));
+        CHECK_EQ(g.targetKbps(), 2100);
+    }
+
+    SECTION("RateGovernor — a report's shed frames during a backlog are the same episode");
+    {
+        RateGovernor g;
+        g.start(18000, 0);
+        g.setOverflowLowersGood(true);
+        CHECK(g.backlog(1200, 1300));
+        LinkFeedback shed;
+        shed.overflows = 1;
+        CHECK(g.report(shed, 1600)); // a report still cuts on its own
+        CHECK_EQ(g.targetKbps(), 11520);
+        CHECK(!g.backlog(1500, 1800)); // but the host waits half a second after any cut
+        CHECK(g.backlog(1900, 2100));
+        CHECK_EQ(g.targetKbps(), 9216);
+        CHECK_EQ(g.overflowEpisodes(), 1);
+        CHECK_EQ(g.overflowKbps(), 18000);
+        CHECK_EQ(g.goodKbps(), 0); // nothing proven yet, and nothing proven since
+    }
+
+    SECTION("RateGovernor — the backlog rule: off with ovfgood=0, a session's own floor kept");
+    {
+        RateGovernor off;
+        off.start(18000, 0);
+        CHECK(!off.backlog(5000, 6000));
+        CHECK(!off.backlogged());
+        CHECK_EQ(off.targetKbps(), 18000);
+        RateGovernor follow;
+        follow.start(18000, 0, /*followSetting=*/true);
+        follow.setOverflowLowersGood(true);
+        CHECK(!follow.backlog(5000, 6000));
+        CHECK_EQ(follow.targetKbps(), 18000);
+        // The guests' feed holds 60 % of its setting, backlog or not.
+        RateGovernor feed;
+        feed.start(10000, 0, false, 60);
+        feed.setOverflowLowersGood(true);
+        for (int64_t t = 1000; t <= 5000; t += 500)
+            feed.backlog(t, t);
+        CHECK_EQ(feed.targetKbps(), 6000);
     }
 
     SECTION("RateGovernor — the target's mean over time");

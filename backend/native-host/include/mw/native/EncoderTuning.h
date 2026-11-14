@@ -839,7 +839,10 @@ inline bool nameLinkDropsByDefault(VideoPipeline pipeline, EncoderApi encoder,
 
 /// EncoderTuning::overflowGood as the session applies it: whether the relay's
 /// shed frames lower the link's last good rate (RateGovernor::
-/// setOverflowLowersGood). On unless the key says 0 (Bruno, 21/10/2026, plan
+/// setOverflowLowersGood) — and, since DebitRemonte2 (14/11/2026), whether the
+/// climb near the rate that overflowed goes one step per wait and the host's
+/// own backlog cuts without a report, so ovfgood=0 stays the whole "before".
+/// On unless the key says 0 (Bruno, 21/10/2026, plan
 /// « Gels du lien », G). Measured on an iPhone in 5G at home, four pairs of
 /// 3-minute passes alternated with and without: a 5G link overflows without
 /// retransmitting (0 SCTP retransmissions in three passes of four at

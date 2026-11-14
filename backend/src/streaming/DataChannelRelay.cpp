@@ -1336,6 +1336,35 @@ void DataChannelRelay::createDataChannels()
                           "native one: nothing held";
         }
     }
+    // The native rate governor's own look at the send buffer (DebitRemonte2,
+    // 14/11/2026): how long video has stayed over the backlog's drained floor,
+    // asked by the session at each pass of its loop. The frames shed here only
+    // reach the governor inside the receiver's reports, and a link that jams
+    // the host's way can hold those back as well (N95, 13/11/2026: 14.8 s
+    // backed up, "receiver's link reports missing"). Dated from the first pass
+    // that sees it backed up, like linkhold='s probe; `bufferedAmount` is an
+    // atomic in libdatachannel, the channel is held weakly, and a closed one
+    // is never backed up.
+    if (m_VideoDc) {
+        if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim)) {
+            std::weak_ptr<rtc::DataChannel> weak = m_VideoDc;
+            const size_t drained = m_Backlog.drainedBytes();
+            auto since = std::make_shared<std::atomic<int64_t>>(-1);
+            native->setSendBacklogProbe([weak, drained, since]() -> int64_t {
+                const auto dc = weak.lock();
+                if (!dc || !dc->isOpen() || dc->bufferedAmount() <= drained) {
+                    since->store(-1);
+                    return 0;
+                }
+                const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now().time_since_epoch())
+                                          .count();
+                int64_t from = since->load();
+                if (from < 0 && since->compare_exchange_strong(from, nowMs)) from = nowMs;
+                return nowMs > from ? nowMs - from : 0;
+            });
+        }
+    }
 
     // --- Input DataChannel (bidirectional, JSON text) ---
     rtc::DataChannelInit inputConfig;
@@ -3134,6 +3163,9 @@ void DataChannelRelay::stop()
         if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
             native->setLinkBusyProbe(nullptr);
     }
+    // Nor the governor's look at its send buffer.
+    if (auto* native = qobject_cast<NativeMediaEngine*>(m_Shim))
+        native->setSendBacklogProbe(nullptr);
 
     if (m_Stopping.exchange(true)) {
         qInfo() << "[DataChannelRelay::stop] Already stopping, skip";

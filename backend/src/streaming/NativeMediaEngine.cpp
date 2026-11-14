@@ -412,11 +412,12 @@ void NativeMediaEngine::startCapture(const StartParams& params)
         }
         emit mouseKeysChanged(on, state);
     });
-    // The relay's send queue, for linkhold=: its video channel may well be
-    // made before the session.
+    // The relay's send queue, for linkhold= and the governor: its video
+    // channel may well be made before the session.
     {
         std::lock_guard<std::mutex> lk(m_LinkProbeMutex);
         if (m_LinkBusyProbe) m_Session->setLinkBusyProbe(m_LinkBusyProbe);
+        if (m_SendBacklogProbe) m_Session->setSendBacklogProbe(m_SendBacklogProbe);
     }
 
     if (!m_Session->start(error)) {
@@ -1089,6 +1090,14 @@ void NativeMediaEngine::setLinkBusyProbe(std::function<bool()> probe)
     std::lock_guard<std::mutex> lk(m_LinkProbeMutex);
     m_LinkBusyProbe = std::move(probe);
     if (m_Session) m_Session->setLinkBusyProbe(m_LinkBusyProbe);
+}
+
+void NativeMediaEngine::setSendBacklogProbe(std::function<int64_t()> probe)
+{
+    if (m_Subscriber) return; // a guest's link speaks to the feed through its reports
+    std::lock_guard<std::mutex> lk(m_LinkProbeMutex);
+    m_SendBacklogProbe = std::move(probe);
+    if (m_Session) m_Session->setSendBacklogProbe(m_SendBacklogProbe);
 }
 
 void NativeMediaEngine::setClientVsyncGrid(double periodUs, int64_t phaseUs, int64_t leadUs,

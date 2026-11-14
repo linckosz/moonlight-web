@@ -404,6 +404,12 @@ public:
     /// that starts after it was set. Empty takes it back. Safe from any thread.
     void setLinkBusyProbe(std::function<bool()> probe);
 
+    /// How long the relay's video send buffer has stayed backed up, for the
+    /// rate governor: forwarded to Session::setSendBacklogProbe, and
+    /// remembered for a session that starts after it was set. Empty takes it
+    /// back. Safe from any thread.
+    void setSendBacklogProbe(std::function<int64_t()> probe);
+
     /// When the client's screen refreshes (a `vsyncgrid` message): forwarded
     /// to Session::setClientVsyncGrid. Safe from any thread.
     void setClientVsyncGrid(double periodUs, int64_t phaseUs, int64_t leadUs, bool tearing,
@@ -567,6 +573,9 @@ private:
     /// it was set — see setLinkBusyProbe.
     std::mutex m_LinkProbeMutex;
     std::function<bool()> m_LinkBusyProbe;
+    /// The relay's send-buffer probe for the governor, under the same mutex —
+    /// see setSendBacklogProbe.
+    std::function<int64_t()> m_SendBacklogProbe;
     std::atomic<int64_t> m_WorkerDropCount{0};
     std::atomic<bool> m_WorkerDroppedDelta{false};
 

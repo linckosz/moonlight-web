@@ -20,6 +20,7 @@
 #include "mw/native/LinkFeedback.h"
 
 #include <cstdint>
+#include <string>
 
 namespace mw::native::encode {
 
@@ -93,6 +94,33 @@ namespace mw::native::encode {
 ///    past the grace, so the good rate stayed 30 Mbit/s — and again at
 ///    15:19:25. The fast climb then stops a cut short, and the last step is
 ///    the slow one: ~2.5 s more from there back to the rate that overflowed.
+///    One overflow is an EPISODE: the reports that follow it while the same
+///    queue drains (each one kOverflowEpisodeMs or less after the last, or the
+///    host's own backlog still standing) cut again but move neither the good
+///    rate nor the rate remembered below.
+///  - **Near the rate that overflowed, one step at a time** (DebitRemonte2,
+///    14/11/2026, same rule): the rate an episode overflowed at is
+///    remembered. From one cut under it up to it, the climb takes one
+///    kRaisePercent step per kOverflowStepMs, not one per report, and stops
+///    there. An episode that starts less than kOverflowRepeatMs after the last
+///    overflow doubles the wait, up to kOverflowStepMaxMs; kOverflowForgetMs
+///    without an overflow forgets it all, and the ordinary climb takes over
+///    again. Seen on the N95 on 13/11/2026 (iPhone, 5G, 18 Mbit/s set): cut to
+///    14 400 at 09:01:44, back at 17 502 six seconds later, overflowed again;
+///    14 002, back at 16 208, overflowed again; the third one froze the
+///    picture 14.8 s. The slow climb is +5 % per report, twice a second:
+///    nothing slow about it right under a rate the link just refused.
+///  - **The host's own backlog** (DebitRemonte2, same rule): the relay's
+///    shed frames reach this governor inside the receiver's reports, and a
+///    link that jams the host's way can hold those reports back too — a
+///    single silence cut is then all the encoder hears. backlog() is the
+///    host's own look at its send buffer: backed up for kBacklogCutAfterMs,
+///    the target is cut at most every kBacklogCutEveryMs without waiting for
+///    a report, no raise is made until it drains, and the floor is
+///    kBacklogFloorKbps meanwhile (a session holding a higher floor keeps
+///    it). A drained backlog leaves the target where it is, under the
+///    ordinary floor if it went there, and ends an episode the session logs
+///    (takeEndedBacklog).
 ///
 /// Pure and clocked by the caller, so it can be tested without a network.
 ///
@@ -119,6 +147,27 @@ public:
     static constexpr int kFastRaisePercent = 25;
     static constexpr int64_t kGoodHoldMs = 5000;
     static constexpr int64_t kProbeGraceMs = 5000;
+    static constexpr int64_t kOverflowEpisodeMs = kHoldAfterCutMs;
+    static constexpr int64_t kOverflowStepMs = 5000;
+    static constexpr int64_t kOverflowStepMaxMs = 60000;
+    static constexpr int64_t kOverflowRepeatMs = 30000;
+    static constexpr int64_t kOverflowForgetMs = 60000;
+    static constexpr int64_t kBacklogCutAfterMs = 1000;
+    static constexpr int64_t kBacklogCutEveryMs = 500;
+    static constexpr int kBacklogFloorKbps = kFloorKbps;
+
+    /// One stretch of the host's send buffer backed up past
+    /// kBacklogCutAfterMs, for the session's log line: when it started and
+    /// drained, the target when it was seen and the lowest it was cut to, and
+    /// how many of those cuts were the host's own.
+    struct BacklogEpisode
+    {
+        int64_t startMs = 0;
+        int64_t endMs = 0;
+        int fromKbps = 0;
+        int lowestKbps = 0;
+        int cuts = 0;
+    };
 
     /// @p settingKbps the viewer's ceiling. Starts there. @p followSetting:
     /// the bench's governor=off, above. @p floorPercent: the floor as a share
@@ -141,6 +190,13 @@ public:
         m_ClimbStartKbps = 0;
         m_LastFastRaiseMs = kNever;
         m_LastRaiseFast = false;
+        m_LastCutMs = kNever;
+        m_OvfKbps = 0;
+        m_OvfLastMs = kNever;
+        m_OvfStepMs = kNever;
+        m_OvfWaitMs = kOverflowStepMs;
+        m_Backlogged = false;
+        m_EpisodeEnded = false;
         m_AreaSinceMs = nowMs;
         m_AreaLastMs = nowMs;
         m_AreaKbpsMs = 0;
@@ -170,6 +226,7 @@ public:
         m_LastReportMs = nowMs;
         m_LastRaiseFast = false;
         if (m_Follow) return false;
+        forgetOverflow(nowMs);
         if (fb.resumed) {
             const bool restore = m_SilenceCut && m_TargetBeforeSilence > m_Target;
             m_SilenceCut = false;
@@ -210,10 +267,9 @@ public:
             // link no longer carries it, whatever it carried before.
             if (overflowed) {
                 m_Overflows++;
-                const int under = m_Target - m_Target * kCutPercent / 100;
-                if (m_GoodKbps > under) m_GoodKbps = under;
+                noteOverflowAt(nowMs);
             }
-            const bool changed = cut();
+            const bool changed = cut(nowMs);
             rearmGoodSample(nowMs);
             return changed;
         }
@@ -246,11 +302,122 @@ public:
         m_Silences++;
         m_LastRaiseFast = false;
         m_LastFastRaiseMs = kNever;
-        const bool changed = cut();
+        const bool changed = cut(nowMs);
         // A silence proves nothing about the link, either way: the good rate
         // stays, and the window that saw no report starts over.
         rearmGoodSample(nowMs);
         return changed;
+    }
+
+    /// The host's own send buffer at @p nowMs: backed up for @p backedUpMs
+    /// (0 when drained). Returns true when the target changed — a cut, the
+    /// buffer backed up for kBacklogCutAfterMs or more and nothing cut for
+    /// kBacklogCutEveryMs. Only under the overflow rule
+    /// (setOverflowLowersGood); a drained backlog ends an episode
+    /// (takeEndedBacklog). Called on every pass of the session's loop.
+    bool backlog(int64_t backedUpMs, int64_t nowMs)
+    {
+        account(nowMs);
+        if (m_Follow || !m_OverflowLowersGood) return false;
+        if (backedUpMs < kBacklogCutAfterMs) {
+            if (m_Backlogged) {
+                m_Backlogged = false;
+                m_Episode.endMs = nowMs;
+                m_EpisodeEnded = true;
+                // Quiet, and the next step near the rate that overflowed,
+                // count from the drain.
+                m_QuietSinceMs = nowMs;
+                m_OvfLastMs = nowMs;
+                m_OvfStepMs = nowMs;
+            }
+            forgetOverflow(nowMs);
+            return false;
+        }
+        if (!m_Backlogged) {
+            // As any overuse: a fast climb that ran into it was a probe that
+            // failed.
+            if (m_LastFastRaiseMs != kNever && nowMs - m_LastFastRaiseMs < kProbeGraceMs)
+                m_GoodKbps = m_ClimbStartKbps;
+            m_LastFastRaiseMs = kNever;
+            m_LastRaiseFast = false;
+            noteOverflowAt(nowMs);
+            m_Backlogged = true;
+            m_Backlogs++;
+            m_EpisodeEnded = false;
+            m_Episode = BacklogEpisode{};
+            m_Episode.startMs = nowMs - backedUpMs;
+            m_Episode.fromKbps = m_Target;
+            m_Episode.lowestKbps = m_Target;
+        } else {
+            noteOverflowAt(nowMs); // the same episode, kept open
+        }
+        m_QuietSinceMs = nowMs;
+        if (m_LastCutMs != kNever && nowMs - m_LastCutMs < kBacklogCutEveryMs) return false;
+        m_HoldUntilMs = nowMs + kHoldAfterCutMs;
+        const bool changed = cut(nowMs);
+        if (changed) {
+            m_BacklogCuts++;
+            m_Episode.cuts++;
+            if (m_Target < m_Episode.lowestKbps) m_Episode.lowestKbps = m_Target;
+        }
+        rearmGoodSample(nowMs);
+        return changed;
+    }
+
+    /// The backlog that drained last, once: true and @p out filled when one
+    /// ended since the last call.
+    bool takeEndedBacklog(BacklogEpisode& out)
+    {
+        if (!m_EpisodeEnded) return false;
+        m_EpisodeEnded = false;
+        out = m_Episode;
+        return true;
+    }
+    bool backlogged() const { return m_Backlogged; }
+    /// Backlogs seen, and the cuts the host made on its own during them.
+    int backlogs() const { return m_Backlogs; }
+    int backlogCuts() const { return m_BacklogCuts; }
+    /// The rate the last overflow episode overflowed at, 0 once forgotten (or
+    /// never); and the wait between two steps near it.
+    int overflowKbps() const { return m_OvfKbps; }
+    int64_t overflowWaitMs() const { return m_OvfWaitMs; }
+    /// Overflow episodes, each counted once however many reports it spans.
+    int overflowEpisodes() const { return m_OvfEpisodes; }
+
+    /// For a cut's log line, the same on every platform: where the climb will
+    /// stop near the rate that overflowed, and how slowly it gets there.
+    /// Empty when none is remembered.
+    std::string overflowNote() const
+    {
+        if (m_OvfKbps <= 0) return {};
+        return " (overflowed at " + std::to_string(m_OvfKbps) +
+               " kbps: back near it one step every " + std::to_string(m_OvfWaitMs / 1000) + " s)";
+    }
+
+    /// The log line of a backlog that drained (takeEndedBacklog), after
+    /// "[native] link: ".
+    std::string drainedLine(const BacklogEpisode& ep) const
+    {
+        return "send buffer drained after " + std::to_string(ep.endMs - ep.startMs) +
+               " ms backed up — from " + std::to_string(ep.fromKbps) + " down to " +
+               std::to_string(ep.lowestKbps) + " kbps, " + std::to_string(ep.cuts) +
+               " cuts by the host alone; now " + std::to_string(m_Target) + " kbps" +
+               overflowNote();
+    }
+
+    /// The session's last line on the governor: what the encoder was given on
+    /// average up to @p nowMs, and why it was cut.
+    std::string summaryLine(int64_t nowMs) const
+    {
+        return "target " + std::to_string(meanTargetKbps(nowMs)) + " kbps on average of the " +
+               std::to_string(m_Setting) + " set, " + std::to_string(m_Changes) + " moves, " +
+               std::to_string(m_Overuses) + " overuses (" + std::to_string(m_RetransOveruses) +
+               " on SCTP's retransmissions, " + std::to_string(m_Overflows) +
+               " on shed frames in " + std::to_string(m_OvfEpisodes) + " overflows), " +
+               std::to_string(m_Backlogs) + " send buffers backed up past a second (" +
+               std::to_string(m_BacklogCuts) + " cuts by the host alone), " +
+               std::to_string(m_Silences) + " silences, last good rate " +
+               std::to_string(m_GoodKbps) + " kbps";
     }
 
     /// `retrcut=` (plan Wi-Fi W2 B): SCTP retransmitting at least @p permille
@@ -351,22 +518,85 @@ private:
         m_GoodSampleMs = nowMs;
     }
 
-    bool cut()
+    /// The send buffer overflowed at @p nowMs: a report's shed frames, or the
+    /// host's own backlog. The first of an episode remembers the rate it
+    /// overflowed at, lowers the good rate to one cut under it, and sets the
+    /// wait between two steps near it — doubled when the last overflow was
+    /// under kOverflowRepeatMs ago. The rest of an episode, the same queue
+    /// still draining while the rate is cut, only keeps it open.
+    void noteOverflowAt(int64_t nowMs)
+    {
+        const bool continuing =
+            m_Backlogged || (m_OvfLastMs != kNever && nowMs - m_OvfLastMs <= kOverflowEpisodeMs);
+        if (!continuing) {
+            const bool repeat =
+                m_OvfKbps > 0 && m_OvfLastMs != kNever && nowMs - m_OvfLastMs < kOverflowRepeatMs;
+            if (!repeat)
+                m_OvfWaitMs = kOverflowStepMs;
+            else
+                m_OvfWaitMs =
+                    m_OvfWaitMs * 2 > kOverflowStepMaxMs ? kOverflowStepMaxMs : m_OvfWaitMs * 2;
+            m_OvfKbps = m_Target;
+            m_OvfEpisodes++;
+            const int under = m_Target - m_Target * kCutPercent / 100;
+            if (m_GoodKbps > under) m_GoodKbps = under;
+        }
+        m_OvfLastMs = nowMs;
+        m_OvfStepMs = nowMs;
+    }
+
+    /// kOverflowForgetMs without an overflow: the rate that overflowed no
+    /// longer says anything about the link.
+    void forgetOverflow(int64_t nowMs)
+    {
+        if (m_OvfKbps <= 0 || m_Backlogged || nowMs - m_OvfLastMs < kOverflowForgetMs) return;
+        m_OvfKbps = 0;
+        m_OvfWaitMs = kOverflowStepMs;
+    }
+
+    /// The floor while the host's send buffer stays backed up: kFloorKbps,
+    /// unless the session holds a higher share of its setting than the
+    /// default (the guests' feed), which stays.
+    int backlogFloorKbps() const
+    {
+        return m_FloorPercent > kFloorPercent ? floorKbps() : kBacklogFloorKbps;
+    }
+
+    bool cut(int64_t nowMs)
     {
         int next = m_Target - m_Target * kCutPercent / 100;
-        const int floor = floorKbps();
+        const int floor = m_Backlogged ? backlogFloorKbps() : floorKbps();
         if (next < floor) next = floor;
         if (next > m_Setting) next = m_Setting;
-        if (next == m_Target) return false;
+        // A target already under the floor — a drained backlog left it there
+        // — is not "cut" back up to it.
+        if (next >= m_Target) return false;
         m_Target = next;
+        m_LastCutMs = nowMs;
         m_Changes++;
         return true;
     }
 
     bool raise(int64_t nowMs)
     {
-        if (m_Target >= m_Setting) return false;
+        if (m_Backlogged || m_Target >= m_Setting) return false;
         int next;
+        // From one cut under the rate the last episode overflowed at up to
+        // it: one slow step per wait, and no further while it is remembered.
+        const bool nearOverflow =
+            m_OvfKbps > 0 && m_Target >= m_OvfKbps - m_OvfKbps * kCutPercent / 100;
+        if (nearOverflow) {
+            if (m_Target >= m_OvfKbps) return false;
+            if (nowMs - m_OvfStepMs < m_OvfWaitMs) return false;
+            m_OvfStepMs = nowMs;
+            next = m_Target + m_Target * kRaisePercent / 100;
+            if (next > m_OvfKbps || next == m_Target) next = m_OvfKbps;
+            if (next > m_Setting) next = m_Setting;
+            if (next <= m_Target) return false;
+            m_Target = next;
+            m_Changes++;
+            return true;
+        }
         if (m_Target < m_GoodKbps) {
             // The first fast step of a climb remembers where it left from.
             if (m_LastFastRaiseMs == kNever) m_ClimbStartKbps = m_Target;
@@ -407,6 +637,22 @@ private:
     int m_ClimbStartKbps = 0;
     int64_t m_LastFastRaiseMs = kNever;
     bool m_LastRaiseFast = false;
+    int64_t m_LastCutMs = kNever;
+    /// The rate the last overflow episode overflowed at (0: none, or
+    /// forgotten), when an overflow was last seen, when the last step near
+    /// it was made (or the episode last seen), and the wait between two.
+    int m_OvfKbps = 0;
+    int64_t m_OvfLastMs = kNever;
+    int64_t m_OvfStepMs = kNever;
+    int64_t m_OvfWaitMs = kOverflowStepMs;
+    int m_OvfEpisodes = 0;
+    /// The host's send buffer backed up past kBacklogCutAfterMs, and the
+    /// stretch it is (or was last) in.
+    bool m_Backlogged = false;
+    bool m_EpisodeEnded = false;
+    BacklogEpisode m_Episode;
+    int m_Backlogs = 0;
+    int m_BacklogCuts = 0;
     int m_Overuses = 0;
     int m_Silences = 0;
     int m_Changes = 0;

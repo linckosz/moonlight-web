@@ -383,6 +383,18 @@ public:
     /// Every platform but Windows ignores it. Safe from any thread.
     virtual void setLinkBusyProbe(LinkBusyProbe /*probe*/) {}
 
+    /// How long, in ms, the relay's video send buffer has stayed backed up
+    /// past its drained floor right now, 0 when it is drained — asked by the
+    /// capture loop at each pass, from its thread, so it must be cheap and
+    /// safe from any thread. Empty: never backed up.
+    using SendBacklogProbe = std::function<int64_t()>;
+
+    /// The relay's send buffer for the rate governor (RateGovernor::backlog,
+    /// DebitRemonte2): backed up past a second, the target is cut without
+    /// waiting for the receiver's report. Every platform but Windows ignores
+    /// it. Safe from any thread.
+    virtual void setSendBacklogProbe(SendBacklogProbe /*probe*/) {}
+
     /// When the client's screen refreshes (a `vsyncgrid` message, frontend
     /// VsyncGrid.js): every @p periodUs, one refresh at @p phaseUs on this
     /// host's steady clock, a frame needing @p leadUs from being taken here to

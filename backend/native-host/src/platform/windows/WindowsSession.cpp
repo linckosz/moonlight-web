@@ -943,6 +943,21 @@ public:
         return m_LinkBusyProbe && m_LinkBusyProbe();
     }
 
+    void setSendBacklogProbe(SendBacklogProbe probe) override
+    {
+        std::lock_guard<std::mutex> lk(m_LinkBusyMutex);
+        m_SendBacklogProbe = std::move(probe);
+    }
+
+    /// The relay's send buffer, for the governor (see setSendBacklogProbe):
+    /// how long it has stayed backed up, 0 when drained or unknown.
+    /// Uncontended, like linkBusy().
+    int64_t sendBacklogMs()
+    {
+        std::lock_guard<std::mutex> lk(m_LinkBusyMutex);
+        return m_SendBacklogProbe ? m_SendBacklogProbe() : 0;
+    }
+
     void setClientVsyncGrid(double periodUs, int64_t phaseUs, int64_t leadUs, bool tearing,
                             bool steady, double budgetFps) override
     {
@@ -2493,27 +2508,23 @@ private:
         governor.setOverflowLowersGood(overflowLowersGoodByDefault(m_Config.tuning.overflowGood));
         if (governor.overflowLowersGood())
             log::info("[native] rate governor: a frame shed off the send buffer lowers the "
-                      "link's last good rate (ovfgood=0 takes it out)");
+                      "link's last good rate, the climb near the rate that overflowed goes one "
+                      "step every few seconds, and a send buffer backed up past a second cuts "
+                      "without a report (ovfgood=0 takes all three out)");
         else
             log::info("[native] rate governor: shed frames move nothing (bench ovfgood=0)");
         // The session's account of the link, however the loop ends: what the
         // encoder was given on average, and why it was cut (the A/B of
-        // ovfgood=; the moves themselves are logged ten at most, then every
-        // tenth).
+        // ovfgood=; every cut is logged, the raises ten at most, then every
+        // tenth move).
         struct GovernorSummary
         {
             const encode::RateGovernor& g;
             ~GovernorSummary()
             {
                 if (g.changes() == 0) return;
-                log::info("[native] rate governor this session: target " +
-                          std::to_string(g.meanTargetKbps(steadyNowUs() / 1000)) +
-                          " kbps on average of the " + std::to_string(g.settingKbps()) + " set, " +
-                          std::to_string(g.changes()) + " moves, " + std::to_string(g.overuses()) +
-                          " overuses (" + std::to_string(g.retransOveruses()) +
-                          " on SCTP's retransmissions, " + std::to_string(g.overflows()) +
-                          " on shed frames), " + std::to_string(g.silences()) +
-                          " silences, last good rate " + std::to_string(g.goodKbps()) + " kbps");
+                log::info("[native] rate governor this session: " +
+                          g.summaryLine(steadyNowUs() / 1000));
             }
         } governorSummary{governor};
         if (m_Config.tuning.linkHoldMs > 0)
@@ -2551,15 +2562,22 @@ private:
         int governorLogged = 0;
         // The governor moved the wire's rate: the link model and whatever the
         // encoder currently holds (boosted or not) follow.
+        // Every cut is written (DebitRemonte2, 14/11/2026): a slide to the
+        // floor used to be ten lines and then silence, 33 s of it on the N95
+        // on 13/11. Only the raises are thinned out, the first ten and then
+        // one move in ten. A cut near a rate that overflowed says where the
+        // climb will stop and how slowly it gets there.
         auto applyGovernor = [&](const char* why) {
+            const bool cut = governor.targetKbps() < baseKbps;
             baseKbps = governor.targetKbps();
             m_LinkKbps = baseKbps;
             applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
-            if (governorLogged < 10 || governor.changes() % 10 == 0) {
-                governorLogged++;
+            if (cut || governorLogged < 10 || governor.changes() % 10 == 0) {
+                if (!cut) governorLogged++;
                 log::info("[native] link: " + std::string(why) + " — encoding at " +
                           std::to_string(baseKbps) + " kbps of the " +
-                          std::to_string(governor.settingKbps()) + " set");
+                          std::to_string(governor.settingKbps()) + " set" +
+                          (cut ? governor.overflowNote() : std::string()));
             }
         };
 
@@ -2893,6 +2911,14 @@ private:
                 } else if (governor.tick(nowMs)) {
                     applyGovernor("no report from the receiver");
                 }
+                // The host's own look at its send buffer: backed up past a
+                // second, a cut that does not wait for a report — which the
+                // jam may be holding back too (RateGovernor::backlog).
+                if (governor.backlog(sendBacklogMs(), nowMs))
+                    applyGovernor("send buffer backed up for over a second");
+                encode::RateGovernor::BacklogEpisode ep;
+                if (governor.takeEndedBacklog(ep))
+                    log::info("[native] link: " + governor.drainedLine(ep));
             }
 
             // Decided before the acquire because it also chooses how long the
@@ -4938,6 +4964,9 @@ private:
     /// with nothing newer, for the log.
     std::mutex m_LinkBusyMutex;
     LinkBusyProbe m_LinkBusyProbe;
+    /// The relay's send buffer for the governor, under the same mutex — see
+    /// setSendBacklogProbe.
+    SendBacklogProbe m_SendBacklogProbe;
     int64_t m_LinkHolds = 0;
     int64_t m_LinkFlushes = 0;
     /// The client's refresh grid, read under cadence=deadline — see
