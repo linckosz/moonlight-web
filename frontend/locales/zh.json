@@ -955,6 +955,8 @@
         "disconnectBody": "正在关闭会话——再见。",
         "hostEndedTitle": "应用已关闭",
         "hostEndedBody": "应用已在主机上关闭。",
+        "stoppedOnHostTitle": "已在主机上停止",
+        "stoppedOnHostBody": "串流已在主机上停止。",
         "hostLostTitle": "主机连接丢失",
         "hostLostBody": "主机已停止串流——其串流服务或编码器可能已崩溃。请检查主机。",
         "statResolution": "分辨率：",

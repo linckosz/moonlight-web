@@ -13398,8 +13398,17 @@ export class StreamView {
      * The owner ended the session this player was invited to. Same graceful
      * exit as a take-over, then the player page takes over and explains it —
      * the guest did nothing wrong and should not see an error.
+     *
+     * Anyone else hears it when the host's tray disconnected them (a TV on
+     * plain HTTP, a browser): the calm exit of a stream ended on purpose,
+     * saying where.
      */
     _handleSessionEnded() {
+        if (!this._playerMode) {
+            if (this._quitting || this._takenOver || this._manualQuitting || this._standby) return;
+            this._handleCalmExit(t('stream.stoppedOnHostTitle'), t('stream.stoppedOnHostBody'));
+            return;
+        }
         this._sessionEndedByOwner = true;
         this._handleForcedExit(t('player.endedTitle'), t('player.endedBody'));
     }
@@ -13436,6 +13445,17 @@ export class StreamView {
             this._handleSessionEnded();
             return;
         }
+        this._handleCalmExit(t('stream.hostEndedTitle'), t('stream.hostEndedBody'));
+    }
+
+    /**
+     * The clean-exit transition of a stream the host ended on purpose: no
+     * alarm and no disconnect toasts, then a local quit (no /quit — the host
+     * session is already gone, and the backend cleans up the slot on its own).
+     * @param {string} title
+     * @param {string} body
+     */
+    _handleCalmExit(title, body) {
         this._manualQuitting = true;
         this.connected = false;
         // The relay closes its channels right after the notice: keep that
@@ -13448,7 +13468,6 @@ export class StreamView {
         }
         const el = document.createElement('div');
         el.className = 'stream-takeover-overlay is-quit';
-        const title = t('stream.hostEndedTitle');
         el.innerHTML =
             '<div class="takeover-scanlines"></div>' +
             '<div class="takeover-box">' +
@@ -13458,7 +13477,7 @@ export class StreamView {
             title +
             '</div>' +
             '<div class="takeover-sub">' +
-            t('stream.hostEndedBody') +
+            body +
             '</div>' +
             '<div class="takeover-bar"><span></span></div>' +
             '</div>';

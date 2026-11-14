@@ -2948,9 +2948,9 @@ int main(int argc, char* argv[])
         QObject::connect(old, &StreamWorkerHost::ended, qApp, [token, &authManager]() {
             authManager.setSessionStreaming(token, false);
         });
-        // An invited player whose session the owner ended gets its own notice,
-        // so their page can explain what happened instead of showing a
-        // connection error.
+        // An invited player whose session the owner ended, or any viewer the
+        // tray disconnected, gets its own notice, so their page can explain
+        // what happened instead of showing a connection error.
         if (sessionEnded)
             old->notifySessionEnded();
         else if (takenOver)
@@ -3061,7 +3061,11 @@ int main(int argc, char* argv[])
                              .arg(i)
                              .arg(kind));
             noteEndedBy(i, ConnectionHistory::EndedBy::Tray);
-            detachWorkerSlot(i, false);
+            // An owner's viewer (a TV, a browser) is told before its channels
+            // close: its page says the stream was stopped on the host, not that
+            // the connection failed. A guest leaves as before, its join page
+            // the way back. The history keeps "tray", noted above.
+            detachWorkerSlot(i, false, i < kOwnerSlots);
         }
         return static_cast<int>(stopped.size());
     };

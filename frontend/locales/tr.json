@@ -955,6 +955,8 @@
         "disconnectBody": "Oturum kapatılıyor — yakında görüşürüz.",
         "hostEndedTitle": "Uygulama kapatıldı",
         "hostEndedBody": "Uygulama ana bilgisayarda kapatıldı.",
+        "stoppedOnHostTitle": "Ana bilgisayarda durduruldu",
+        "stoppedOnHostBody": "Yayın ana bilgisayarda durduruldu.",
         "hostLostTitle": "Ana bilgisayar kayboldu",
         "hostLostBody": "Ana bilgisayar yayını durdurdu — yayın sunucusu veya kodlayıcısı çökmüş olabilir. Ana bilgisayarı kontrol edin.",
         "statResolution": "Çözünürlük:",
