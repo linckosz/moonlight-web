@@ -794,7 +794,21 @@ public:
         m_ClientRefreshDirty.store(true);
     }
 
+    void setSendBacklogProbe(SendBacklogProbe probe) override
+    {
+        std::lock_guard<std::mutex> lk(m_BacklogProbeMutex);
+        m_SendBacklogProbe = std::move(probe);
+    }
+
 private:
+    /// The relay's send buffer, for the governor (see setSendBacklogProbe):
+    /// how long it has stayed backed up, 0 when drained or unknown.
+    int64_t sendBacklogMs()
+    {
+        std::lock_guard<std::mutex> lk(m_BacklogProbeMutex);
+        return m_SendBacklogProbe ? m_SendBacklogProbe() : 0;
+    }
+
     bool takeLinkFeedback(LinkFeedback& out)
     {
         std::lock_guard<std::mutex> lock(m_LinkMutex);
@@ -1066,6 +1080,30 @@ private:
             log::info("[native] rate governor: also cuts at " +
                       std::to_string(governor.retransCut()) +
                       " SCTP chunks retransmitted in a thousand (bench retrcut=)");
+        // The relay's shed frames, the climb near the rate that overflowed and
+        // the host's own backlog: the Windows host's rule since 21/10/2026,
+        // here too since DebitRemonte3 (14/11/2026) — a 5G link overflows
+        // without retransmitting, and only the shed frames say so. ovfgood=0
+        // the bench's "before".
+        governor.setOverflowLowersGood(overflowLowersGoodByDefault(m_Config.tuning.overflowGood));
+        if (governor.overflowLowersGood())
+            log::info("[native] rate governor: a frame shed off the send buffer lowers the "
+                      "link's last good rate, the climb near the rate that overflowed goes one "
+                      "step every few seconds, and a send buffer backed up past a second cuts "
+                      "without a report (ovfgood=0 takes all three out)");
+        else
+            log::info("[native] rate governor: shed frames move nothing (bench ovfgood=0)");
+        // The session's account of the link, however the loop ends.
+        struct GovernorSummary
+        {
+            const encode::RateGovernor& g;
+            ~GovernorSummary()
+            {
+                if (g.changes() == 0) return;
+                log::info("[native] rate governor this session: " +
+                          g.summaryLine(steadyNowUs() / 1000));
+            }
+        } governorSummary{governor};
         int baseKbps = governor.targetKbps();
         m_LinkKbps = baseKbps;
         bool boosted = false;
@@ -1078,15 +1116,19 @@ private:
         };
         int cadenceLogged = 0;
         int governorLogged = 0;
+        // Every cut is written, the raises thinned out: the first ten, then
+        // one move in ten (DebitRemonte2, as on Windows).
         auto applyGovernor = [&](const char* why) {
+            const bool cut = governor.targetKbps() < baseKbps;
             baseKbps = governor.targetKbps();
             m_LinkKbps = baseKbps;
             applyBitrate(boosted ? encode::stillBitrateKbps(baseKbps) : baseKbps);
-            if (governorLogged < 10 || governor.changes() % 10 == 0) {
-                governorLogged++;
+            if (cut || governorLogged < 10 || governor.changes() % 10 == 0) {
+                if (!cut) governorLogged++;
                 log::info("[native] link: " + std::string(why) + " — encoding at " +
                           std::to_string(baseKbps) + " kbps of the " +
-                          std::to_string(governor.settingKbps()) + " set");
+                          std::to_string(governor.settingKbps()) + " set" +
+                          (cut ? governor.overflowNote() : std::string()));
             }
         };
         auto closeBurst = [&](const char* how) {
@@ -1174,7 +1216,9 @@ private:
                     if (governor.report(fb, nowMs))
                         applyGovernor(
                             fb.resumed ? "the receiver is back from the background"
-                            : fb.gaps > 0 || fb.evictions > 0                  ? "frames lost"
+                            : fb.gaps > 0 || fb.evictions > 0 ? "frames lost"
+                            : fb.overflows > 0 && governor.overflowLowersGood()
+                                ? "send buffer overflowed"
                             : fb.owdRiseMs >= encode::RateGovernor::kOveruseMs ? "delay rising"
                             : governor.retransCut() > 0 &&
                                     fb.retransPermille >= governor.retransCut()
@@ -1184,6 +1228,12 @@ private:
                 } else if (governor.tick(nowMs)) {
                     applyGovernor("no report from the receiver");
                 }
+                // The host's own look at its send buffer (RateGovernor::backlog).
+                if (governor.backlog(sendBacklogMs(), nowMs))
+                    applyGovernor("send buffer backed up for over a second");
+                encode::RateGovernor::BacklogEpisode ep;
+                if (governor.takeEndedBacklog(ep))
+                    log::info("[native] link: " + governor.drainedLine(ep));
             }
 
             const int64_t sinceRealUs = steadyNowUs() - lastRealUs;
@@ -1833,6 +1883,9 @@ private:
     std::mutex m_LinkMutex;
     LinkFeedback m_LinkFeedback;
     bool m_LinkPending = false;
+    /// The relay's send buffer for the governor — see setSendBacklogProbe.
+    std::mutex m_BacklogProbeMutex;
+    SendBacklogProbe m_SendBacklogProbe;
     encode::LinkOccupancy m_Link;
     int m_LinkKbps = 0;
 

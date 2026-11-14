@@ -391,8 +391,8 @@ public:
 
     /// The relay's send buffer for the rate governor (RateGovernor::backlog,
     /// DebitRemonte2): backed up past a second, the target is cut without
-    /// waiting for the receiver's report. Every platform but Windows ignores
-    /// it. Safe from any thread.
+    /// waiting for the receiver's report (Windows, Linux and macOS since
+    /// DebitRemonte3). Safe from any thread.
     virtual void setSendBacklogProbe(SendBacklogProbe /*probe*/) {}
 
     /// When the client's screen refreshes (a `vsyncgrid` message, frontend
