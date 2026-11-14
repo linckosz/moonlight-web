@@ -86,7 +86,7 @@ import { TvSignInView } from './ui/TvSignInView.js';
 import { qrDrawer } from './ui/qrSvg.js';
 import { lanHttpStatus } from './api/LanHttpApi.js';
 import { touchPadSettings } from './stream/TouchPadState.js';
-import { BackendClient } from './api/BackendClient.js';
+import { BackendClient, isLaunchKeyRefusal } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { showAppLinkShortcut, closeAppLinkShortcut } from './ui/AppLinkShortcut.js';
 import { appIconName } from './ui/AppShortcutSheet.js';
@@ -383,6 +383,10 @@ export const MoonlightApp = {
     async init() {
         console.log('[MW] Initializing MoonlightWeb...');
         bootMark('init');
+
+        // A Stop the host refused for this browser's key: the app runs on, and
+        // a PIN is what mends it (isLaunchKeyRefusal).
+        BackendClient.onLaunchKeyRefused = () => this._showKeyRefused();
 
         // A stored HEVC becomes « Auto » once, before anything reads it
         // (util/CodecAuto.js).
@@ -3316,6 +3320,13 @@ export const MoonlightApp = {
                 this.hostListView.clearLaunching({ failed: true });
                 this.hostListView.start();
             }
+            // The host refused the launch for this browser's key: nothing was
+            // started, and a PIN mends it. Never retried with another key.
+            if (isLaunchKeyRefusal(err)) {
+                this._showKeyRefused();
+                this.transition('app_list');
+                return;
+            }
             // A booth whose streams have PINs (issue #68): another device
             // streams this host. Its PIN joins their stream or starts this app
             // in its place; a PIN this start brought and the host refused is
@@ -5428,6 +5439,9 @@ export const MoonlightApp = {
             if (reconnectOf && err && err.statusCode === 409 && err.message === 'reconnect_refused')
                 return 'reconnect_refused';
             if (isCertificateChanged(err)) return CERTIFICATE_CHANGED;
+            // Refused for this browser's key: the launch ends, as a refused
+            // binding does, and a PIN mends it.
+            if (isLaunchKeyRefusal(err)) return KEY_REFUSED;
             // The host never gave us a session — a timeout, a 502, a Sunshine
             // refusal. That is a verdict on the HOST, not on this transport, so
             // it must not be charged to the chain (see _onTransportFailed).
@@ -5537,6 +5551,7 @@ export const MoonlightApp = {
         } catch (err) {
             this._standbyLaunching = false;
             if (isCertificateChanged(err)) return this._onTransportFailed(CERTIFICATE_CHANGED);
+            if (isLaunchKeyRefusal(err)) return this._onTransportFailed(KEY_REFUSED);
             console.warn('[MW] Standby launch failed — legacy relaunch:', err);
             return this._relaunchTransport(relaunchIndex);
         }

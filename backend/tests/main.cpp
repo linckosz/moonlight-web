@@ -127,6 +127,7 @@ void run_phone_pairing_tests();
 void run_pair_request_routes_tests();
 void run_auth_status_route_tests();
 void run_host_key_route_tests();
+void run_launch_gate_tests();
 void run_local_channel_tests();
 void run_host_key_vault_tests();
 void run_owner_link_wait_tests();
@@ -296,6 +297,7 @@ int main(int argc, char** argv)
     run_pair_request_routes_tests();
     run_auth_status_route_tests();
     run_host_key_route_tests();
+    run_launch_gate_tests();
     run_local_channel_tests();
     run_host_key_vault_tests();
     run_owner_link_wait_tests();

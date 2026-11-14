@@ -22,6 +22,7 @@
 #include <QString>
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 
 // How each recent stream ended, kept for the page that lost it.
@@ -155,6 +156,7 @@ public:
     /// not recorded at all.
     void end(const QString& id, State state, qint64 nowMs)
     {
+        if (onEnd && !id.isEmpty()) onEnd(id);
         auto it = m_Entries.find(id);
         if (it == m_Entries.end() || it->state != State::Live) return;
         it->state = state;
@@ -172,6 +174,10 @@ public:
     }
 
     int size() const { return m_Entries.size(); }
+
+    /// Told of every end, however the stream went, and before the first word
+    /// is kept: what was good for that stream alone goes with it (LaunchGate).
+    std::function<void(const QString& id)> onEnd;
 
 private:
     static bool expired(const Entry& e, qint64 nowMs)

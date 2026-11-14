@@ -77,12 +77,19 @@ const RIDE_OUT_LOSS = true;
  */
 
 import {
+    LAUNCH_LABEL,
+    QUIT_TICKET_LABEL,
     loadOrCreateIdentity,
+    quitProofFields,
+    quitTicketFields,
     rememberHostIdentity,
+    signLaunchProof,
     signPairApproval,
     signPairRefusal,
     signShareOwnerProof,
     signBoothProof,
+    startProofFields,
+    stopProofFields,
 } from '../util/pairingCrypto.js';
 import {
     CANVAS_TEARING_IS_REAL,
@@ -95,7 +102,34 @@ import { currentRefreshMilliHz } from '../util/RefreshRate.js';
 import { canCropFrames } from '../stream/FrameCrop.js';
 import { STREAM_STATE_TIMEOUT_MS } from '../stream/CrashRelaunch.js';
 
+/**
+ * Whether @p err is the host refusing a launch, a Stop or stop-session because
+ * this browser is not the one its session was paired with (LaunchGate on the
+ * backend): a PIN mends it, nothing else does, and nothing is retried.
+ */
+export function isLaunchKeyRefusal(err) {
+    const code = err?.responseBody?.code;
+    return err?.statusCode === 409 && (code === 'key_refused' || code === 'launch_proof_required');
+}
+
+/** How long the challenge of a launch or a Stop is waited for. */
+const LAUNCH_PROOF_TIMEOUT_MS = 10000;
+
 export class BackendClient {
+    /**
+     * Told when a Stop or stop-session was refused for this browser's key
+     * (isLaunchKeyRefusal): the page asks for the PIN. A launch's refusal is
+     * the launch's own failure, said where it is caught.
+     * @type {null | (() => void)}
+     */
+    static onLaunchKeyRefused = null;
+    /**
+     * This page's quit tickets, one per stream it runs: what its closing sends
+     * to end that stream (quitBeaconBodies). In memory only — never stored,
+     * never in a URL.
+     * @type {Map<string, {hostId: string, slot: number, streamId: string, ticket: {nonce: string, sig: string} | null}>}
+     */
+    static _quitTickets = new Map();
     /** Cached promise for the per-run admin key (see _adminKey). */
     static _adminKeyPromise = null;
     /* Set once this document has actually held a session. It gates the reload
@@ -441,36 +475,108 @@ export class BackendClient {
         return id.slice(0, 14) + last.toString(16).padStart(2, '0').toUpperCase();
     }
 
+    /**
+     * A launch, a Stop or stop-session of this browser's, signed by its pairing
+     * key over the host's single-use challenge (LaunchGate on the backend), when
+     * the host asks for one: {nonce, sig}, or null when it does not (through the
+     * tunnel, a session without a key) or there is no key to sign with.
+     * @param {string} hostId
+     * @param {string[]} fields  what the request does (pairingCrypto's *ProofFields)
+     */
+    static async _launchProof(hostId, fields) {
+        const challenge = await this.post(
+            `/api/hosts/${hostId}/launch-proof`,
+            {},
+            { timeoutMs: LAUNCH_PROOF_TIMEOUT_MS },
+        );
+        if (!challenge?.required || !challenge.nonce) return null;
+        const sig = await signLaunchProof(LAUNCH_LABEL, challenge.host_id, challenge.nonce, fields);
+        return sig ? { nonce: challenge.nonce, sig } : null;
+    }
+
+    /**
+     * Once a stream runs: the ticket its page's closing sends to end it, drawn
+     * for that one stream and signed now, since a closing page cannot wait for
+     * a challenge. Not awaited: a ticket that does not come leaves the closing
+     * without one, and the host keeps the app running, as on a lost beacon.
+     */
+    static _armQuitTicket(hostId, slot, streamId) {
+        const key = `${hostId}|${slot}`;
+        this._quitTickets.set(key, { hostId, slot, streamId, ticket: null });
+        (async () => {
+            const answer = await this.post(
+                `/api/hosts/${hostId}/quit-ticket`,
+                { session_slot: slot, stream_id: streamId },
+                { timeoutMs: LAUNCH_PROOF_TIMEOUT_MS },
+            );
+            if (!answer?.required || !answer.nonce) return;
+            const sig = await signLaunchProof(
+                QUIT_TICKET_LABEL,
+                answer.host_id,
+                answer.nonce,
+                quitTicketFields(hostId, slot, streamId),
+            );
+            const entry = this._quitTickets.get(key);
+            // A later launch on this slot drew its own meanwhile.
+            if (sig && entry && entry.streamId === streamId)
+                entry.ticket = { nonce: answer.nonce, sig };
+        })().catch((e) => console.warn('[MW] No quit ticket for this stream:', e?.message));
+    }
+
+    /** The tickets of @p hostId's streams this page ended itself: spent. */
+    static _forgetQuitTickets(hostId, slot) {
+        for (const [key, entry] of this._quitTickets)
+            if (entry.hostId === hostId && (!Number.isInteger(slot) || entry.slot === slot))
+                this._quitTickets.delete(key);
+    }
+
+    /**
+     * What a closing page sends to end its streams on @p hostId, one body per
+     * beacon: each stream's ticket on its own slot. Without a ticket — the host
+     * asked for none, or one did not come — the bare Stop it always sent.
+     * @returns {object[]}
+     */
+    static quitBeaconBodies(hostId) {
+        const bodies = [];
+        for (const entry of this._quitTickets.values())
+            if (entry.hostId === hostId && entry.ticket)
+                bodies.push({ session_slot: entry.slot, quit_ticket: entry.ticket });
+        return bodies.length ? bodies : [{}];
+    }
+
     static async launchApp(hostId, appId, streamingSettings = {}) {
-        return this.post(
+        const body = {
+            appId,
+            client_uniqueid: this.clientUniqueId(),
+            ride_out_loss: RIDE_OUT_LOSS && decoderRidesOutGaps(),
+            // False only on a device whose decoder fell silent under the
+            // encoder's reference repairs (decoderTakesReferenceRepairs).
+            ref_invalidation: decoderTakesReferenceRepairs(),
+            // The view cuts a decoded frame to the size the host announces
+            // (stream/FrameCrop.js): the native host may then pad an AV1
+            // frame past the picture instead of shrinking the picture.
+            crops_to_frame: canCropFrames(),
+            // This screen's measured refresh and whether frames wait for
+            // its vsync (tearing off). The native host runs a vsync client
+            // at a divisor of its refresh so frames land on its grid — see
+            // util/RefreshRate.js. Other hosts ignore both.
+            client_refresh_mhz: currentRefreshMilliHz(),
+            client_vsync: !resolveTearing(streamingSettings),
+            // And whether that tearing is real (Chromium on Windows): the
+            // native host then sends every picture for a moment after a
+            // press. Other hosts ignore it.
+            client_tearing_real: CANVAS_TEARING_IS_REAL,
+            // MWSR's sharpness by zone: the native host's frames then
+            // carry their grid (stream/MwsrZoneBlock.js). A lab key for
+            // now (mwsrMapWanted); other hosts ignore it.
+            mwsr_map: mwsrMapWanted(),
+            ...streamingSettings,
+        };
+        const proof = await this._launchProof(hostId, startProofFields(hostId, body));
+        if (proof) body.launch_proof = proof;
+        const result = await this.post(
             `/api/hosts/${hostId}/start`,
-            {
-                appId,
-                client_uniqueid: this.clientUniqueId(),
-                ride_out_loss: RIDE_OUT_LOSS && decoderRidesOutGaps(),
-                // False only on a device whose decoder fell silent under the
-                // encoder's reference repairs (decoderTakesReferenceRepairs).
-                ref_invalidation: decoderTakesReferenceRepairs(),
-                // The view cuts a decoded frame to the size the host announces
-                // (stream/FrameCrop.js): the native host may then pad an AV1
-                // frame past the picture instead of shrinking the picture.
-                crops_to_frame: canCropFrames(),
-                // This screen's measured refresh and whether frames wait for
-                // its vsync (tearing off). The native host runs a vsync client
-                // at a divisor of its refresh so frames land on its grid — see
-                // util/RefreshRate.js. Other hosts ignore both.
-                client_refresh_mhz: currentRefreshMilliHz(),
-                client_vsync: !resolveTearing(streamingSettings),
-                // And whether that tearing is real (Chromium on Windows): the
-                // native host then sends every picture for a moment after a
-                // press. Other hosts ignore it.
-                client_tearing_real: CANVAS_TEARING_IS_REAL,
-                // MWSR's sharpness by zone: the native host's frames then
-                // carry their grid (stream/MwsrZoneBlock.js). A lab key for
-                // now (mwsrMapWanted); other hosts ignore it.
-                mwsr_map: mwsrMapWanted(),
-                ...streamingSettings,
-            },
+            body,
             // Fail fast if the backend hangs/crashes instead of waiting for the
             // browser/proxy ~30s gateway timeout.
             //
@@ -482,6 +588,14 @@ export class BackendClient {
             // backend kept going, and the next attempt hit the very same wall.
             { timeoutMs: 25000 },
         );
+        if (
+            result?.status === 'streaming' &&
+            Number.isInteger(result.slot) &&
+            typeof result.stream_id === 'string' &&
+            result.stream_id
+        )
+            this._armQuitTicket(hostId, result.slot, result.stream_id);
+        return result;
     }
     /**
      * How the stream this page knows as @p streamId ended, asked once its
@@ -526,11 +640,17 @@ export class BackendClient {
         // never arrive while the UI is stuck in the quit animation.
         // extra: dual-stream scoping — { session_slot, client_uniqueid } quits
         // one slot only (the caller passes the slot's own uniqueid).
-        return this.post(
-            `/api/hosts/${hostId}/quit`,
-            { client_uniqueid: this.clientUniqueId(), ...extra },
-            { timeoutMs: 5000 },
-        );
+        const body = { client_uniqueid: this.clientUniqueId(), ...extra };
+        const proof = await this._launchProof(hostId, quitProofFields(hostId, body));
+        if (proof) body.launch_proof = proof;
+        try {
+            const answer = await this.post(`/api/hosts/${hostId}/quit`, body, { timeoutMs: 5000 });
+            this._forgetQuitTickets(hostId, body.session_slot);
+            return answer;
+        } catch (e) {
+            if (isLaunchKeyRefusal(e)) this.onLaunchKeyRefused?.();
+            throw e;
+        }
     }
 
     /**
@@ -567,11 +687,19 @@ export class BackendClient {
         // The device: where each device has its own seat (MultiSeat), Quit is
         // this device's seat's. Ignored by every other host. 40 s: the host
         // answers once the app is gone, after its own exit timeout.
-        return this.post(
-            `/api/hosts/${hostId}/stop-session`,
-            { client_uniqueid: this.clientUniqueId() },
-            { timeoutMs: 40000 },
-        );
+        const body = { client_uniqueid: this.clientUniqueId() };
+        const proof = await this._launchProof(hostId, stopProofFields(hostId));
+        if (proof) body.launch_proof = proof;
+        try {
+            const answer = await this.post(`/api/hosts/${hostId}/stop-session`, body, {
+                timeoutMs: 40000,
+            });
+            this._forgetQuitTickets(hostId);
+            return answer;
+        } catch (e) {
+            if (isLaunchKeyRefusal(e)) this.onLaunchKeyRefused?.();
+            throw e;
+        }
     }
 
     /**

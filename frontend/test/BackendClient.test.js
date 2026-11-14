@@ -20,12 +20,15 @@ function jsonResponse(body, { ok = true, status = 200 } = {}) {
 // non-token calls via `apiCalls()`. The sharing board's challenge is a probe of
 // the same kind (shareOwnerProof.test.js covers it): left out of apiCalls() too.
 const PROBES = ['/api/admin/token', '/api/share/owner-proof'];
+// And so are a launch's or a Stop's, and a stream's quit ticket (launchProof.test.js).
+const isProbe = (path) =>
+    PROBES.includes(path) || /^\/api\/hosts\/[^/]+\/(launch-proof|quit-ticket)$/.test(path);
 function mockFetch(handler, { adminKey = 'ADMIN-KEY' } = {}) {
     const fetchMock = vi.fn().mockImplementation((path, init) => {
         if (path === '/api/admin/token') return Promise.resolve(jsonResponse({ token: adminKey }));
         return typeof handler === 'function' ? handler(path, init) : Promise.resolve(handler);
     });
-    fetchMock.apiCalls = () => fetchMock.mock.calls.filter((c) => !PROBES.includes(c[0]));
+    fetchMock.apiCalls = () => fetchMock.mock.calls.filter((c) => !isProbe(c[0]));
     vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
 }

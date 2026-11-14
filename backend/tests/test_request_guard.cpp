@@ -658,6 +658,9 @@ void run_request_guard_tests()
     CHECK(!lockedByNoAdmin("POST", "/api/hosts/uuid-1/start"));
     CHECK(!lockedByNoAdmin("POST", "/api/hosts/uuid-1/quit"));
     CHECK(!lockedByNoAdmin("POST", "/api/hosts/uuid-1/stop-session"));
+    // And what those are signed over (LaunchGate).
+    CHECK(!lockedByNoAdmin("POST", "/api/hosts/uuid-1/launch-proof"));
+    CHECK(!lockedByNoAdmin("POST", "/api/hosts/uuid-1/quit-ticket"));
     CHECK(!lockedByNoAdmin("POST", "/api/auth/logout"));
     CHECK(!lockedByNoAdmin("POST", "/api/share/player/join"));
     CHECK(!lockedByNoAdmin("POST", "/api/logs/client"));

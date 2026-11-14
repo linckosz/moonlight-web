@@ -157,6 +157,7 @@ add_executable(run_tests
     test_pair_request_routes.cpp
     test_auth_status_route.cpp
     test_host_key_route.cpp
+    test_launch_gate.cpp
     test_pairing_chain.cpp
     test_local_channel.cpp
     test_host_key_vault.cpp
@@ -243,6 +244,10 @@ add_executable(run_tests
     # The browser on the host machine spending the key of its owner's link: the
     # route, driven the same way.
     ${_src}/src/server/routes/HostKeyRoute.cpp
+    # A stream started or ended only by the browser its session was paired
+    # with: the guards main.cpp wraps its routes in, and their proofs.
+    ${_src}/src/server/routes/LaunchGate.cpp
+    ${_src}/src/server/OwnerProof.cpp
     # The keys those links carry: made on demand, good once, kept in memory.
     ${_src}/src/server/HostKeyVault.cpp
     # The local self-signed cert: its key outlives a restart (clients pin it).

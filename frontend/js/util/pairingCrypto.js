@@ -535,6 +535,73 @@ export async function signBoothProof(hostId, nonceBase64, action, hostUuid) {
     }
 }
 
+/** The labels a launch's, a Stop's and a quit ticket's signatures are made under. */
+export const LAUNCH_LABEL = `${PROTOCOL}|launch`;
+export const QUIT_TICKET_LABEL = `${PROTOCOL}|quit`;
+
+/** A slot as the host reads it from a request's body: -1 when it names none. */
+function namedSlot(body) {
+    const slot = body?.session_slot;
+    return Number.isInteger(slot) ? slot : -1;
+}
+
+/**
+ * What a request that starts or ends a stream signs after the label, the host's
+ * identity and the nonce: the backend's LaunchGate::startFields, quitFields and
+ * stopFields build the same, field for field (both pinned to one vector in the
+ * TNR). Read from the very body the request sends.
+ */
+export function startProofFields(hostUuid, body) {
+    const appId = Number.isInteger(body?.appId) ? body.appId : 0;
+    return [
+        'start',
+        hostUuid,
+        String(appId),
+        body?.standby === true ? '1' : '0',
+        String(namedSlot(body)),
+    ];
+}
+export function quitProofFields(hostUuid, body) {
+    return ['quit', hostUuid, String(namedSlot(body))];
+}
+export function stopProofFields(hostUuid) {
+    return ['stop', hostUuid];
+}
+/** And what a quit ticket signs: LaunchGate::ticketFields. */
+export function quitTicketFields(hostUuid, slot, streamId) {
+    return [hostUuid, String(slot), streamId];
+}
+
+/** The exact bytes signed under @p label, for @p hostId, over @p nonce and @p fields. */
+export function launchDigestInput(label, hostId, nonce, fields) {
+    return buildSignedMessage([label, hostId, nonce, ...fields]);
+}
+
+/**
+ * Prove a request that starts or ends a stream comes from this browser: sign
+ * the host's single-use challenge, under @p label, over @p fields. Returns the
+ * base64 signature, or null when there is no key to sign with — the host then
+ * refuses the request, as it refuses this browser's streams.
+ *
+ * @param {string} label        LAUNCH_LABEL or QUIT_TICKET_LABEL
+ * @param {string} hostId       the host's identity, as the challenge named it
+ * @param {string} nonceBase64  the challenge (POST /api/hosts/:id/launch-proof
+ *                              or /quit-ticket)
+ * @param {string[]} fields
+ */
+export async function signLaunchProof(label, hostId, nonceBase64, fields) {
+    const identity = await loadOrCreateIdentity();
+    if (!identity) return null;
+    try {
+        const signed = launchDigestInput(label, hostId || '', base64ToBytes(nonceBase64), fields);
+        const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
+        return bytesToBase64(new Uint8Array(sig));
+    } catch (e) {
+        console.error('[MW-BIND] Could not sign the launch request:', e.message);
+        return null;
+    }
+}
+
 /** Sign our answer's fingerprint. Returns the base64 signature, or null. */
 export async function signAnswer(identity, hostId, nonceHBase64, fingerprintHost, answerSdp) {
     const fingerprintBrowser = extractFingerprint(answerSdp);

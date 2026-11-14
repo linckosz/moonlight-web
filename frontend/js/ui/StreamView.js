@@ -2033,10 +2033,20 @@ export class StreamView {
             if (this._quitting) return;
             // A player closing their tab only frees their own slot — the
             // owner's game and their invitation both survive it.
-            navigator.sendBeacon(
-                this._playerMode ? '/api/share/player/leave' : `/api/hosts/${this.host.uuid}/quit`,
-                new Blob(['{}'], { type: 'application/json' }),
-            );
+            if (this._playerMode) {
+                navigator.sendBeacon(
+                    '/api/share/player/leave',
+                    new Blob(['{}'], { type: 'application/json' }),
+                );
+                return;
+            }
+            // The owner's: each stream's own quit ticket, signed as it started,
+            // since a closing page cannot wait for the host's challenge.
+            for (const body of BackendClient.quitBeaconBodies(this.host.uuid))
+                navigator.sendBeacon(
+                    `/api/hosts/${this.host.uuid}/quit`,
+                    new Blob([JSON.stringify(body)], { type: 'application/json' }),
+                );
         };
 
         // pagehide: iOS/WebKit rarely fires beforeunload (tab close, app close),

@@ -470,10 +470,14 @@ bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllow
     }
     if (area == QLatin1String("hosts")) {
         if (seg.size() == 3) return true; // scan, manual, DELETE /api/hosts/:id
-        // What a booth still does with a host it was given: wake it, play on it.
-        // An allow-list, so a route added later is locked until it says otherwise.
-        static const QStringList play = {QStringLiteral("wol"), QStringLiteral("start"),
-                                         QStringLiteral("quit"), QStringLiteral("stop-session")};
+        // What a booth still does with a host it was given: wake it, play on it,
+        // and sign those for the browser its session was paired with
+        // (LaunchGate). An allow-list, so a route added later is locked until
+        // it says otherwise.
+        static const QStringList play = {
+            QStringLiteral("wol"),          QStringLiteral("start"),
+            QStringLiteral("quit"),         QStringLiteral("stop-session"),
+            QStringLiteral("launch-proof"), QStringLiteral("quit-ticket")};
         return seg.size() != 4 || !play.contains(seg[3]);
     }
     return false;

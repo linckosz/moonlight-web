@@ -111,6 +111,7 @@
 #include "server/routes/HostRoutes.h"
 #include "server/routes/HostAppRoutes.h"
 #include "server/routes/ShareRoutes.h"
+#include "server/routes/LaunchGate.h"
 #include "server/routes/SystemRoutes.h"
 #include "server/routes/PairRequestRoutes.h"
 #include "server/routes/LanHttpRoutes.h"
@@ -3038,9 +3039,35 @@ int main(int argc, char* argv[])
         g_PendingHostCancels.erase(it);
         return true;
     };
+    // A stream is started or ended only by the browser its session was paired
+    // with (LaunchGate): off the tunnel and off a TV's plain HTTP, a session
+    // with a key signs its launches and Stops. Its routes are registered with
+    // /start's, its guard wraps /start, /quit and stop-session whole. Made
+    // before g_StreamEnds, which tells it of every end: it outlives the calls.
+    LaunchGate launchGate({
+        [](const HttpRequest& req) { return HttpServer::sessionTokenFromRequest(req); },
+        [&authManager](const HttpRequest& req) {
+            if (req.viaTunnel || req.lanHttp) return QByteArray();
+            return authManager.sessionPairingKey(HttpServer::sessionTokenFromRequest(req));
+        },
+        [&appSettings]() { return PairingCrypto::keyId(appSettings.hostSigningPublicKey()); },
+        [&server](const QString& address) { server.reportAuthFailure(address); },
+        // Only a worker's stream has an id to tie a quit ticket to: with
+        // stream_worker_enabled=false none is issued, and a closing page's bare
+        // Stop is refused — the app runs on, the Stop button still ends it.
+        [&g_Pool](const QString& hostUuid, int slot, const QString& session) {
+            if (session.isEmpty() || slot < 0 || slot >= g_Pool.size()) return QString();
+            const SessionPool::Slot& sl = g_Pool.at(slot);
+            const StreamWorkerHost* worker = g_Pool.workerAs<StreamWorkerHost>(slot);
+            if (!worker || sl.hostUuid != hostUuid || sl.sessionToken != session) return QString();
+            return worker->streamId();
+        },
+        []() { return QDateTime::currentMSecsSinceEpoch(); },
+    });
     // How each recent stream ended, for the page that lost its link: a worker
     // that crashed under it is started again, anything else ends as before.
     StreamEnds g_StreamEnds;
+    g_StreamEnds.onEnd = [&launchGate](const QString& id) { launchGate.streamEnded(id); };
 
     // ── The connection history (issue #42) ─────────────────────────────────
     //
@@ -6347,6 +6374,11 @@ int main(int argc, char* argv[])
             }
         }
     };
+    // The challenges a launch, a Stop and a closing page's ticket are signed
+    // over (LaunchGate). Not with the sharing board's: a launch never depends
+    // on sharing being built.
+    launchGate.registerRoutes(*server.router());
+
     // "This PC's screen", the card of a session Remote Desktop left without a
     // screen (Windows): opening it brings the session back to the PC's screen,
     // locked, and the stream then starts on its primary display — the lock
@@ -6356,99 +6388,113 @@ int main(int argc, char* argv[])
     // "This PC's sign-in screen", the card offered in its place, streams the
     // console's sign-in screen instead; once the user has signed in through
     // it, the same card streams the PC's screen the same way.
-    server.router()->postAsync("/api/hosts/:id/start", [&computerManager,
-                                                        startHost](const HttpRequest& req,
-                                                                   ResponseCallback respond) {
-        // Quitting: no stream starts, nothing is touched on the host (QuitRefusal.h).
-        if (mw::quitting()) {
-            respond(mw::quittingRefusal());
-            return;
-        }
-        NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
-        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-        const bool native = host && host->backendType == NativeHostBackend::typeName();
-        const int appId = body["appId"].toInt(0);
-        const bool signInCard = native && appId == NativeHostBackend::signInScreenAppId();
-        if (!native || (appId != NativeHostBackend::remoteDesktopReturnAppId() && !signInCard)) {
-            startHost(req, std::move(respond));
-            return;
-        }
-        // "This PC's sign-in screen" (RemoteDesktopReturnPolicy): never in a
-        // version that does not offer it, never from a kiosk. startHost asks
-        // the rest again where the stream starts.
-        if (signInCard && (!RemoteDesktopReturnPolicy::kSignInOffered || req.adminLocked)) {
-            respond(HttpResponse::error(
-                req.adminLocked ? 403 : 409,
-                QStringLiteral("This PC's sign-in screen cannot be streamed: ") +
-                    (req.adminLocked ? QStringLiteral("not from a kiosk")
-                                     : QStringLiteral("this version does not offer it"))));
-            return;
-        }
-        // The displays come with the session, a moment after it reaches the
-        // console: asked again every 100 ms, for up to 3 s.
-        const auto streamPrimary = [startHost, req, body, respond]() {
-            auto attempt = std::make_shared<std::function<void(int)>>();
-            const std::weak_ptr<std::function<void(int)>> weak = attempt;
-            *attempt = [startHost, req, body, respond, weak](int triesLeft) {
-                QString why;
-                const int appId = NativeHostBackend::primaryDisplayAppId(&why);
-                if (appId > 0) {
-                    QJsonObject onScreen = body;
-                    onScreen["appId"] = appId;
-                    HttpRequest again = req;
-                    again.body = QJsonDocument(onScreen).toJson(QJsonDocument::Compact);
-                    qInfo().noquote()
-                        << "[rdp] streaming this PC's screen (display card" << appId << ")";
-                    startHost(again, respond);
-                    return;
-                }
-                const auto self = weak.lock();
-                if (triesLeft <= 0 || !self) {
-                    respond(HttpResponse::error(
-                        503, QStringLiteral("This PC's session is back on its screen, locked, but "
-                                            "no display showed up: ") +
-                                 why));
-                    return;
-                }
-                QTimer::singleShot(100, qApp, [self, triesLeft]() { (*self)(triesLeft - 1); });
-            };
-            (*attempt)(30);
+    // Quitting: no stream starts, nothing is touched on the host (QuitRefusal.h).
+    // Asked before LaunchGate: a launch that cannot succeed spends no challenge
+    // and counts no refusal.
+    const auto refusedWhileQuitting = [](AsyncRouteHandler inner) -> AsyncRouteHandler {
+        return [inner = std::move(inner)](const HttpRequest& req, ResponseCallback respond) {
+            if (mw::quitting()) {
+                respond(mw::quittingRefusal());
+                return;
+            }
+            inner(req, std::move(respond));
         };
-        if (signInCard) {
-            // The session as it is now, not as the last tick saw it: a launch
-            // right after the user signed in through the sign-in screen (the
-            // page starts the card again, StreamEnds::nameFor) streams the
-            // PC's screen, which the session is back on.
-            RemoteDesktopReturn::instance().refreshNow();
-            if (RemoteDesktopReturn::instance().leftByRemoteDesktop())
-                startHost(req, respond);
-            else
-                streamPrimary();
-            return;
-        }
-        if (!RemoteDesktopReturn::instance().leftByRemoteDesktop()) {
-            streamPrimary();
-            return;
-        }
-        RemoteDesktopReturn::instance().bringBack(
-            [streamPrimary, respond](bool ok, const QString& error) {
-                if (!ok) {
-                    respond(HttpResponse::error(409, error));
+    };
+    server.router()->postAsync(
+        "/api/hosts/:id/start",
+        refusedWhileQuitting(launchGate.guardStart(
+            [&computerManager, startHost](const HttpRequest& req, ResponseCallback respond) {
+                NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
+                const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+                const bool native = host && host->backendType == NativeHostBackend::typeName();
+                const int appId = body["appId"].toInt(0);
+                const bool signInCard = native && appId == NativeHostBackend::signInScreenAppId();
+                if (!native ||
+                    (appId != NativeHostBackend::remoteDesktopReturnAppId() && !signInCard)) {
+                    startHost(req, std::move(respond));
                     return;
                 }
-                streamPrimary();
-            });
-    });
+                // "This PC's sign-in screen" (RemoteDesktopReturnPolicy): never in a
+                // version that does not offer it, never from a kiosk. startHost asks
+                // the rest again where the stream starts.
+                if (signInCard && (!RemoteDesktopReturnPolicy::kSignInOffered || req.adminLocked)) {
+                    respond(HttpResponse::error(
+                        req.adminLocked ? 403 : 409,
+                        QStringLiteral("This PC's sign-in screen cannot be streamed: ") +
+                            (req.adminLocked ? QStringLiteral("not from a kiosk")
+                                             : QStringLiteral("this version does not offer it"))));
+                    return;
+                }
+                // The displays come with the session, a moment after it reaches the
+                // console: asked again every 100 ms, for up to 3 s.
+                const auto streamPrimary = [startHost, req, body, respond]() {
+                    auto attempt = std::make_shared<std::function<void(int)>>();
+                    const std::weak_ptr<std::function<void(int)>> weak = attempt;
+                    *attempt = [startHost, req, body, respond, weak](int triesLeft) {
+                        QString why;
+                        const int appId = NativeHostBackend::primaryDisplayAppId(&why);
+                        if (appId > 0) {
+                            QJsonObject onScreen = body;
+                            onScreen["appId"] = appId;
+                            HttpRequest again = req;
+                            again.body = QJsonDocument(onScreen).toJson(QJsonDocument::Compact);
+                            qInfo().noquote()
+                                << "[rdp] streaming this PC's screen (display card" << appId << ")";
+                            startHost(again, respond);
+                            return;
+                        }
+                        const auto self = weak.lock();
+                        if (triesLeft <= 0 || !self) {
+                            respond(HttpResponse::error(
+                                503, QStringLiteral(
+                                         "This PC's session is back on its screen, locked, but "
+                                         "no display showed up: ") +
+                                         why));
+                            return;
+                        }
+                        QTimer::singleShot(100, qApp,
+                                           [self, triesLeft]() { (*self)(triesLeft - 1); });
+                    };
+                    (*attempt)(30);
+                };
+                if (signInCard) {
+                    // The session as it is now, not as the last tick saw it: a launch
+                    // right after the user signed in through the sign-in screen (the
+                    // page starts the card again, StreamEnds::nameFor) streams the
+                    // PC's screen, which the session is back on.
+                    RemoteDesktopReturn::instance().refreshNow();
+                    if (RemoteDesktopReturn::instance().leftByRemoteDesktop())
+                        startHost(req, respond);
+                    else
+                        streamPrimary();
+                    return;
+                }
+                if (!RemoteDesktopReturn::instance().leftByRemoteDesktop()) {
+                    streamPrimary();
+                    return;
+                }
+                RemoteDesktopReturn::instance().bringBack(
+                    [streamPrimary, respond](bool ok, const QString& error) {
+                        if (!ok) {
+                            respond(HttpResponse::error(409, error));
+                            return;
+                        }
+                        streamPrimary();
+                    });
+            })));
 
     // Phase 5: Quit running app
     server.router()->postAsync(
         "/api/hosts/:id/quit",
-        [&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay, &g_ActiveMediaTrackRelay,
-         &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveSessionToken, &g_ActiveHostUuid,
-         &g_Pool, &g_LiveSunshineUids, &g_DualSupport, &g_SingleSessionHosts,
-         &dropPendingHostCancel, &detachWorkerSlot, &appOutlivesStream, &anyOtherSlotLive,
-         &endPlayerSessions, &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &reapCoopSession,
-         &boothGate, &boothRefusal](const HttpRequest& req, const ResponseCallback& respond) {
+        launchGate.guardQuit([&computerManager, &g_ActiveRelay, &g_ActiveStreamRelay,
+                              &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveClientUniqueId,
+                              &g_ActiveSessionToken, &g_ActiveHostUuid, &g_Pool,
+                              &g_LiveSunshineUids, &g_DualSupport, &g_SingleSessionHosts,
+                              &dropPendingHostCancel, &detachWorkerSlot, &appOutlivesStream,
+                              &anyOtherSlotLive, &endPlayerSessions, &quitsPerDevice,
+                              &quitDeviceApp, &releaseSeatIfIdle, &reapCoopSession, &boothGate,
+                              &boothRefusal](const HttpRequest& req,
+                                             const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                     << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -6798,7 +6844,7 @@ int main(int argc, char* argv[])
                         respond(HttpResponse::json(result));
                     }
                 });
-        });
+        }));
 
     // GET /api/hosts/:id/running-app — which app the host runs right now.
     //
@@ -6842,9 +6888,10 @@ int main(int argc, char* argv[])
     // running while a Sunshine session on the same PC is closed must survive.
     server.router()->postAsync(
         "/api/hosts/:id/stop-session",
-        [&computerManager, &g_Pool, &g_LiveSunshineUids, &detachWorkerSlot, &endPlayerSessions,
-         &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &boothGate, &boothRefusal,
-         &boothNoticeFor](const HttpRequest& req, const ResponseCallback& respond) {
+        launchGate.guardStop([&computerManager, &g_Pool, &g_LiveSunshineUids, &detachWorkerSlot,
+                              &endPlayerSessions, &quitsPerDevice, &quitDeviceApp,
+                              &releaseSeatIfIdle, &boothGate, &boothRefusal, &boothNoticeFor](
+                                 const HttpRequest& req, const ResponseCallback& respond) {
             NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
             if (!host) {
                 respond(HttpResponse::error(404, "Host not found"));
@@ -6981,7 +7028,7 @@ int main(int argc, char* argv[])
                 });
             };
             (*sendNext)();
-        });
+        }));
 
     // ── Rendezvous line ──────────────────────────────────────────────────────
     //

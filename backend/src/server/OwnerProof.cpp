@@ -19,10 +19,23 @@
 
 #include "common/PairingCrypto.h"
 
-QByteArray OwnerProof::issue(const QString& session, qint64 nowMs)
+#include <utility>
+
+OwnerProof::OwnerProof(QByteArray label, Limits limits)
+    : m_Label(std::move(label))
+    , m_Limits(limits)
+{}
+
+QByteArray OwnerProof::issue(const QString& session, qint64 nowMs, const QString& scope)
 {
     if (session.isEmpty()) return {};
     prune(nowMs);
+
+    // A new challenge for one scope stands for the one before it.
+    if (!scope.isEmpty())
+        for (int i = m_Pending.size() - 1; i >= 0; --i)
+            if (m_Pending.at(i).session == session && m_Pending.at(i).scope == scope)
+                m_Pending.removeAt(i);
 
     int held = 0;
     int oldest = -1;
@@ -31,16 +44,17 @@ QByteArray OwnerProof::issue(const QString& session, qint64 nowMs)
         if (oldest < 0) oldest = i;
         ++held;
     }
-    if (held >= kPerSession) {
+    if (held >= m_Limits.perSession) {
         m_Pending.removeAt(oldest);
-    } else if (m_Pending.size() >= kTotal) {
+    } else if (m_Pending.size() >= m_Limits.total) {
         return {};
     }
 
     Pending p;
     p.session = session;
+    p.scope = scope;
     p.nonce = PairingCrypto::generateNonce();
-    p.expiresMs = nowMs + kLifetimeMs;
+    p.expiresMs = nowMs + m_Limits.lifetimeMs;
     if (p.nonce.size() < PairingCrypto::MIN_NONCE_BYTES) return {};
     m_Pending.append(p);
     return p.nonce;
@@ -53,8 +67,16 @@ QByteArray OwnerProof::message(const QString& hostId, const QByteArray& nonce,
         {QByteArray(kLabel), hostId.toUtf8(), nonce, action.toUtf8(), QByteArray::number(slot)});
 }
 
+QByteArray OwnerProof::messageFor(const QString& hostId, const QByteArray& nonce,
+                                  const QList<QByteArray>& fields) const
+{
+    QList<QByteArray> all{m_Label, hostId.toUtf8(), nonce};
+    all.append(fields);
+    return PairingCrypto::buildSignedMessage(all);
+}
+
 OwnerProof::Result OwnerProof::take(const QString& session, const QJsonObject& proof, qint64 nowMs,
-                                    QByteArray& nonce, QByteArray& sig)
+                                    QByteArray& nonce, QByteArray& sig, const QString& scope)
 {
     const QString nonceB64 = proof.value(QStringLiteral("nonce")).toString();
     const QString sigB64 = proof.value(QStringLiteral("sig")).toString();
@@ -71,7 +93,9 @@ OwnerProof::Result OwnerProof::take(const QString& session, const QJsonObject& p
         }
     }
     if (found < 0 || session.isEmpty() || nonce.isEmpty()) return Result::Refused;
+    const bool sameScope = m_Pending.at(found).scope == scope;
     m_Pending.removeAt(found);
+    if (!sameScope) return Result::Refused;
 
     sig = QByteArray::fromBase64(sigB64.toLatin1());
     return Result::Ok;
@@ -87,6 +111,28 @@ OwnerProof::Result OwnerProof::check(const QString& session, const QByteArray& s
     if (taken != Result::Ok) return taken;
     return PairingCrypto::verify(spki, message(hostId, nonce, action, slot), sig) ? Result::Ok
                                                                                   : Result::Refused;
+}
+
+OwnerProof::Result OwnerProof::checkFields(const QString& session, const QByteArray& spki,
+                                           const QString& hostId, const QList<QByteArray>& fields,
+                                           const QJsonObject& proof, qint64 nowMs,
+                                           const QString& scope, bool* badSignature)
+{
+    if (badSignature) *badSignature = false;
+    QByteArray nonce;
+    QByteArray sig;
+    const Result taken = take(session, proof, nowMs, nonce, sig, scope);
+    if (taken != Result::Ok) return taken;
+    if (PairingCrypto::verify(spki, messageFor(hostId, nonce, fields), sig)) return Result::Ok;
+    if (badSignature) *badSignature = true;
+    return Result::Refused;
+}
+
+void OwnerProof::dropScope(const QString& scope)
+{
+    if (scope.isEmpty()) return;
+    for (int i = m_Pending.size() - 1; i >= 0; --i)
+        if (m_Pending.at(i).scope == scope) m_Pending.removeAt(i);
 }
 
 bool OwnerProof::isBoothAction(const QString& action)

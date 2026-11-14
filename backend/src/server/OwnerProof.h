@@ -19,6 +19,7 @@
 
 #include <QByteArray>
 #include <QJsonObject>
+#include <QList>
 #include <QString>
 #include <QVector>
 
@@ -35,6 +36,10 @@
  * request (HttpServer::tunnelKeyRefused), so the proof is asked of the other
  * paths only, and of sessions that have a key at all: one paired before MW-BIND-v1
  * existed has nothing to sign with, and streams unchecked the same way.
+ *
+ * The same proof, under labels of its own and in stores of their own, is asked
+ * of the requests that start or end a stream (LaunchGate): a launch, a Stop, and
+ * the ticket a page keeps to end its stream as it closes.
  *
  * Main thread only, like the routes that use it.
  */
@@ -53,6 +58,21 @@ public:
     /// for one of MW-BIND-v1's, nor the other way round.
     static constexpr char kLabel[] = "MW-BIND-v1|share-owner";
 
+    /// How many challenges a store holds, and for how long.
+    struct Limits
+    {
+        qint64 lifetimeMs = kLifetimeMs;
+        int perSession = kPerSession;
+        int total = kTotal;
+    };
+
+    /// The sharing board's store.
+    OwnerProof()
+        : OwnerProof(QByteArray(kLabel), Limits{})
+    {}
+    /// A store of its own, whose signatures are made under @p label.
+    OwnerProof(QByteArray label, Limits limits);
+
     enum class Result
     {
         Ok,
@@ -62,8 +82,9 @@ public:
     };
 
     /// A fresh challenge for @p session, or empty when none can be held (no
-    /// session, or kTotal reached).
-    QByteArray issue(const QString& session, qint64 nowMs);
+    /// session, or the store full). With a @p scope, the challenge is good for
+    /// that scope only, and retires any other of the same session and scope.
+    QByteArray issue(const QString& session, qint64 nowMs, const QString& scope = QString());
 
     /// The bytes the browser signs: frontend/js/util/pairingCrypto.js builds
     /// the same, field for field.
@@ -101,12 +122,30 @@ public:
                       const QString& action, const QString& hostUuid, const QJsonObject& proof,
                       qint64 nowMs);
 
+    /// The bytes signed for this store: its label, @p hostId, @p nonce, then
+    /// @p fields in order.
+    QByteArray messageFor(const QString& hostId, const QByteArray& nonce,
+                          const QList<QByteArray>& fields) const;
+
+    /// Check @p proof over @p fields (messageFor) for a challenge drawn for
+    /// @p session and @p scope. Spent whatever the outcome. @p badSignature,
+    /// when given, says whether a refusal was a signature that does not verify
+    /// over a challenge this store held, rather than a challenge it does not
+    /// hold (unknown, spent, expired, another session's or scope's).
+    Result checkFields(const QString& session, const QByteArray& spki, const QString& hostId,
+                       const QList<QByteArray>& fields, const QJsonObject& proof, qint64 nowMs,
+                       const QString& scope = QString(), bool* badSignature = nullptr);
+
+    /// Retire every challenge drawn for @p scope: what it was good for is gone.
+    void dropScope(const QString& scope);
+
     int pendingCount() const { return m_Pending.size(); }
 
 private:
     struct Pending
     {
         QString session;
+        QString scope;
         QByteArray nonce;
         qint64 expiresMs = 0;
     };
@@ -114,9 +153,12 @@ private:
     void prune(qint64 nowMs);
     /// Find and spend @p session's challenge named in @p proof. Missing when the
     /// proof has no nonce or signature; Refused when the challenge is unknown,
-    /// another session's or expired; Ok with @p nonce and @p sig filled.
+    /// another session's or scope's, or expired; Ok with @p nonce and @p sig
+    /// filled.
     Result take(const QString& session, const QJsonObject& proof, qint64 nowMs, QByteArray& nonce,
-                QByteArray& sig);
+                QByteArray& sig, const QString& scope = QString());
 
+    QByteArray m_Label;
+    Limits m_Limits;
     QVector<Pending> m_Pending; ///< oldest first
 };
