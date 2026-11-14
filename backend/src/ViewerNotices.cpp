@@ -17,7 +17,10 @@
 
 #include "ViewerNotices.h"
 
+#include "server/LanHttp.h"
+
 #include <QCoreApplication>
+#include <QHash>
 
 namespace {
 
@@ -45,6 +48,13 @@ QString folded(const QString& s)
     return out;
 }
 
+// A TV on plain HTTP whose name says nothing its address does not: it goes by
+// its address, said once (issue #42).
+bool unnamedTv(const StreamViewer& v)
+{
+    return v.lanHttp && !v.address.isEmpty() && LanHttp::namesOnlyAddress(v.name, v.address);
+}
+
 } // namespace
 
 bool ViewerNotices::windowsShows(bool callSucceeded, int state)
@@ -55,7 +65,8 @@ bool ViewerNotices::windowsShows(bool callSucceeded, int state)
 // The device name from the sessions table, except for a browser on this very
 // machine: its row reads "Host machine (remote link)", which tells one row from
 // another there and says nothing to somebody reading a notice on that machine.
-// And "Someone" when there is no name at all.
+// And "Someone" when there is no name at all, except for a TV on plain HTTP,
+// which goes by its address until it has a name of its own.
 //
 // That name is whatever the paired device called itself, so it is cleaned
 // before the tray shows it: no control or format characters (a bidi override
@@ -66,6 +77,7 @@ bool ViewerNotices::windowsShows(bool callSucceeded, int state)
 QString ViewerNotices::nameOf(const StreamViewer& v)
 {
     if (v.self) return tr("This computer");
+    if (unnamedTv(v)) return v.address;
 
     QString kept;
     for (const char32_t c : v.name.toUcs4()) {
@@ -255,24 +267,51 @@ QString ViewerNotices::text(const Pending& p, const QDateTime& now) const
     return tr("%1 started streaming this screen").arg(p.name);
 }
 
-QString ViewerNotices::whoOf(const StreamViewer& v)
+// nameOf(), cut to the menu's kMaxMenuNameLength.
+static QString menuNameOf(const StreamViewer& v)
 {
-    QString name = nameOf(v);
+    QString name = ViewerNotices::nameOf(v);
     const QList<uint> points = name.toUcs4();
-    if (points.size() > kMaxMenuNameLength)
+    if (points.size() > ViewerNotices::kMaxMenuNameLength)
         name = QString::fromUcs4(reinterpret_cast<const char32_t*>(points.constData()),
-                                 kMaxMenuNameLength)
+                                 ViewerNotices::kMaxMenuNameLength)
                    .trimmed() +
                QChar(0x2026); // …
-    if (v.self || v.address.isEmpty()) return name;
+    return name;
+}
+
+QString ViewerNotices::whoOf(const StreamViewer& v)
+{
+    const QString name = menuNameOf(v);
+    // A TV known by its address alone: that address, once.
+    if (v.self || v.address.isEmpty() || unnamedTv(v)) return name;
     return name + QStringLiteral(" (") + v.address + QLatin1Char(')');
 }
 
-QString ViewerNotices::disconnectLabel(const StreamViewer& v)
+QString ViewerNotices::disconnectLabel(const StreamViewer& v, bool nameShared)
 {
     QString label = tr("Disconnect %1").arg(whoOf(v));
+    // A TV on plain HTTP: its name and how it is linked, on its one line (the
+    // warning icon is the tray's), and its address when another TV has its name.
+    if (v.lanHttp)
+        label = nameShared && !unnamedTv(v) && !v.address.isEmpty()
+                    ? tr("Disconnect %1 (%2, plain HTTP)").arg(menuNameOf(v), v.address)
+                    : tr("Disconnect %1 (plain HTTP)").arg(menuNameOf(v));
     label.replace(QLatin1Char('&'), QStringLiteral("&&"));
     return label;
+}
+
+QStringList ViewerNotices::disconnectLabels(const QList<StreamViewer>& viewers)
+{
+    // Two TVs of one name would read the same: those get their address too.
+    QHash<QString, int> uses;
+    for (const StreamViewer& v : viewers)
+        if (v.lanHttp && !unnamedTv(v)) ++uses[folded(menuNameOf(v))];
+    QStringList labels;
+    for (const StreamViewer& v : viewers)
+        labels.append(disconnectLabel(v, v.lanHttp && !unnamedTv(v) &&
+                                             uses.value(folded(menuNameOf(v))) > 1));
+    return labels;
 }
 
 QString ViewerNotices::tooltip(const QString& product, const QList<StreamViewer>& viewers)

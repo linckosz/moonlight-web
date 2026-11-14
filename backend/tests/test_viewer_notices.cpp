@@ -308,8 +308,11 @@ void run_viewer_notices_tests()
         StreamViewer tv = viewer("tv", "Living room TV");
         tv.lanHttp = true;
         tv.address = "192.168.1.50";
+        // A TV on plain HTTP: one line, its name and how it is linked; its
+        // address stays in the tooltip and the notices.
         CHECK_EQ(ViewerNotices::disconnectLabel(tv),
-                 QStringLiteral("Disconnect Living room TV (192.168.1.50)"));
+                 QStringLiteral("Disconnect Living room TV (plain HTTP)"));
+        CHECK_EQ(ViewerNotices::whoOf(tv), QStringLiteral("Living room TV (192.168.1.50)"));
         StreamViewer far = viewer("far", "Bruno");
         far.address = "Internet";
         CHECK_EQ(ViewerNotices::whoOf(far), QStringLiteral("Bruno (Internet)"));
@@ -326,6 +329,77 @@ void run_viewer_notices_tests()
         CHECK_EQ(ViewerNotices::whoOf(viewer("x", longName)),
                  QString(32, QLatin1Char('a')) + QChar(0x2026));
         CHECK_EQ(ViewerNotices::whoOf(viewer("x", "")), QStringLiteral("Someone"));
+    }
+
+    SECTION("ViewerNotices: a TV known by its address alone says it once (issue #42)");
+    {
+        // What a TV was called before it was named after its model, its bare
+        // address, or nothing: its address, once, wherever it is named.
+        StreamViewer old = viewer("old", "Browser at 192.168.1.174");
+        old.lanHttp = true;
+        old.address = "192.168.1.174";
+        StreamViewer bare = viewer("bare", "192.168.1.175");
+        bare.lanHttp = true;
+        bare.address = "192.168.1.175";
+        StreamViewer none = viewer("none", "");
+        none.lanHttp = true;
+        none.address = "192.168.1.176";
+        CHECK_EQ(ViewerNotices::nameOf(old), QStringLiteral("192.168.1.174"));
+        CHECK_EQ(ViewerNotices::whoOf(old), QStringLiteral("192.168.1.174"));
+        CHECK_EQ(ViewerNotices::disconnectLabel(old),
+                 QStringLiteral("Disconnect 192.168.1.174 (plain HTTP)"));
+        CHECK_EQ(ViewerNotices::disconnectLabel(bare),
+                 QStringLiteral("Disconnect 192.168.1.175 (plain HTTP)"));
+        CHECK_EQ(ViewerNotices::whoOf(none), QStringLiteral("192.168.1.176"));
+        CHECK_EQ(ViewerNotices::tooltip("MoonlightWeb", {old}),
+                 QStringLiteral("MoonlightWeb\nStreaming (1)\nSecurity notice: 192.168.1.174 is "
+                                "streaming over plain HTTP"));
+        ViewerNotices n = started(loc);
+        n.observe({old}, kT0.addSecs(10), false);
+        CHECK_EQ(n.take(kT0.addSecs(10), 0),
+                 QStringLiteral("Security notice: 192.168.1.174 started streaming this screen "
+                                "over plain HTTP"));
+        // The rule is a TV's: a browser on HTTPS keeps whatever it is called.
+        StreamViewer https = viewer("https", "Browser at 192.168.1.9");
+        https.address = "192.168.1.9";
+        CHECK_EQ(ViewerNotices::whoOf(https),
+                 QStringLiteral("Browser at 192.168.1.9 (192.168.1.9)"));
+        // A TV's "&" is no shortcut either.
+        StreamViewer amp = viewer("amp", "Tom & Jerry");
+        amp.lanHttp = true;
+        amp.address = "192.168.1.60";
+        CHECK_EQ(ViewerNotices::disconnectLabel(amp),
+                 QStringLiteral("Disconnect Tom && Jerry (plain HTTP)"));
+    }
+
+    SECTION("ViewerNotices: two TVs of one name are told apart by their address");
+    {
+        StreamViewer a = viewer("a", "MiTV-MOSR4");
+        a.lanHttp = true;
+        a.address = "192.168.1.174";
+        StreamViewer b = viewer("b", "mitv-mosr4");
+        b.lanHttp = true;
+        b.address = "192.168.1.175";
+        StreamViewer den = viewer("den", "Den TV");
+        den.lanHttp = true;
+        den.address = "192.168.1.51";
+        StreamViewer old = viewer("old", "Browser at 192.168.1.52");
+        old.lanHttp = true;
+        old.address = "192.168.1.52";
+        StreamViewer phone = viewer("phone", "Bruno");
+        phone.address = "192.168.1.177";
+        const QStringList lines = ViewerNotices::disconnectLabels({a, b, den, old, phone});
+        CHECK_EQ(lines.size(), qsizetype(5));
+        CHECK_EQ(lines.value(0),
+                 QStringLiteral("Disconnect MiTV-MOSR4 (192.168.1.174, plain HTTP)"));
+        CHECK_EQ(lines.value(1),
+                 QStringLiteral("Disconnect mitv-mosr4 (192.168.1.175, plain HTTP)"));
+        CHECK_EQ(lines.value(2), QStringLiteral("Disconnect Den TV (plain HTTP)"));
+        CHECK_EQ(lines.value(3), QStringLiteral("Disconnect 192.168.1.52 (plain HTTP)"));
+        CHECK_EQ(lines.value(4), QStringLiteral("Disconnect Bruno (192.168.1.177)"));
+        // Alone, a name needs no address.
+        CHECK_EQ(ViewerNotices::disconnectLabels({a, phone}).value(0),
+                 QStringLiteral("Disconnect MiTV-MOSR4 (plain HTTP)"));
     }
 
     SECTION("ViewerNotices: the tray's tooltip, within Windows' 127 characters");

@@ -52,12 +52,6 @@ HttpResponse notHere()
     return HttpResponse::error(404, QStringLiteral("Not Found"));
 }
 
-/// What a TV is called among the devices until the administrator renames it.
-QString defaultName(const QString& address)
-{
-    return QStringLiteral("Browser at %1").arg(address);
-}
-
 /// The approval page the QR code opens: under this machine's public link while
 /// its line is up, as MW-PAIR-v1's; otherwise on this LAN, over HTTPS, under
 /// the very name the TV reached this machine by.
@@ -159,8 +153,11 @@ void registerLanHttpRoutes(RestRouter& router, AuthManager& authManager, LanHttp
             return HttpResponse::json(obj, 404);
         case LanHttpPairing::Poll::Approved: break;
         }
-        const QString token =
-            c->auth.createLanHttpSession(address, defaultName(address), r.approverId);
+        // Named after the model its browser gives, else its address, until the
+        // administrator renames it among the devices.
+        const QString name =
+            LanHttp::deviceName(req.headers.value(QStringLiteral("user-agent")), address);
+        const QString token = c->auth.createLanHttpSession(address, name, r.approverId);
         if (token.isEmpty()) return refusal(503, "unavailable");
         obj["state"] = QStringLiteral("approved");
         HttpResponse resp = HttpResponse::json(obj);

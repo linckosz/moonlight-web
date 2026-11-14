@@ -20,6 +20,7 @@
 #include <QHostAddress>
 #include <QJsonObject>
 #include <QPair>
+#include <QRegularExpression>
 
 namespace LanHttp {
 
@@ -261,6 +262,30 @@ QString tokenFromCookieHeader(const QString& cookieHeader)
         found = c.mid(prefix.size());
     }
     return count == 1 ? found : QString();
+}
+
+QString deviceName(const QString& userAgent, const QString& address)
+{
+    // The TV chooses its User-Agent and the search below runs on the server's
+    // thread: one longer than any real browser's is not searched at all.
+    if (userAgent.size() > kMaxUserAgentLength) return address;
+    // "(Linux; Android 11; MiTV-MOSR4 Build/RTM5.220609.003; wv)": the field
+    // after the version, without its " Build/…". Tizen and webOS give none.
+    static const QRegularExpression model(
+        QStringLiteral(R"(\(Linux; Android [^;)]*; ([^;)]*?)(?: Build/[^;)]*)?[;)])"));
+    static const QRegularExpression plain(QStringLiteral(R"(^[A-Za-z0-9][A-Za-z0-9 ._-]{1,39}$)"));
+    const QRegularExpressionMatch m = model.match(userAgent);
+    if (m.hasMatch()) {
+        const QString found = m.captured(1).trimmed();
+        if (plain.match(found).hasMatch()) return found;
+    }
+    return address;
+}
+
+bool namesOnlyAddress(const QString& name, const QString& address)
+{
+    const QString n = name.simplified();
+    return n.isEmpty() || n == address || n == QStringLiteral("Browser at %1").arg(address);
 }
 
 bool namesHost(const QString& path, QString* id)

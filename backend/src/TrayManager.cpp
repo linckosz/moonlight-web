@@ -240,17 +240,21 @@ void TrayManager::refreshViewerActions(const QList<StreamViewer>& viewers)
         if (v.lanHttp) ordered.append(v);
     for (const StreamViewer& v : viewers)
         if (!v.lanHttp) ordered.append(v);
+    const QStringList labels = ViewerNotices::disconnectLabels(ordered);
     QStringList key;
-    for (const StreamViewer& v : std::as_const(ordered))
-        key.append(v.instance + QLatin1Char('|') + ViewerNotices::disconnectLabel(v) +
-                   (v.lanHttp ? QStringLiteral("|http") : QString()));
+    for (qsizetype i = 0; i < ordered.size(); ++i)
+        key.append(ordered.at(i).instance + QLatin1Char('|') + labels.at(i) +
+                   (ordered.at(i).lanHttp ? QStringLiteral("|http") : QString()));
     if (key == m_ViewerKey) return;
     m_ViewerKey = key;
 
     qDeleteAll(m_ViewerActions);
     m_ViewerActions.clear();
-    for (const StreamViewer& v : std::as_const(ordered)) {
-        auto* line = new QAction(ViewerNotices::disconnectLabel(v), m_Menu);
+    for (qsizetype i = 0; i < ordered.size(); ++i) {
+        const StreamViewer& v = ordered.at(i);
+        // A TV on plain HTTP says so on its one line, after its name, under the
+        // warning icon.
+        auto* line = new QAction(labels.at(i), m_Menu);
         if (v.lanHttp) line->setIcon(m_WarnIcon);
         // Booth mode changes nothing from here; a line without an id names no
         // stream.
@@ -259,13 +263,6 @@ void TrayManager::refreshViewerActions(const QList<StreamViewer>& viewers)
         connect(line, &QAction::triggered, this, [this, instance]() { onDisconnect(instance); });
         m_Menu->insertAction(m_StreamingSeparator, line);
         m_ViewerActions.append(line);
-        // A TV on plain HTTP: said on its own line, under its name.
-        if (v.lanHttp) {
-            auto* note = new QAction(tr("Plain HTTP"), m_Menu);
-            note->setEnabled(false);
-            m_Menu->insertAction(m_StreamingSeparator, note);
-            m_ViewerActions.append(note);
-        }
     }
 }
 

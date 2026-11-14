@@ -144,6 +144,22 @@ QString clearedCookie();
 /// The value of `mw_lan_http` in a Cookie header, or empty.
 QString tokenFromCookieHeader(const QString& cookieHeader);
 
+/// A User-Agent longer than this is not searched for a model (deviceName).
+constexpr qsizetype kMaxUserAgentLength = 512;
+
+/// What a TV is called once let in: the model its browser gives in
+/// @p userAgent ("MiTV-MOSR4" out of "Linux; Android 11; MiTV-MOSR4 Build/…"),
+/// else its @p address. Only a plain model is taken: 2 to 40 letters, digits,
+/// spaces, dots, dashes or underscores, which leaves out Chrome's stand-in "K".
+/// Nor is a User-Agent past kMaxUserAgentLength read. A name given in the
+/// devices' list replaces it.
+QString deviceName(const QString& userAgent, const QString& address);
+
+/// Whether @p name says no more than @p address: none, the address itself, or
+/// "Browser at <address>", what a TV was called before deviceName(). The tray
+/// then names it by its address, once.
+bool namesOnlyAddress(const QString& name, const QString& address);
+
 /// The routes as named for route(), one "METHOD /path" each, in order: what a
 /// test compares with a list of its own, so that an addition shows in it.
 QStringList routeTable();

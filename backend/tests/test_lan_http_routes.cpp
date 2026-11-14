@@ -169,8 +169,12 @@ void run_lan_http_routes_tests()
             200);
 
         // The TV's next ask: approved, its cookie set, and nothing about who
-        // approved.
-        const HttpResponse approved = s.send(s.tv("GET", "/api/lan-http/pair/" + id, {}, claim));
+        // approved. Its browser gives its model.
+        HttpRequest ask = s.tv("GET", "/api/lan-http/pair/" + id, {}, claim);
+        ask.headers[QStringLiteral("user-agent")] =
+            QStringLiteral("Mozilla/5.0 (Linux; Android 11; MiTV-MOSR4 Build/RTM5.220609.003; wv) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.8103.38");
+        const HttpResponse approved = s.send(ask);
         CHECK_EQ(approved.statusCode, 200);
         CHECK_EQ(bodyOf(approved).value("state").toString(), QStringLiteral("approved"));
         CHECK_EQ(bodyOf(approved).keys(), QStringList{QStringLiteral("state")});
@@ -190,7 +194,8 @@ void run_lan_http_routes_tests()
         CHECK(!s.auth->validateSession(token));
         const SessionInfo info = s.auth->sessionForToken(token);
         CHECK(info.lanHttp);
-        CHECK_EQ(info.machineName, QStringLiteral("Browser at 192.168.1.174"));
+        // Named after that model until somebody renames it.
+        CHECK_EQ(info.machineName, QStringLiteral("MiTV-MOSR4"));
         CHECK_EQ(info.approvedBy, s.auth->sessionIdForToken(adminToken));
 
         // Signed in now, and its cookie given its time again.
@@ -236,6 +241,8 @@ void run_lan_http_routes_tests()
                  200);
         const HttpResponse approved = s.send(s.tv("GET", "/api/lan-http/pair/" + id, {}, claim));
         CHECK(s.auth->sessionForToken(setToken(approved)).approvedBy.isEmpty());
+        // No model given: named by its address.
+        CHECK_EQ(s.auth->sessionForToken(setToken(approved)).machineName, kTv);
 
         const QJsonObject b = bodyOf(s.send(s.tv("POST", "/api/lan-http/pair")));
         CHECK_EQ(s.send(s.admin("POST", "/api/lan-http/refuse/" + b.value("request").toString()))

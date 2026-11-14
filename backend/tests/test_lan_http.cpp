@@ -267,6 +267,58 @@ void run_lan_http_tests()
     CHECK(tokenFromCookieHeader("MW_LAN_HTTP=abc").isEmpty());
     CHECK(tokenFromCookieHeader("xmw_lan_http=abc").isEmpty());
     CHECK(tokenFromCookieHeader("").isEmpty());
+
+    SECTION("LanHttp — what a TV is called once let in");
+
+    {
+        const QString tv = QStringLiteral("192.168.1.174");
+        // The model an Android TV's browser gives, without its build.
+        CHECK_EQ(deviceName("Mozilla/5.0 (Linux; Android 11; MiTV-MOSR4 Build/RTM5.220609.003; "
+                            "wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 "
+                            "Chrome/157.0.8103.38 Mobile Safari/537.36",
+                            tv),
+                 QStringLiteral("MiTV-MOSR4"));
+        CHECK_EQ(deviceName("Mozilla/5.0 (Linux; Android 9; AFTMM Build/PS7633; wv)", tv),
+                 QStringLiteral("AFTMM"));
+        CHECK_EQ(deviceName("Mozilla/5.0 (Linux; Android 11; Mi Box S Build/RQ1A; wv)", tv),
+                 QStringLiteral("Mi Box S"));
+        CHECK_EQ(deviceName("Mozilla/5.0 (Linux; Android 12; SM-T870)", tv),
+                 QStringLiteral("SM-T870"));
+        // Chrome's stand-in for a model, no model at all, or one that is not
+        // plain: the address.
+        CHECK_EQ(deviceName("Mozilla/5.0 (Linux; Android 10; K) Chrome/157.0.0.0", tv), tv);
+        CHECK_EQ(deviceName("Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36", tv), tv);
+        CHECK_EQ(deviceName("Mozilla/5.0 (Web0S; Linux/SmartTV) AppleWebKit/537.36", tv), tv);
+        CHECK_EQ(deviceName("Mozilla/5.0 (Linux; Android 11; <b>TV</b> Build/X; wv)", tv), tv);
+        CHECK_EQ(deviceName(QStringLiteral("Mozilla/5.0 (Linux; Android 11; ") +
+                                QString(41, QLatin1Char('A')) + QStringLiteral(" Build/X; wv)"),
+                            tv),
+                 tv);
+        CHECK_EQ(deviceName(QStringLiteral("Mozilla/5.0 (Linux; Android 11; TV") + QChar(0x202E) +
+                                QStringLiteral("X Build/X; wv)"),
+                            tv),
+                 tv);
+        CHECK_EQ(deviceName("", tv), tv);
+        // A User-Agent past a real browser's length is not searched (SR, 14/11):
+        // a long run with neither ";" nor ")" would cost the search its square.
+        CHECK_EQ(
+            deviceName(QStringLiteral("(Linux; Android 11; ") + QString(600, QLatin1Char('a')), tv),
+            tv);
+        QString longest =
+            QStringLiteral("Mozilla/5.0 (Linux; Android 11; MiTV-MOSR4 Build/X; wv) ");
+        longest += QString(kMaxUserAgentLength - longest.size(), QLatin1Char('x'));
+        CHECK_EQ(deviceName(longest, tv), QStringLiteral("MiTV-MOSR4"));
+        CHECK_EQ(deviceName(longest + QLatin1Char('x'), tv), tv);
+        // A name that says only the address: none, the address, the old
+        // "Browser at"; never a name somebody gave.
+        CHECK(namesOnlyAddress("", tv));
+        CHECK(namesOnlyAddress(tv, tv));
+        CHECK(namesOnlyAddress("Browser at 192.168.1.174", tv));
+        CHECK(!namesOnlyAddress("Browser at 192.168.1.175", tv));
+        CHECK(!namesOnlyAddress("MiTV-MOSR4", tv));
+        CHECK(!namesOnlyAddress("Mi TV", tv));
+    }
+
     SECTION("LanHttp — the list of routes, as it stands");
 
     // Exactly this list: a route added to LanHttp.cpp shows in this test's diff.

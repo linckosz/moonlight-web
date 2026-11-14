@@ -22,6 +22,7 @@
 #include <QLocale>
 #include <QPair>
 #include <QString>
+#include <QStringList>
 
 #include "server/StreamActivity.h"
 
@@ -71,7 +72,9 @@ public:
     static constexpr int kMaxNameLength = 48;
 
     /// What a viewer is called in a notice and in the menu: their device's own
-    /// name, cleaned (see the .cpp), "This computer" for this machine's browser.
+    /// name, cleaned (see the .cpp), "This computer" for this machine's browser,
+    /// and a TV on plain HTTP whose name says only its address
+    /// (LanHttp::namesOnlyAddress) by that address.
     static QString nameOf(const StreamViewer& v);
 
     /// Characters of a name in the tray's menu (issue #42): fewer than a
@@ -80,12 +83,19 @@ public:
 
     /// Who a line of the tray stands for: nameOf(), cut to kMaxMenuNameLength,
     /// with the address the server gave in brackets ("Living room TV
-    /// (192.168.1.50)", "Bruno (Internet)").
+    /// (192.168.1.50)", "Bruno (Internet)"), but a TV known by its address
+    /// alone just once ("192.168.1.174").
     static QString whoOf(const StreamViewer& v);
 
-    /// A line of the tray's menu: "Disconnect " + whoOf(), every "&" doubled,
-    /// which Qt would otherwise read as a shortcut.
-    static QString disconnectLabel(const StreamViewer& v);
+    /// A line of the tray's menu, every "&" doubled, which Qt would otherwise
+    /// read as a shortcut: "Disconnect " + whoOf(), and for a TV on plain HTTP
+    /// "Disconnect <name> (plain HTTP)", with its address before "plain HTTP"
+    /// when @p nameShared (another TV in the menu has the same name).
+    static QString disconnectLabel(const StreamViewer& v, bool nameShared = false);
+
+    /// The menu's lines for @p viewers, in their order: disconnectLabel() of
+    /// each, telling apart TVs that share a name.
+    static QStringList disconnectLabels(const QList<StreamViewer>& viewers);
 
     /// The tray's tooltip: @p product, "Streaming (n)" while anyone is, and a
     /// security notice naming the TVs on plain HTTP. Never past the 127
