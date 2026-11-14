@@ -26,7 +26,8 @@
  * drag writes a place as shares of the layer (`touchPadLayouts`), which is what
  * makes the same arrangement survive a rotation, a resolution change or a
  * different tablet. Portrait and landscape are two separate saves, chosen by
- * the shape of the stage.
+ * the shape of the stage: the bar says which one is being set, and that
+ * turning the device sets the other. It is a line of text, not a choice.
  *
  * The pad style only renames the buttons (TouchPadView's labels): the host is
  * told of an Xbox pad whatever it is, and the places stay an Xbox pad's.
@@ -205,7 +206,6 @@ export class TouchPadLayoutEditor {
                 <div class="tp-bar-head">
                     <span class="tp-bar-grip">${GRIP}</span>
                     <strong class="tp-layout-editor-title">${t('settings.touchPadEditorTitle')}</strong>
-                    <span class="tp-layout-editor-orientation"></span>
                     <button type="button" class="tp-bar-unfold" data-act="unfold">
                         ${t('settings.touchPadEditorUnfold')}
                     </button>
@@ -217,6 +217,10 @@ export class TouchPadLayoutEditor {
                     </button>
                 </div>
                 <div class="tp-bar-body">
+                    <p class="tp-layout-editor-orientation">
+                        <span class="tp-orient-icon" aria-hidden="true"></span>
+                        <span class="tp-orient-text"></span>
+                    </p>
                     <label class="tp-layout-editor-style">
                         <span>${t('settings.touchPadEditorStyle')}</span>
                         <select>${styles}</select>
@@ -461,10 +465,12 @@ export class TouchPadLayoutEditor {
         const layout = this._view.lastLayout();
         if (!layout) return;
         const orientation = this._orientation();
-        this._el.querySelector('.tp-layout-editor-orientation').textContent =
+        // Information, not a choice: the layout being set is the one of the
+        // way the device is held, and turning it is how to set the other.
+        this._el.querySelector('.tp-orient-text').textContent =
             orientation === 'portrait'
-                ? t('settings.touchPadEditorPortrait')
-                : t('settings.touchPadEditorLandscape');
+                ? t('settings.touchPadEditorHintPortrait')
+                : t('settings.touchPadEditorHintLandscape');
         const rect = this._stage.getBoundingClientRect();
         const wants = layout.controls.map((c) => {
             if (c.kind === 'stick') {

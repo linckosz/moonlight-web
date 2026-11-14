@@ -1621,9 +1621,25 @@ body.streaming-active::after {
     letter-spacing: 0.04em;
     text-transform: uppercase;
 }
+/* Which layout is being set, and how to set the other: a line, not a control. */
 .tp-layout-editor-orientation {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
     font-size: 12px;
-    opacity: 0.7;
+    opacity: 0.75;
+}
+.tp-orient-icon {
+    flex: none;
+    width: 16px;
+    height: 11px;
+    border: 1.5px solid currentColor;
+    border-radius: 2px;
+}
+.is-portrait .tp-orient-icon {
+    width: 11px;
+    height: 16px;
 }
 .tp-bar-fold,
 .tp-bar-unfold {
@@ -1755,7 +1771,6 @@ body.streaming-active::after {
 }
 .is-folded .tp-bar-body,
 .is-folded .tp-layout-editor-title,
-.is-folded .tp-layout-editor-orientation,
 .is-folded .tp-bar-fold {
     display: none;
 }

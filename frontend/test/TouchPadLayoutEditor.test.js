@@ -233,12 +233,26 @@ describe('TouchPadLayoutEditor', () => {
         expect(editor._draft.landscape.a.y).toBeCloseTo(0.5, 2);
     });
 
-    it('names the orientation the stage is in', () => {
+    it('says which layout is being set, and that turning the device sets the other', () => {
         build();
-        const label = () => container.querySelector('.tp-layout-editor-orientation').textContent;
-        expect(label()).toBe('text:settings.touchPadEditorLandscape');
+        const line = container.querySelector('.tp-layout-editor-orientation');
+        const text = () => line.querySelector('.tp-orient-text').textContent;
+        expect(text()).toBe('text:settings.touchPadEditorHintLandscape');
         size(820, 1180);
-        expect(label()).toBe('text:settings.touchPadEditorPortrait');
+        expect(text()).toBe('text:settings.touchPadEditorHintPortrait');
+        // The little screen beside it stands up with the device.
+        expect(editor._el.classList.contains('is-portrait')).toBe(true);
+    });
+
+    it('shows the orientation as a line of the bar, not beside the fold button', () => {
+        build();
+        const line = container.querySelector('.tp-layout-editor-orientation');
+        // Information only: nothing to pick, and away from the fold button,
+        // which a "Landscape ⌄" next to it read as a drop-down.
+        expect(line.closest('.tp-bar-body')).not.toBeNull();
+        expect(container.querySelector('.tp-bar-head .tp-layout-editor-orientation')).toBeNull();
+        expect(line.querySelector('select, button, input')).toBeNull();
+        expect(line.querySelector('.tp-orient-icon').getAttribute('aria-hidden')).toBe('true');
     });
 
     it('takes the ring of a stick, never its zone', () => {
