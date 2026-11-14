@@ -51,7 +51,20 @@
 import { takeLinkKey, forgetLinkKey, putLinkKeyBack } from './net/linkKey.js';
 // And the link straight to one app it may carry (issue #63), off the address
 // before the page goes on: a reload or a Stop must never open the app again.
-import { pendingAppLink, appLinkAddress, splitAppLink, isAppLinkAlias } from './net/appLink.js';
+import {
+    pendingAppLink,
+    appLinkAddress,
+    isAppLinkAlias,
+    markAppIcon,
+    watchAppLinks,
+} from './net/appLink.js';
+import {
+    appIconMode,
+    appIconAddress,
+    endAppIcon,
+    forgetCachedAppLink,
+    manifestWithAppLink,
+} from './net/appIcon.js';
 // Then, before any module prints: the page's console for the client log in
 // debug mode (util/ClientLog.js).
 import { keepClientLogOff, refreshClientLog } from './util/ClientLog.js';
@@ -95,6 +108,8 @@ import {
     IS_LOW_MEMORY,
     IS_TV,
     IS_TOUCH_DEVICE,
+    IS_IOS,
+    IS_ANDROID,
     resolveTearing,
     hdrClientCapability,
     hdrLaunchCodec,
@@ -491,7 +506,16 @@ export const MoonlightApp = {
      */
     async _startSignedIn() {
         const plainLoopback = onPlainLoopback();
-        if (!plainLoopback) this._offerHomeScreenHandoff();
+        // The page being made into a link's icon loaded the manifest written for
+        // it just before the reload, key and all: left as it is, or a fresh key
+        // would stand behind the one the icon carries. Any other page puts the
+        // machine's own back (net/appIcon.js).
+        if (!plainLoopback && !appIconMode()) this._offerHomeScreenHandoff();
+        // A link that reaches an installed shortcut without a load (Android).
+        // Not on the wizard's plain loopback, which follows no link.
+        if (!plainLoopback && !this._stopWatchingAppLinks) {
+            this._stopWatchingAppLinks = watchAppLinks((alias) => this._followAppLink(alias));
+        }
 
         // ── First-run setup wizard (localhost only) ────────────────────────
         // macOS/Linux have no native installer, so the app hosts the setup
@@ -1160,6 +1184,10 @@ export const MoonlightApp = {
         // their routes are not open to it.
         if (this._plainHttpTv) return;
 
+        // The page being made into a link's icon says so, until Done.
+        const icon = appIconMode();
+        if (icon) this._showAppIcon(icon);
+
         // A link straight to one app (issue #63) this page was opened with:
         // served once, by pressing that app's card.
         const appLink = pendingAppLink();
@@ -1792,28 +1820,29 @@ export const MoonlightApp = {
         }
         const ownId = tunnelHostId();
         if (!ownId || this._runsAsShortcut()) return null;
-        // A shortcut to one app (issue #63): the same manifest, opening the link.
-        // Through the tunnel, /api/ is only ever answered by the bootstrap's
-        // worker, over the connection this page holds (sw.js askThePage), with
-        // no way out to the network. A page that has lost its worker would send
-        // the request to the introduction server instead, alias and all: then
-        // the alias is not sent at all.
+        // A shortcut to one app (issue #63): the same manifest, opening the link
+        // (net/appIcon.js). The alias is written into it here and never asked
+        // for: it is in no address that leaves the page. And only on a page the
+        // bootstrap's worker answers for (sw.js askThePage): one that has lost
+        // its worker would have nothing to put the manifest in.
         if (appLink && !pageCameThroughTunnel()) return 'failed';
-        const go = isAppLinkAlias(appLink) ? `&go=${appLink}` : '';
+        const go = isAppLinkAlias(appLink) ? appLink : null;
         try {
-            const fresh = await fetch(`/api/app/web-manifest?t=${Date.now()}${go}`, {
+            const fresh = await fetch(`/api/app/web-manifest?t=${Date.now()}`, {
                 cache: 'no-store',
             });
             if (!fresh.ok) {
                 console.warn(`[MW] Home-screen shortcut not prepared: HTTP ${fresh.status}`);
                 return 'failed';
             }
-            const manifest = await fresh.json();
+            let manifest = await fresh.json();
             // The shell this page was drawn from may come from before the PIN,
             // without the machine's name: the host gives it to a signed-in
-            // session only. The shortcut takes its name from this answer.
+            // session only. The shortcut takes its name from this answer — but a
+            // link's icon is named after its app, by the page (_showAppIcon).
             const title = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-            if (title && typeof manifest.name === 'string' && manifest.name)
+            if (go) manifest = manifestWithAppLink(manifest, go);
+            else if (title && typeof manifest.name === 'string' && manifest.name)
                 title.setAttribute('content', manifest.name);
             // The bootstrap's cache, under the file's own name: what the worker
             // matches a request for /manifest.webmanifest against (sw.js).
@@ -1925,78 +1954,130 @@ export const MoonlightApp = {
             }
             return;
         }
-        await this._prepareAppShortcut(alias, url, title);
+        await this._makeAppIcon(alias, title);
     },
 
     /**
-     * Makes this page the link straight to one app while the banner is up: the
-     * address, the manifest and the title a phone makes its icon from. The
-     * manifest names no app (the server keeps app names to the session); the
-     * title is this page's own, and it is what names the icon.
+     * Makes this page into the icon of a link straight to one app
+     * (net/appIcon.js). A phone makes its icon from the manifest the page
+     * loaded with, so the page reloads already being that link, noted in this
+     * tab first: straight to the host on "/?icon=<alias>", whose shell names the
+     * link's manifest; through the introduction server on its own address, once
+     * the worker's cache holds that manifest — only the fragment changes, and
+     * the alias is in no request.
      */
-    async _prepareAppShortcut(alias, url, title) {
-        closeAppLinkShortcut();
+    async _makeAppIcon(alias, title) {
+        closeAppLinkShortcut({ reload: false });
+        if (tunnelHostId()) {
+            if (
+                (await this._offerHomeScreenHandoff(alias)) !== 'ready' ||
+                !markAppIcon(alias, title)
+            ) {
+                Toast.error(t('appLink.makeFailed'));
+                // Whatever was written goes back to the machine's own.
+                if (!(await forgetCachedAppLink())) this._offerHomeScreenHandoff();
+                return;
+            }
+            try {
+                history.replaceState(
+                    history.state,
+                    '',
+                    window.location.pathname +
+                        window.location.search +
+                        appIconAddress(alias).slice(1),
+                );
+            } catch {
+                /* the mark alone is enough: the reload finds it */
+            }
+            this._reloadPage();
+            return;
+        }
+        // Straight to the host only: a page the worker answers for, without a
+        // tunnel of its own, has no shell of the host's to ask for.
+        if (pageCameThroughTunnel() || !markAppIcon(alias, title)) {
+            Toast.error(t('appLink.makeFailed'));
+            return;
+        }
+        this._openAddress(`/?icon=${alias}`);
+    },
+
+    /**
+     * The page as the icon of a link straight to one app, until Done, a tap
+     * outside the banner or a launch: the link in the address, the app and the
+     * host as the title — which names the icon, the manifest naming nothing —
+     * and the banner saying where the browser's own button is.
+     */
+    _showAppIcon({ alias, title }) {
+        const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
         const before = {
             title: document.title,
-            hash: window.location.hash,
-            appleTitle: null,
-            manifestHref: null,
+            appleTitle: appleTitle ? appleTitle.getAttribute('content') : null,
         };
-        const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-        const manifestLink = document.querySelector('link[rel="manifest"]');
-        if (appleTitle) before.appleTitle = appleTitle.getAttribute('content');
-        if (manifestLink) before.manifestHref = manifestLink.getAttribute('href');
-
-        // The address: this page's own, the link added to its fragment.
-        const rest = splitAppLink(window.location.hash).hash.replace(/^#/, '');
-        const linked = '#' + (rest ? rest + '&' : '') + 'go=' + alias;
-        const address = () =>
-            window.location.pathname + window.location.search + window.location.hash;
+        const address = appIconAddress(alias);
         try {
-            history.replaceState(
-                history.state,
-                '',
-                window.location.pathname + window.location.search + linked,
-            );
+            history.replaceState(history.state, '', address);
         } catch {
-            /* the address stays; the manifest still carries the link */
+            /* the manifest carries the link all the same */
         }
-
-        // The manifest: through the tunnel the one the bootstrap's cache
-        // answers with, as for the machine's own shortcut; here, the route.
-        const throughTunnel = !!tunnelHostId();
-        if (throughTunnel) await this._offerHomeScreenHandoff(alias);
-        else if (manifestLink)
-            manifestLink.setAttribute('href', `/api/app/web-manifest?go=${alias}`);
-
-        // The title, set after the manifest: the handoff writes its own.
-        document.title = title;
-        if (appleTitle) appleTitle.setAttribute('content', title);
-
-        const linkedAddress = address();
+        const name = title || document.title;
+        document.title = name;
+        if (appleTitle) appleTitle.setAttribute('content', name);
+        const hint = IS_IOS
+            ? 'appLink.homeScreenHintIos'
+            : IS_ANDROID
+              ? 'appLink.homeScreenHintAndroid'
+              : 'appLink.homeScreenHint';
         showAppLinkShortcut({
-            title,
-            url,
-            onDone: () => {
-                document.title = before.title;
-                if (appleTitle && before.appleTitle !== null)
-                    appleTitle.setAttribute('content', before.appleTitle);
-                if (address() === linkedAddress) {
-                    try {
-                        history.replaceState(
-                            history.state,
-                            '',
-                            window.location.pathname + window.location.search + before.hash,
-                        );
-                    } catch {
-                        /* left as it is */
-                    }
-                }
-                if (throughTunnel) this._offerHomeScreenHandoff();
-                else if (manifestLink && before.manifestHref !== null)
-                    manifestLink.setAttribute('href', before.manifestHref);
-            },
+            title: name,
+            hint: t(hint),
+            onClose: ({ reload }) => this._endAppIcon(before, address, reload),
         });
+    },
+
+    /**
+     * Puts the page back as it was before it became a link's icon: this tab's
+     * mark, the title, the address, the manifest link and, through the tunnel,
+     * the manifest the worker's cache holds. Done reloads too, so that what the
+     * page loaded is the machine's own again; a tap elsewhere or a launch does
+     * not, or what was tapped would be lost.
+     */
+    async _endAppIcon(before, address, reload) {
+        endAppIcon();
+        document.title = before.title;
+        const appleTitle = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+        if (appleTitle && before.appleTitle !== null)
+            appleTitle.setAttribute('content', before.appleTitle);
+        // A browser that reads the manifest again when it installs (Chrome on
+        // Android) then makes the machine's own icon.
+        const manifestLink = document.querySelector('link[rel="manifest"]');
+        if (manifestLink) manifestLink.setAttribute('href', '/manifest.webmanifest');
+        if (window.location.pathname + window.location.search + window.location.hash === address) {
+            try {
+                history.replaceState(history.state, '', '/');
+            } catch {
+                /* left as it is */
+            }
+        }
+        if (tunnelHostId()) {
+            const back = await this._offerHomeScreenHandoffWithin(HOME_SCREEN_HANDOFF_WAIT_MS);
+            if (back !== 'ready') await forgetCachedAppLink();
+        }
+        if (!reload) return;
+        if (tunnelHostId()) this._reloadPage();
+        else this._openAddress('/');
+    },
+
+    /** A link that reached this installed shortcut without a load (watchAppLinks). */
+    _followAppLink(alias) {
+        // A TV on plain HTTP follows none: their routes are not open to it.
+        if (this._plainHttpTv) return;
+        // Waiting in this tab, it is served by the next host list otherwise.
+        if (this.state === 'host_list' && this.hostListView) this.hostListView.openAppLink(alias);
+    },
+
+    /** Leaves this page for @p address on this origin, without a history entry. */
+    _openAddress(address) {
+        window.location.replace(address);
     },
 
     /** Whether this page IS an installed shortcut rather than a browser tab. */
@@ -2522,6 +2603,9 @@ export const MoonlightApp = {
             console.warn(`[MW] Launch of "${app.name}" ignored: state=${this.state}`);
             return;
         }
+        // A stream is no time to be making a link's icon: the banner goes, and
+        // the page is put back as it was, without a reload.
+        closeAppLinkShortcut({ reload: false });
 
         // Why 4:4:4 was not asked of the host this time, if it was not. Set by
         // the two places below that drop it, read by _createStreamView.

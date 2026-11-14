@@ -16,15 +16,15 @@
  */
 
 /**
- * The banner that turns this page into a home-screen icon for one app (issue
- * #63): "Tap Share, then Add to Home Screen".
+ * The banner of a page being made into the home-screen icon of a link straight
+ * to one app (issue #63, net/appIcon.js): the app and the host, and where the
+ * browser's own button is.
  *
- * A phone makes its icon from the page it shows — the address, the title, the
- * manifest — and not from a link handed to its share sheet. So the page that
- * asks is made into the link for as long as the banner stays: the caller has
- * already put the link in the address and the manifest, and the title here; the
- * banner says what to tap, offers the system's own share sheet for sending the
- * link elsewhere, and Done puts the page back as it was.
+ * No share button of its own: the sheet a page opens (navigator.share) never
+ * offers "Add to Home Screen" — only the browser's does — and sending the link
+ * elsewhere is what the browser's own sheet does too, the address being the
+ * link. Done puts the page back and reloads it; a touch anywhere outside the
+ * banner puts it back without a reload, and whatever was touched still happens.
  */
 
 import { t } from '../i18n/i18n.js';
@@ -36,48 +36,54 @@ let current = null;
  * Shows the banner. One at a time: a second one first closes the first, which
  * puts its page back.
  *
- * @param {{ title: string, url: string, onDone: () => void }} what
+ * @param {{ title: string, hint: string, onClose: (how: { reload: boolean }) => void }} what
  */
-export function showAppLinkShortcut({ title, url, onDone }) {
-    closeAppLinkShortcut();
+export function showAppLinkShortcut({ title, hint, onClose }) {
+    closeAppLinkShortcut({ reload: false });
 
     const el = document.createElement('div');
     el.className = 'app-link-banner';
     el.setAttribute('role', 'status');
-    const canShare = typeof navigator.share === 'function';
     el.innerHTML = `
         <div class="app-link-banner-text">
             <strong>${escapeHtml(title)}</strong>
-            <span>${escapeHtml(t('appLink.homeScreenHint'))}</span>
+            <span>${escapeHtml(hint)}</span>
         </div>
         <div class="app-link-banner-actions">
-            ${canShare ? `<button type="button" class="btn btn-secondary" data-act="share">${escapeHtml(t('appLink.shareNow'))}</button>` : ''}
             <button type="button" class="btn" data-act="done">${escapeHtml(t('appLink.done'))}</button>
         </div>
     `;
     el.addEventListener('click', (e) => {
-        const btn = /** @type {Element} */ (e.target).closest('[data-act]');
-        if (!btn) return;
-        if (btn.getAttribute('data-act') === 'share') {
-            navigator.share({ title, url }).catch(() => {
-                // Closed without sending: nothing to say.
-            });
-            return;
-        }
-        closeAppLinkShortcut();
+        const target = /** @type {Element} */ (e.target);
+        if (target.closest && target.closest('[data-act="done"]'))
+            closeAppLinkShortcut({ reload: true });
     });
+    // Captured, and left to go on: the banner goes, what was touched happens.
+    const outside = (e) => {
+        if (!el.contains(/** @type {Node} */ (e.target))) closeAppLinkShortcut({ reload: false });
+    };
+    document.addEventListener('pointerdown', outside, true);
     document.body.appendChild(el);
-    current = { el, onDone };
+    current = { el, onClose, outside };
 }
 
-/** Closes the banner, if one is up, and puts the page back as it was. */
-export function closeAppLinkShortcut() {
+/**
+ * Closes the banner, if one is up, and puts the page back as it was; reloaded
+ * too when @p reload (Done).
+ */
+export function closeAppLinkShortcut({ reload = false } = {}) {
     if (!current) return;
-    const { el, onDone } = current;
+    const { el, onClose, outside } = current;
     current = null;
+    document.removeEventListener('pointerdown', outside, true);
     el.remove();
     try {
-        onDone();
+        const done = onClose({ reload });
+        if (done && typeof done.catch === 'function') {
+            done.catch((err) =>
+                console.warn('[MW] Page not put back after a home-screen link:', err),
+            );
+        }
     } catch (err) {
         console.warn('[MW] Page not put back after a home-screen link:', err);
     }

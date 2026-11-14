@@ -80,8 +80,11 @@ QByteArray manifest(const QByteArray& json, const QString& title, const QString&
         obj[QStringLiteral("short_name")] = title;
     }
     // Ten letters and digits, nothing to encode: checked here as well as by the
-    // caller, since it is written into an address.
-    const QString go = mw::applinks::validAlias(appLink) ? appLink : QString();
+    // caller, since it is written into an address — and encoded all the same,
+    // so that what reaches the address is an address's even if the check moved.
+    const QString go = mw::applinks::validAlias(appLink)
+                           ? QString::fromLatin1(QUrl::toPercentEncoding(appLink))
+                           : QString();
     const bool throughRendezvous = kHostId.match(hostId).hasMatch();
     if (throughRendezvous || !go.isEmpty()) {
         // The path form, the one people share: the entry page reads the machine
@@ -105,6 +108,13 @@ QByteArray manifest(const QByteArray& json, const QString& title, const QString&
             fragment.isEmpty() ? address
                                : address + QLatin1Char('#') + fragment.join(QLatin1Char('&'));
         obj[QStringLiteral("id")] = go.isEmpty() ? address : address + QStringLiteral("?go=") + go;
+    }
+    // A shortcut to one app names nothing: not the app (the browser fetches a
+    // manifest without the session), and not the machine or the edition
+    // either, so the phone names the icon after the page that made it.
+    if (!go.isEmpty()) {
+        obj.remove(QStringLiteral("name"));
+        obj.remove(QStringLiteral("short_name"));
     }
 
     QJsonArray icons = obj.value(QStringLiteral("icons")).toArray();
@@ -139,6 +149,33 @@ QByteArray shell(const QByteArray& html, const QString& title, const QByteArray&
         replaceCaptured(page, touchIcon, dataUrl(icon180));
     }
 
+    return page.toUtf8();
+}
+
+AppIconPart appIconPart(const QString& path, const QString& icon, const QString& go,
+                        IconReach reach)
+{
+    // An allowlist of one: anything but the direct way in gets the ordinary files.
+    if (reach != IconReach::DirectToHost) return AppIconPart::None;
+    if ((path == QLatin1String("/") || path == QLatin1String("/index.html")) &&
+        mw::applinks::validAlias(icon))
+        return AppIconPart::Shell;
+    if (path == QLatin1String("/manifest.webmanifest") && mw::applinks::validAlias(go))
+        return AppIconPart::Manifest;
+    return AppIconPart::None;
+}
+
+QByteArray appIconShell(const QByteArray& html, const QString& alias)
+{
+    if (!mw::applinks::validAlias(alias)) return html;
+    static const QRegularExpression manifestLink(
+        QString::fromLatin1(R"re(<link\s+rel="manifest"\s+href="([^"]*)")re"));
+    QString page = QString::fromUtf8(html);
+    // An attribute, so escaped as one, and its value an address, so encoded as
+    // one — ten letters and digits come out of both unchanged.
+    replaceCaptured(page, manifestLink,
+                    htmlAttribute(QStringLiteral("/manifest.webmanifest?go=") +
+                                  QString::fromLatin1(QUrl::toPercentEncoding(alias))));
     return page.toUtf8();
 }
 

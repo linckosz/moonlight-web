@@ -359,8 +359,10 @@ private:
     /// local server on @p targetPort, connected after @p delayMs.
     void proxyWebSocket(QTcpSocket* clientSocket, const QByteArray& requestData, quint16 targetPort,
                         int delayMs = 0);
-    /// A static file's answer, the same for every way in that serves them.
-    HttpResponse staticFileAnswer(const HttpRequest& req, bool viaTunnel) const;
+    /// A static file's answer, the same for every way in that serves them, but
+    /// for what @p arrival decides: the tunnel's home-screen shell and manifest,
+    /// and the icon of a link straight to one app the direct way in only.
+    HttpResponse staticFileAnswer(const HttpRequest& req, Arrival arrival) const;
     /// Plain HTTP for a listed TV (issue #42): the validated Host when @p req
     /// arrives as one, empty otherwise.
     QString lanHttpArrival(const HttpRequest& req);
@@ -385,6 +387,13 @@ private:
     void personaliseForHomeScreen(const HttpRequest& req, HttpResponse& resp,
                                   const QString& ifNoneMatch,
                                   const QString& appLink = QString()) const;
+
+    /// Off the tunnel, rewrite the shell (@p shell) or the manifest a link
+    /// straight to one app is made into a home-screen icon from (issue #63; see
+    /// HomeScreenShell.h appIconPart), never stored, and answer @p ifNoneMatch
+    /// against the rewritten bytes.
+    void personaliseForAppIcon(const HttpRequest& req, HttpResponse& resp, bool shell,
+                               const QString& ifNoneMatch) const;
 
     /// The bytes of a file this server serves, for an icon a home-screen
     /// shortcut carries inlined; empty when there is no such file.

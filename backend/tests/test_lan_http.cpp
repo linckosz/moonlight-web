@@ -7,6 +7,7 @@
 
 #include "test_framework.h"
 #include "backend/streambackend/NativeHostBackend.h"
+#include "server/HomeScreenShell.h"
 #include "server/LanHttp.h"
 
 #include <QJsonArray>
@@ -206,6 +207,10 @@ void run_lan_http_tests()
     CHECK(!route("POST", "/api/lan-http/approve/abc"));
     CHECK(!route("GET", "/api/lan-http/approve/abc"));
     CHECK(!route("GET", "/api/admin/connection-history"));
+    // The links straight to one app (#63, N1): no TV's to make, read or follow.
+    CHECK(!route("POST", "/api/app-links"));
+    CHECK(!route("GET", "/api/app-links/x7Kq2AbC90"));
+    CHECK(!route("POST", "/api/app-links/x7Kq2AbC90/confirm"));
     CHECK(!route("GET", ""));
     CHECK(!route("GET", "api/hosts"));
 
@@ -386,6 +391,19 @@ void run_lan_http_tests()
                                             {"GET", "/api/auth/status"},
                                             {"POST", "/api/lan-http/approve/x"},
                                             {"GET", "/api/server/stream-activity"}}) {
+            const Gate g = gate(method, path, h, host, Key::Valid, false);
+            CHECK(g.verdict == Verdict::NotFound);
+            CHECK(!g.counted);
+        }
+    }
+    {
+        // N1 (#63): the routes of the links straight to one app answer a TV
+        // 404, each of them, even with a good key, and never counted.
+        Headers h{{"cookie", "mw_lan_http=T"}, {"origin", origin}};
+        for (const auto& [method, path] :
+             QList<QPair<QString, QString>>{{"POST", "/api/app-links"},
+                                            {"GET", "/api/app-links/x7Kq2AbC90"},
+                                            {"POST", "/api/app-links/x7Kq2AbC90/confirm"}}) {
             const Gate g = gate(method, path, h, host, Key::Valid, false);
             CHECK(g.verdict == Verdict::NotFound);
             CHECK(!g.counted);
@@ -632,4 +650,22 @@ void run_lan_http_tests()
     CHECK_EQ(pathForLog("/js/app.js"), QStringLiteral("/js/*"));
     CHECK_EQ(pathForLog("/api/abcdefghijklmnopqrstuvwxy"), QStringLiteral("/api/*"));
     CHECK_EQ(pathForLog("/"), QStringLiteral("/"));
+
+    SECTION("LanHttp — a link's icon is no TV's (#63)");
+    {
+        namespace hs = mw::homescreen;
+        const QString alias = QStringLiteral("x7Kq2AbC90");
+        // A TV reads the shell and the manifest, the files as they are...
+        CHECK(route("GET", "/"));
+        CHECK(route("GET", "/manifest.webmanifest"));
+        // ...never the ones an icon is made from: its way in is not the direct
+        // one (HttpServer::staticFileAnswer, Arrival::LanHttp), so ?icon= and
+        // ?go= get the ordinary bytes, and no header of the icon's.
+        CHECK(hs::appIconPart("/", alias, QString(), hs::IconReach::Elsewhere) ==
+              hs::AppIconPart::None);
+        CHECK(hs::appIconPart("/index.html", alias, QString(), hs::IconReach::Elsewhere) ==
+              hs::AppIconPart::None);
+        CHECK(hs::appIconPart("/manifest.webmanifest", QString(), alias,
+                              hs::IconReach::Elsewhere) == hs::AppIconPart::None);
+    }
 }

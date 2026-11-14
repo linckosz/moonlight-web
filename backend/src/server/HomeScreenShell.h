@@ -68,7 +68,10 @@ QString shownMachineName(const QString& machineName, bool signedIn);
 /// own, not the machine's front door replaced. Without a rendezvous identifier
 /// that address is this origin's own "/". The alias is written only when it has
 /// an alias's shape, and nothing about what it points at is: not its app's
-/// name, not its icon — a manifest is fetched without the session.
+/// name, not its icon — a manifest is fetched without the session. Such a
+/// manifest names nothing at all, not even the machine or the edition: the
+/// phone then names the icon after the page, which says the app and the host
+/// for the signed-in session that made it.
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
                     const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
                     const QString& appLink = QString());
@@ -76,5 +79,49 @@ QByteArray manifest(const QByteArray& json, const QString& title, const QString&
 /// The shell with @p title as its apple-mobile-web-app-title and @p icon180
 /// inlined as its apple-touch-icon. Anything it does not find is left as it is.
 QByteArray shell(const QByteArray& html, const QString& title, const QByteArray& icon180);
+
+/*
+ * A link straight to one app made into a home-screen icon, off the tunnel
+ * (issue #63). A phone makes the icon from the manifest of the page as it was
+ * loaded, never from one the page points at later; so the page reloads on
+ * "/?icon=<alias>", and the shell it gets names, from the start, the manifest
+ * that opens the link: "/manifest.webmanifest?go=<alias>".
+ *
+ * Both answers depend on the alias's shape and on nothing else: no store is
+ * asked, no session read, no host named, so they tell nobody whether an alias
+ * exists. Through the tunnel neither applies — there the page writes that
+ * manifest into the service worker's cache, and no alias ever travels in an
+ * address the introduction server could see.
+ */
+
+/// How a request reached this host, as far as an icon is concerned. Only the
+/// direct way in — one of this host's own listening sockets, where the origin
+/// is the machine — may get the icon's shell and manifest. Every other way —
+/// the tunnel, a TV on plain HTTP, any way in added later — is Elsewhere and
+/// gets the ordinary files. The caller decides in one place, by equality with
+/// its one direct arrival, so that a new way in is Elsewhere until said
+/// otherwise.
+enum class IconReach
+{
+    DirectToHost,
+    Elsewhere
+};
+
+/// Which of the two a request asks for. None unless the request came the
+/// direct way in (@p reach), the alias has an alias's shape, and it asks for the
+/// shell ("/" or "/index.html", with `icon`) or the manifest
+/// ("/manifest.webmanifest", with `go`).
+enum class AppIconPart
+{
+    None,
+    Shell,
+    Manifest
+};
+AppIconPart appIconPart(const QString& path, const QString& icon, const QString& go,
+                        IconReach reach);
+
+/// The shell whose manifest link opens the link to @p alias. Returned unchanged,
+/// byte for byte, when @p alias does not have an alias's shape.
+QByteArray appIconShell(const QByteArray& html, const QString& alias);
 
 } // namespace mw::homescreen

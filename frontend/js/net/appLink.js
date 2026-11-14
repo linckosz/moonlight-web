@@ -34,6 +34,10 @@
  *
  * Nothing it holds is old: an alias not served within a few minutes is
  * forgotten rather than acted on long after the tap that asked for it.
+ *
+ * One alias in the address is not a link to follow: the one this very tab is
+ * making into a home-screen icon (net/appIcon.js), marked in this tab before it
+ * reloaded on it. That one stays where it is, for the icon to take.
  */
 
 /** The shape the host mints: ten letters and digits (AppLinks.h validAlias). */
@@ -44,6 +48,30 @@ const STORE_KEY = 'mw-app-link';
 
 /** How long an alias waits for the page to be ready to serve it. */
 const PATIENCE_MS = 10 * 60 * 1000;
+
+/** Where this tab notes the alias it is making into a home-screen icon. */
+const ICON_KEY = 'mw-app-icon';
+
+/**
+ * Whether this page runs as an installed shortcut, decided once as the module
+ * loads and never again: a tab that later goes full screen for a stream (F11,
+ * or the Fullscreen API) is still a tab. Full screen counts only with no
+ * element shown full screen, which is how an installed app with
+ * "display": "fullscreen" starts — and how no tab ever loads.
+ */
+const RUNS_AS_SHORTCUT = (() => {
+    try {
+        if (navigator.standalone === true) return true;
+        if (typeof matchMedia !== 'function') return false;
+        if (matchMedia('(display-mode: standalone)').matches) return true;
+        return (
+            matchMedia('(display-mode: fullscreen)').matches &&
+            !(typeof document !== 'undefined' && document.fullscreenElement)
+        );
+    } catch {
+        return false;
+    }
+})();
 
 /** Whether @p alias has an alias's shape. */
 export function isAppLinkAlias(alias) {
@@ -75,7 +103,7 @@ export function splitAppLink(hash) {
 }
 
 /** Whether this page is a guest's: an invitation in its fragment, or /p. */
-function isGuestPage() {
+export function isGuestPage() {
     if (window.location.pathname === '/p') return true;
     const raw = String(window.location.hash || '').replace(/^#/, '');
     return raw.split('&').some((part) => part.startsWith('t='));
@@ -92,28 +120,107 @@ function store(alias) {
 /** The alias read from the address, for a page whose storage refused it. */
 let inMemory = null;
 
-/** Takes the alias off this page's address. Runs once, as the module loads. */
+/**
+ * Takes the alias off this page's address, and keeps it until it is served.
+ * Returns the alias kept, or null. Runs as the module loads, and again on a
+ * change of fragment in an installed shortcut (watchAppLinks).
+ */
 function takeFromAddress() {
     try {
         const current = window.location.hash;
-        if (!current || current.indexOf('go=') < 0) return;
+        if (!current || current.indexOf('go=') < 0) return null;
         const { alias, hash } = splitAppLink(current);
-        if (hash === current) return;
+        if (hash === current) return null;
         const guest = isGuestPage();
+        // The page this tab is making into an icon for this alias, reloaded on
+        // it: net/appIcon.js takes it from here, and nothing is launched.
+        if (alias && !guest && appIconMark()?.alias === alias) return null;
         history.replaceState(
             history.state,
             '',
             window.location.pathname + window.location.search + hash,
         );
-        if (!alias || guest) return;
+        if (!alias || guest) return null;
         inMemory = { alias, at: Date.now() };
         store(alias);
+        return alias;
     } catch {
         inMemory = null;
+        return null;
+    }
+}
+
+/**
+ * Notes that this tab is making @p alias into a home-screen icon titled
+ * @p title, before the page reloads on it (net/appIcon.js). False when there is
+ * no storage to note it in: the page then does not reload.
+ */
+export function markAppIcon(alias, title) {
+    if (!isAppLinkAlias(alias)) return false;
+    try {
+        sessionStorage.setItem(
+            ICON_KEY,
+            JSON.stringify({ alias, title: String(title || ''), at: Date.now() }),
+        );
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * The icon this tab is making, `{ alias, title }`, or null: none noted, not of
+ * an alias's shape, or older than the patience a link waits with — then it is
+ * dropped as it is read.
+ */
+export function appIconMark() {
+    let entry = null;
+    try {
+        const raw = sessionStorage.getItem(ICON_KEY);
+        if (!raw) return null;
+        entry = JSON.parse(raw);
+    } catch {
+        entry = null;
+    }
+    const age = entry ? Date.now() - Number(entry.at) : NaN;
+    if (!entry || !isAppLinkAlias(entry.alias) || !(age >= 0 && age <= PATIENCE_MS)) {
+        clearAppIconMark();
+        return null;
+    }
+    return { alias: entry.alias, title: String(entry.title || '') };
+}
+
+/** This tab makes no icon any more. */
+export function clearAppIconMark() {
+    try {
+        sessionStorage.removeItem(ICON_KEY);
+    } catch {
+        // Nothing kept.
     }
 }
 
 takeFromAddress();
+
+/**
+ * Follows a link straight to one app that arrives in an installed shortcut
+ * without a load: an application that takes the window it already has
+ * ("launch_handler": navigate-existing) may only change its fragment. Sorted
+ * exactly as at load, then @p onLink is told the alias, which waits as any
+ * other until served. Only in a shortcut (decided once, as the module loaded):
+ * in a tab, a fragment changed under the page starts nothing.
+ *
+ * @param {(alias: string) => void} onLink
+ * @returns {() => void} stops listening
+ */
+export function watchAppLinks(onLink) {
+    if (!RUNS_AS_SHORTCUT || typeof window === 'undefined') return () => {};
+    const listener = () => {
+        const alias = takeFromAddress();
+        if (alias) onLink(alias);
+    };
+    window.addEventListener('hashchange', listener);
+    return () => window.removeEventListener('hashchange', listener);
+}
 
 /**
  * The alias waiting to be served, or null. Read, not taken: it stays until

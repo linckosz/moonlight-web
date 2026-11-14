@@ -18,6 +18,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSet>
+#include <QStringList>
 #include <QTemporaryDir>
 
 #include <memory>
@@ -455,23 +456,28 @@ void run_app_links_tests()
         const QString id = QStringLiteral("0123456789abcdefghjkmnpqrs");
 
         // Off the tunnel: this origin's "/", the link in the fragment, an id of
-        // its own, the icons inlined, and no name but the edition's.
+        // its own, the icons inlined, and no name at all — the phone names the
+        // icon after the page that made it.
         const QJsonObject lan =
             QJsonDocument::fromJson(hs::manifest(json, QString(), QString(), QString(), "P192",
                                                  "P512", QStringLiteral("x7Kq2AbC90")))
                 .object();
         CHECK_EQ(lan["start_url"].toString(), QStringLiteral("/#go=x7Kq2AbC90"));
         CHECK_EQ(lan["id"].toString(), QStringLiteral("/?go=x7Kq2AbC90"));
-        CHECK_EQ(lan["name"].toString(), QStringLiteral("MoonlightWeb"));
+        CHECK(!lan.contains("name"));
+        CHECK(!lan.contains("short_name"));
         CHECK(lan["icons"].toArray().at(0).toObject()["src"].toString().startsWith("data:"));
 
-        // Through the tunnel: the machine's address, the link, then the key.
+        // Through the tunnel: the machine's address, the link, then the key —
+        // and no name there either, not even the machine's.
         const QJsonObject tunnel =
             QJsonDocument::fromJson(hs::manifest(json, "MoonlightWeb [DualRTX]", id, "K_1", "P192",
                                                  "P512", QStringLiteral("x7Kq2AbC90")))
                 .object();
         CHECK_EQ(tunnel["start_url"].toString(), "/" + id + "#go=x7Kq2AbC90&k=K_1");
         CHECK_EQ(tunnel["id"].toString(), "/" + id + "?go=x7Kq2AbC90");
+        CHECK(!tunnel.contains("name"));
+        CHECK(!tunnel.contains("short_name"));
 
         // Without a link, exactly as before.
         const QJsonObject plain =
@@ -491,5 +497,84 @@ void run_app_links_tests()
                                                  QStringLiteral("x7Kq2#k=AA")))
                 .object();
         CHECK_EQ(bad["start_url"].toString(), QStringLiteral("/"));
+    }
+
+    SECTION("app links — the icon's shell and manifest, the direct way in only");
+    {
+        namespace hs = mw::homescreen;
+        using Part = hs::AppIconPart;
+        const hs::IconReach direct = hs::IconReach::DirectToHost;
+        const hs::IconReach elsewhere = hs::IconReach::Elsewhere;
+        const QString alias = QStringLiteral("x7Kq2AbC90");
+
+        // The shell for "/" or "/index.html" with ?icon=, the manifest for
+        // /manifest.webmanifest with ?go=; nothing else, and only the direct way
+        // in — never by the tunnel, nor any other way.
+        CHECK(hs::appIconPart("/", alias, QString(), direct) == Part::Shell);
+        CHECK(hs::appIconPart("/index.html", alias, QString(), direct) == Part::Shell);
+        CHECK(hs::appIconPart("/manifest.webmanifest", QString(), alias, direct) == Part::Manifest);
+        CHECK(hs::appIconPart("/", alias, QString(), elsewhere) == Part::None);
+        CHECK(hs::appIconPart("/index.html", alias, QString(), elsewhere) == Part::None);
+        CHECK(hs::appIconPart("/manifest.webmanifest", QString(), alias, elsewhere) == Part::None);
+        CHECK(hs::appIconPart("/admin", alias, QString(), direct) == Part::None);
+        CHECK(hs::appIconPart("/", QString(), alias, direct) == Part::None);
+        CHECK(hs::appIconPart("/manifest.webmanifest", alias, QString(), direct) == Part::None);
+        CHECK(hs::appIconPart("/js/app.js", alias, alias, direct) == Part::None);
+
+        const QByteArray html =
+            "<head>\n"
+            "<meta name=\"apple-mobile-web-app-title\" content=\"MoonlightWeb\" />\n"
+            "<link rel=\"manifest\" href=\"/manifest.webmanifest\" />\n"
+            "</head>";
+        const QByteArray json = R"({
+            "name": "MoonlightWeb", "short_name": "MoonlightWeb", "start_url": "/", "scope": "/",
+            "icons": [ { "src": "assets/icon-192.png" }, { "src": "assets/icon-512.png" } ]
+        })";
+
+        // The shell names the manifest that opens the link, and nothing else moves.
+        const QByteArray shell = hs::appIconShell(html, alias);
+        CHECK(shell.contains(
+            "<link rel=\"manifest\" href=\"/manifest.webmanifest?go=x7Kq2AbC90\" />"));
+        CHECK_EQ(QByteArray(shell).replace("?go=x7Kq2AbC90", ""), html);
+
+        // Anything but an alias's shape: the files exactly as they are, byte for
+        // byte — a quote, an angle bracket, an escape, a path, too short, too long.
+        const QStringList notAliases = {QStringLiteral("x7Kq2\"bC90"),
+                                        QStringLiteral("x7Kq2<bC90"),
+                                        QStringLiteral("%22Kq2AbC90"),
+                                        QStringLiteral("../Kq2AbC9"),
+                                        QStringLiteral("x7Kq2AbC9"),
+                                        QStringLiteral("x7Kq2AbC90x"),
+                                        QString(1000, QLatin1Char('a')),
+                                        QStringLiteral("x7Kq2 bC90"),
+                                        QStringLiteral("x7Kq2&bC90"),
+                                        QStringLiteral("x7Kq2#bC90"),
+                                        QStringLiteral("x7Kq2?bC90"),
+                                        QStringLiteral("x7Kq2/bC90"),
+                                        QString::fromUtf8("x7Kq2\xC3\xA9"
+                                                          "C90a"),
+                                        QString()};
+        for (const QString& notAlias : notAliases) {
+            CHECK(hs::appIconPart("/", notAlias, QString(), direct) == Part::None);
+            CHECK(hs::appIconPart("/manifest.webmanifest", QString(), notAlias, direct) ==
+                  Part::None);
+            CHECK_EQ(hs::appIconShell(html, notAlias), html);
+            CHECK_EQ(hs::manifest(json, QString(), QString(), QString(), "", "", notAlias),
+                     hs::manifest(json, QString(), QString(), QString(), "", ""));
+        }
+
+        // The manifest a request without a session reads: the alias and nothing
+        // else — no key, no machine, no identifier, no name; this origin's "/".
+        const QByteArray bytes =
+            hs::manifest(json, QString(), QString(), QString(), "P192", "P512", alias);
+        const QJsonObject m = QJsonDocument::fromJson(bytes).object();
+        CHECK_EQ(m["start_url"].toString(), QStringLiteral("/#go=x7Kq2AbC90"));
+        CHECK_EQ(m["id"].toString(), QStringLiteral("/?go=x7Kq2AbC90"));
+        CHECK_EQ(m["scope"].toString(), QStringLiteral("/"));
+        CHECK(!m.contains("name"));
+        CHECK(!m.contains("short_name"));
+        CHECK(!bytes.contains("k="));
+        CHECK(!bytes.contains("MoonlightWeb"));
+        CHECK(!bytes.contains("DualRTX"));
     }
 }

@@ -810,6 +810,23 @@ QByteArray HttpServer::homeScreenIcon(const char* path) const
     return file.statusCode == 200 ? file.body : QByteArray();
 }
 
+// A file's own ETag no longer describes bytes rewritten on their way out: the
+// tag is taken over what is sent, and the conditional request answered on it.
+static void answerRewritten(HttpResponse& resp, const QString& ifNoneMatch)
+{
+    const QString etag =
+        QLatin1Char('"') +
+        QString::fromLatin1(
+            QCryptographicHash::hash(resp.body, QCryptographicHash::Sha1).toHex().left(16)) +
+        QLatin1Char('"');
+    resp.headers["ETag"] = etag;
+    resp.headers.remove("Last-Modified");
+    if (!ifNoneMatch.isEmpty() && ifNoneMatch.contains(etag)) {
+        resp.statusCode = 304;
+        resp.body.clear();
+    }
+}
+
 void HttpServer::personaliseForHomeScreen(const HttpRequest& req, HttpResponse& resp,
                                           const QString& ifNoneMatch, const QString& appLink) const
 {
@@ -832,17 +849,29 @@ void HttpServer::personaliseForHomeScreen(const HttpRequest& req, HttpResponse& 
     else
         return;
 
-    const QString etag =
-        QLatin1Char('"') +
-        QString::fromLatin1(
-            QCryptographicHash::hash(resp.body, QCryptographicHash::Sha1).toHex().left(16)) +
-        QLatin1Char('"');
-    resp.headers["ETag"] = etag;
-    resp.headers.remove("Last-Modified");
-    if (!ifNoneMatch.isEmpty() && ifNoneMatch.contains(etag)) {
-        resp.statusCode = 304;
-        resp.body.clear();
+    answerRewritten(resp, ifNoneMatch);
+}
+
+void HttpServer::personaliseForAppIcon(const HttpRequest& req, HttpResponse& resp, bool shell,
+                                       const QString& ifNoneMatch) const
+{
+    if (shell) {
+        resp.body =
+            mw::homescreen::appIconShell(resp.body, req.queryParams.value(QStringLiteral("icon")));
+        // The page's address carries the alias until its first script takes
+        // it off: nothing it loads before that says where it came from.
+        resp.headers["Referrer-Policy"] = "no-referrer";
+    } else {
+        // This origin is the machine, as for /api/app/web-manifest off the
+        // tunnel: its own "/", the link, the icons inlined, and no name, no
+        // machine, no key — nothing a request without a session may not read.
+        resp.body = mw::homescreen::manifest(
+            resp.body, QString(), QString(), QString(), homeScreenIcon("/assets/icon-192.png"),
+            homeScreenIcon("/assets/icon-512.png"), req.queryParams.value(QStringLiteral("go")));
     }
+    // Made for the one icon being added, never kept for the next page.
+    resp.headers["Cache-Control"] = "no-store";
+    answerRewritten(resp, ifNoneMatch);
 }
 
 QString HttpServer::cookieFromRequest(const HttpRequest& req, const QString& name)
@@ -1528,7 +1557,7 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     }
 
     if (!req.path.startsWith("/api/")) {
-        respond(staticFileAnswer(req, viaTunnel));
+        respond(staticFileAnswer(req, arrival));
         return;
     }
 
@@ -1904,8 +1933,10 @@ void HttpServer::stopIdleClose(QTcpSocket* socket)
         idle->stop();
 }
 
-HttpResponse HttpServer::staticFileAnswer(const HttpRequest& req, bool viaTunnel) const
+HttpResponse HttpServer::staticFileAnswer(const HttpRequest& req, Arrival arrival) const
 {
+    const bool viaTunnel = arrival == Arrival::Tunnel;
+
     // Static assets answer reads and nothing else. Every write verb on them
     // was already a no-op that returned the app shell with 200; saying 405
     // states the contract instead of implying the request did something.
@@ -1938,8 +1969,21 @@ HttpResponse HttpServer::staticFileAnswer(const HttpRequest& req, bool viaTunnel
     const bool homeScreen = viaTunnel && m_HomeScreenIdentity &&
                             (!looksLikeFile || req.path == QLatin1String("/index.html") ||
                              req.path == QLatin1String("/manifest.webmanifest"));
+    // A link straight to one app made into a home-screen icon (issue #63),
+    // only for a request that came the direct way in, and only for an alias's
+    // shape: the shell that names its manifest, and that manifest
+    // (HomeScreenShell.h appIconPart). Decided here and nowhere else, by
+    // equality with that one arrival: any other way in — the tunnel, a TV on
+    // plain HTTP, one added later — gets the ordinary files.
+    const mw::homescreen::IconReach iconReach = arrival == Arrival::Socket
+                                                    ? mw::homescreen::IconReach::DirectToHost
+                                                    : mw::homescreen::IconReach::Elsewhere;
+    const mw::homescreen::AppIconPart appIcon =
+        mw::homescreen::appIconPart(req.path, req.queryParams.value(QStringLiteral("icon")),
+                                    req.queryParams.value(QStringLiteral("go")), iconReach);
+    const bool appIconAsked = appIcon != mw::homescreen::AppIconPart::None;
     const QString ifNoneMatch = req.headers.value("if-none-match");
-    const QString fileIfNoneMatch = homeScreen ? QString() : ifNoneMatch;
+    const QString fileIfNoneMatch = (homeScreen || appIconAsked) ? QString() : ifNoneMatch;
 
     HttpResponse resp = m_StaticFiles->serveFile(req.path, fileIfNoneMatch);
     // SPA fallback: a path with no file extension is a frontend route
@@ -1951,6 +1995,9 @@ HttpResponse HttpServer::staticFileAnswer(const HttpRequest& req, bool viaTunnel
     if (resp.statusCode == 404 && !looksLikeFile)
         resp = m_StaticFiles->serveFile("/", fileIfNoneMatch);
     if (homeScreen && resp.statusCode == 200) personaliseForHomeScreen(req, resp, ifNoneMatch);
+    if (appIconAsked && resp.statusCode == 200)
+        personaliseForAppIcon(req, resp, appIcon == mw::homescreen::AppIconPart::Shell,
+                              ifNoneMatch);
     // HEAD is the same response without the representation.
     if (req.method == QLatin1String("HEAD")) resp.body.clear();
     return resp;
@@ -2134,7 +2181,7 @@ void HttpServer::serveLanHttp(HttpRequest req, ResponseCallback respond)
     }
 
     if (!req.path.startsWith(QLatin1String("/api/"))) {
-        respond(staticFileAnswer(req, false));
+        respond(staticFileAnswer(req, Arrival::LanHttp));
         return;
     }
 

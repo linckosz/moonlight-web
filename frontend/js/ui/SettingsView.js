@@ -112,6 +112,7 @@ import {
     streamLimits,
 } from '../util/StreamLimits.js';
 import { tunnelHostId } from '../net/tunnelBridge.js';
+import { endAppIcon, forgetCachedAppLink } from '../net/appIcon.js';
 import { audioSourceOptions, normalizeAudioSource } from './audioSourceOptions.js';
 import {
     CODEC_PYROWAVE,
@@ -3117,6 +3118,10 @@ export class SettingsView {
             // regardless: if it is not, the login page is what comes back.
             console.warn('[Settings] Logout request failed:', err);
         }
+        // No icon of a link straight to an app outlives the session: neither
+        // this tab's mark nor the manifest the worker's cache holds (issue #63).
+        endAppIcon();
+        await forgetCachedAppLink();
         window.location.replace(window.location.pathname);
     }
 

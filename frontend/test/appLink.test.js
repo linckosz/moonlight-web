@@ -4,7 +4,7 @@
 // guest's page.
 // @vitest-environment jsdom
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const ALIAS = 'x7Kq2AbC90';
 
@@ -87,6 +87,119 @@ describe('the alias a page is opened with', () => {
     it('never reads one out of the query', async () => {
         const mod = await loadAt(`/?go=${ALIAS}`);
         expect(mod.pendingAppLink()).toBeNull();
+    });
+});
+
+describe('the page this tab is making into an icon (net/appIcon.js)', () => {
+    const mark = (alias, at = Date.now()) =>
+        sessionStorage.setItem('mw-app-icon', JSON.stringify({ alias, title: 'Desktop · PC', at }));
+
+    it('leaves its own alias in the address, and launches nothing', async () => {
+        mark(ALIAS);
+        const mod = await loadAt(`/#go=${ALIAS}`);
+        expect(window.location.hash).toBe(`#go=${ALIAS}`);
+        expect(mod.pendingAppLink()).toBeNull();
+        expect(mod.appIconMark()).toEqual({ alias: ALIAS, title: 'Desktop · PC' });
+    });
+
+    it('is a link like any other for another alias, or once the mark is old', async () => {
+        mark('Zz9Zz9Zz9Z');
+        let mod = await loadAt(`/#go=${ALIAS}`);
+        expect(mod.pendingAppLink()).toBe(ALIAS);
+        sessionStorage.clear();
+        mark(ALIAS, Date.now() - 11 * 60 * 1000);
+        mod = await loadAt(`/#go=${ALIAS}`);
+        expect(mod.pendingAppLink()).toBe(ALIAS);
+        expect(sessionStorage.getItem('mw-app-icon')).toBeNull();
+    });
+
+    it('notes only an alias, and forgets it on request', async () => {
+        const mod = await loadAt('/');
+        expect(mod.markAppIcon('nope', 'x')).toBe(false);
+        expect(mod.markAppIcon(ALIAS, 'Desktop · PC')).toBe(true);
+        expect(mod.appIconMark().alias).toBe(ALIAS);
+        mod.clearAppIconMark();
+        expect(mod.appIconMark()).toBeNull();
+    });
+});
+
+describe('a link that reaches the page without a load (watchAppLinks)', () => {
+    /** matchMedia answering @p modes, as the page sees it while it loads. */
+    const displayModes = (...modes) =>
+        vi.stubGlobal('matchMedia', (query) => ({
+            matches: modes.some((mode) => query === `(display-mode: ${mode})`),
+        }));
+
+    const changeFragment = (hash) => {
+        window.history.replaceState(null, '', `/${hash}`);
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+    };
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        Object.defineProperty(document, 'fullscreenElement', { value: null, configurable: true });
+    });
+
+    it('starts nothing in a tab, even once it went full screen for a stream', async () => {
+        displayModes('browser');
+        const mod = await loadAt('/');
+        const onLink = vi.fn();
+        const stop = mod.watchAppLinks(onLink);
+        // The tab goes full screen afterwards: still a tab.
+        displayModes('fullscreen');
+        Object.defineProperty(document, 'fullscreenElement', {
+            value: document.body,
+            configurable: true,
+        });
+        changeFragment(`#go=${ALIAS}`);
+        expect(onLink).not.toHaveBeenCalled();
+        expect(mod.pendingAppLink()).toBeNull();
+        stop();
+    });
+
+    it('follows one in a shortcut loaded full screen, sorted as at load', async () => {
+        displayModes('fullscreen');
+        const mod = await loadAt('/');
+        const onLink = vi.fn();
+        const stop = mod.watchAppLinks(onLink);
+        changeFragment(`#go=${ALIAS}`);
+        expect(onLink).toHaveBeenCalledWith(ALIAS);
+        expect(window.location.hash).toBe('');
+        expect(mod.pendingAppLink()).toBe(ALIAS);
+        // The same refusals as at load: an ill-formed one, a guest's page.
+        mod.forgetAppLink();
+        onLink.mockClear();
+        changeFragment('#go=..%2Fx');
+        changeFragment(`#t=TOKEN&go=${ALIAS}`);
+        expect(onLink).not.toHaveBeenCalled();
+        expect(mod.pendingAppLink()).toBeNull();
+        stop();
+    });
+
+    it('follows one in a standalone shortcut too', async () => {
+        displayModes('standalone');
+        const mod = await loadAt('/');
+        const onLink = vi.fn();
+        const stop = mod.watchAppLinks(onLink);
+        changeFragment(`#go=${ALIAS}`);
+        expect(onLink).toHaveBeenCalledWith(ALIAS);
+        stop();
+        onLink.mockClear();
+        changeFragment(`#go=${ALIAS}`);
+        expect(onLink).not.toHaveBeenCalled();
+    });
+
+    it('is decided as the module loads: loaded in a full-screen tab, it never listens', async () => {
+        displayModes('fullscreen');
+        Object.defineProperty(document, 'fullscreenElement', {
+            value: document.body,
+            configurable: true,
+        });
+        const mod = await loadAt('/');
+        const onLink = vi.fn();
+        mod.watchAppLinks(onLink);
+        changeFragment(`#go=${ALIAS}`);
+        expect(onLink).not.toHaveBeenCalled();
     });
 });
 
