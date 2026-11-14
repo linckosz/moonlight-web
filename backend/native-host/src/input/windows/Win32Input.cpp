@@ -982,7 +982,7 @@ void Win32Input::stop()
     const uint64_t gated = m_Gated.load(std::memory_order_relaxed);
     log::info("[native] input: " + std::to_string(m_Injected.load(std::memory_order_relaxed)) +
               " event(s) injected this session" +
-              (gated ? ", " + std::to_string(gated) + " press(es) dropped at the gate" : ""));
+              (gated ? ", " + std::to_string(gated) + " event(s) dropped at the gate" : ""));
     {
         // What the soft keyboard's text became, in one line: counts and why
         // Unicode was needed, never a character (a PIN goes through here).

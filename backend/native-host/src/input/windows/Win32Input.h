@@ -358,7 +358,9 @@ private:
     bool m_GateBlocked = false;
     std::string m_GateWindow;
     void* m_GateHwnd = nullptr;
-    std::atomic<uint64_t> m_Gated{0}; ///< presses dropped at the gate
+    /// Events dropped: every event at the desktop gate and on the sign-in screen,
+    /// a press at the input gate (InputGate), a Ctrl+Alt+Suppr held back.
+    std::atomic<uint64_t> m_Gated{0};
 
     /// releaseBlock's worker: COM into the shell, then a wait, so it cannot run
     /// on the thread that asked. Joined by stop().
