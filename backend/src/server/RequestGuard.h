@@ -88,6 +88,18 @@ bool isLocalHostName(const QString& hostHeader);
 /// caller that forges one loses what its address was worth.
 bool forwardedByProxy(const QMap<QString, QString>& headers);
 
+/// Whether a request is this machine reaching itself on loopback and nothing
+/// wider: its socket peer is a loopback address (127.0.0.0/8, ::1, or
+/// ::ffff:127.x), it asked under a loopback name (localhost, 127.x, ::1), and
+/// no proxy on the way forwarded it. The narrowest form of the local privilege
+/// (Decision::localPrivilege, which also takes this machine's own LAN
+/// addresses and names): a request it holds for has that privilege too. It is
+/// the one plain-HTTP page of the host's that is not sent to HTTPS
+/// (HttpServer::processRequest): a LAN caller that writes "localhost" in Host,
+/// or a local reverse proxy relaying the LAN, is sent there like everyone else.
+bool loopbackOnly(const QString& peer, const QString& hostHeader,
+                  const QMap<QString, QString>& headers);
+
 /// Whether a request body may be accepted. Requires application/json for any
 /// non-empty body, which also forces a CORS preflight on cross-origin writes.
 bool isBodyContentTypeAllowed(const QString& contentType, qsizetype bodySize);

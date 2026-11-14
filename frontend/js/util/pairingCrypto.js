@@ -86,6 +86,31 @@ export const KEY_REFUSED = 'key_refused';
  */
 export const HOST_KEY_MISSING = 'host_key_missing';
 
+/**
+ * Why there is no key on this page: it is the first-run wizard, served over
+ * plain HTTP on this machine's loopback (server/FirstRunLink.h). That origin is
+ * whoever's holds the port at the time, so it keeps nothing: no key is made,
+ * read or kept there, and a request that would carry one is not sent at all,
+ * never sent without it. The key is made on HTTPS, after the wizard.
+ */
+export const PLAIN_LOOPBACK = 'plain_loopback_no_key';
+
+/**
+ * Whether this page is plain HTTP on this machine's loopback (localhost,
+ * 127.x, [::1]): the first-run wizard's origin. A TV on plain HTTP (issue #42)
+ * is on a LAN address, not this, and is left as it is.
+ */
+export function onPlainLoopback(loc = globalThis.location) {
+    if (!loc || loc.protocol !== 'http:') return false;
+    const h = String(loc.hostname || '').toLowerCase();
+    return (
+        h === 'localhost' ||
+        h === '[::1]' ||
+        h === '::1' ||
+        /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)
+    );
+}
+
 /** What /api/auth/status last said of this browser: local privilege here. */
 let localPrivilegeSaid = false;
 
@@ -249,12 +274,17 @@ function dbPut(db, key, value) {
  * browsers). Callers must treat null as "cannot bind", never as "binding
  * succeeded trivially".
  *
+ * Throws PLAIN_LOOPBACK on the first-run wizard's plain-HTTP origin (see
+ * onPlainLoopback): nothing is opened or made there, and every caller that
+ * awaits it stops before its request leaves, instead of sending it unsigned.
+ *
  * @param {{ forHost?: string }} [options]  another machine's record rather
  *   than the current host's: what a page uses when it speaks to a second
  *   machine over a connection of its own, and must present the key that
  *   machine will later be shown.
  */
 export async function loadOrCreateIdentity({ forHost } = {}) {
+    if (onPlainLoopback()) throw new Error(PLAIN_LOOPBACK);
     if (!globalThis.crypto?.subtle || !globalThis.indexedDB) {
         console.warn('[MW-BIND] WebCrypto or IndexedDB unavailable — cannot bind this browser');
         return null;
@@ -304,6 +334,7 @@ export async function loadOrCreateIdentity({ forHost } = {}) {
  * @param {{ forHost?: string }} [options]  see loadOrCreateIdentity.
  */
 export async function rememberHostIdentity(hostPublicKeyBase64, hostId, { forHost } = {}) {
+    if (onPlainLoopback()) return false;
     if (!hostPublicKeyBase64 || !globalThis.indexedDB) return false;
 
     try {
@@ -331,7 +362,7 @@ export async function rememberHostIdentity(hostPublicKeyBase64, hostId, { forHos
 
 /** Forget everything, so the next visit pairs from scratch. */
 export async function clearIdentity() {
-    if (!globalThis.indexedDB) return;
+    if (onPlainLoopback() || !globalThis.indexedDB) return;
     try {
         const db = await openDb();
         await dbPut(db, recordId(), undefined);

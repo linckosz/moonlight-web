@@ -237,6 +237,10 @@ function serveWorkerRequests() {
  */
 export async function startTunnel(onStage) {
     if (!('serviceWorker' in navigator)) return false;
+    // The rendezvous is HTTPS only. On plain HTTP (the first-run wizard on
+    // loopback, a TV on the LAN) there is no bootstrap to ask, and nothing of
+    // a worker's is ever looked for, or registered.
+    if (location.protocol === 'http:') return false;
 
     // The bootstrap's transport, from the bootstrap's own origin. On a direct
     // connection this file does not exist and the import fails — which is the

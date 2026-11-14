@@ -1089,12 +1089,18 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // to our HTTP port. In that case the browser is already on HTTPS at
     // the tunnel edge, and redirecting would create a loop.
     //
-    // Exception 2: skip redirect for a loopback Host (localhost / 127.0.0.1 /
-    // ::1). Serving these over plain HTTP is safe (traffic never leaves the
-    // machine) and lets the local entry points — the setup wizard and admin
-    // page — open without a self-signed-cert warning (which some browsers,
-    // notably Ubuntu's snap Firefox, render as a blank page). Streaming pages
-    // still require HTTPS: the frontend gates them and offers a secure link.
+    // Exception 2: skip redirect for this machine reaching itself on loopback,
+    // and only that (RequestGuard::loopbackOnly): a loopback peer, a loopback
+    // Host, no proxy on the way. Serving it over plain HTTP is safe (traffic
+    // never leaves the machine) and lets the first-run setup wizard open
+    // without a self-signed-cert warning (which some browsers, notably
+    // Ubuntu's snap Firefox, render as a blank page; and which an app catalogue
+    // that screenshots a first launch reads as an error). The page keeps
+    // nothing there and does nothing but the wizard (app.js). A LAN caller
+    // that writes "localhost" in Host, or a local reverse proxy relaying the
+    // LAN, is sent to HTTPS like everyone else. A request through the
+    // rendezvous tunnel never comes this way: ControlTunnel hands it to
+    // serveRequest() as Arrival::Tunnel, without a socket.
     //
     // The redirect URL omits the port when it is the standard 443, so
     // http://domain → https://domain (clean URL without :443).
@@ -1117,12 +1123,12 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 
         bool isLocalClient = peerLocal;
         bool isPublicDomain = !isLanHost(hostname);
-        bool isLoopbackHost = hostname.compare("localhost", Qt::CaseInsensitive) == 0 ||
-                              hostname == "127.0.0.1" || hostname == "::1" || hostname == "[::1]";
+        const bool loopbackOnly = RequestGuard::loopbackOnly(req.clientAddress, host, req.headers);
 
         // Skip redirect behind a TLS-terminating tunnel (localhost client +
-        // public Host header) or for a loopback Host (served as HTTP directly).
-        if (!((isLocalClient && isPublicDomain) || isLoopbackHost)) {
+        // public Host header) or for this machine on loopback (served as HTTP
+        // directly).
+        if (!((isLocalClient && isPublicDomain) || loopbackOnly)) {
             QString portPart;
             if (m_ActiveHttpsPort != 443) portPart = QString(":%1").arg(m_ActiveHttpsPort);
 

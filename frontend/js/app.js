@@ -171,6 +171,7 @@ import {
     KEY_REFUSED,
     isBindRefusal,
     noteLocalPrivilege,
+    onPlainLoopback,
 } from './util/pairingCrypto.js';
 import {
     startTunnel,
@@ -357,7 +358,9 @@ export const MoonlightApp = {
         // Measure this screen's refresh rate now, and again whenever the
         // window may have changed screen, so a launch can tell the native
         // host without waiting for a measurement — see util/RefreshRate.js.
-        startRefreshRateMonitor();
+        // Not on the first-run wizard's plain-HTTP origin: it streams nothing
+        // and keeps nothing, the measurement included.
+        if (!onPlainLoopback()) startRefreshRateMonitor();
 
         // Before anything is on screen: the seal, whenever this page arrived
         // down a tunnel. The wait that follows is the connection being made and
@@ -469,7 +472,21 @@ export const MoonlightApp = {
         const authOk = await this._checkAuth();
         bootMark('auth-checked', authOk ? 'signed in' : 'login shown');
         if (!authOk) return; // LoginView handles rendering, stop here
-        this._offerHomeScreenHandoff();
+        await this._startSignedIn();
+    },
+
+    /**
+     * The start of a signed-in page, once the auth check has passed: the setup
+     * wizard when it is due, then the app itself.
+     *
+     * Plain HTTP on this machine's loopback is the first-run wizard's origin and
+     * nothing else's (server/FirstRunLink.h). It keeps nothing, so it offers no
+     * shortcut, and it does nothing but the wizard: no router, no control
+     * channel, no housekeeping. Anything else there is the gate's link to HTTPS.
+     */
+    async _startSignedIn() {
+        const plainLoopback = onPlainLoopback();
+        if (!plainLoopback) this._offerHomeScreenHandoff();
 
         // ── First-run setup wizard (localhost only) ────────────────────────
         // macOS/Linux have no native installer, so the app hosts the setup
@@ -477,6 +494,12 @@ export const MoonlightApp = {
         // owns provisioning), so the gate is a no-op there.
         const setupShown = await this._maybeShowSetup();
         if (setupShown) return; // SetupView handles rendering; continues on finish
+
+        if (plainLoopback) {
+            const main = document.getElementById('main-content');
+            if (main) this._renderInsecureGate(main);
+            return;
+        }
 
         this._initNavButtons();
         this._initRouter();
@@ -1644,6 +1667,13 @@ export const MoonlightApp = {
     async _redeemHostKey() {
         const link = takeLinkKey();
         if (!link) return;
+        // The first-run wizard's plain-HTTP origin keeps nothing and binds
+        // nothing: a key that reached it anyway (no link of ours carries one
+        // there) is off the address already, and is dropped unspent.
+        if (onPlainLoopback()) {
+            forgetLinkKey();
+            return;
+        }
         const { key: raw, direct } = link;
 
         let answered = false;
@@ -2071,6 +2101,9 @@ export const MoonlightApp = {
      * refused later still says why.
      */
     async _sessionHasAnotherKey(status) {
+        // No key is made on the first-run wizard's plain-HTTP origin: it has no
+        // session to compare with either (local privilege, no login).
+        if (onPlainLoopback()) return false;
         let timer;
         const answer = await Promise.race([
             BackendClient.ensurePairingKey().catch(() => null),

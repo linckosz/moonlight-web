@@ -81,6 +81,7 @@
 #include "server/CertManager.h"
 #include "server/Provisioning.h"
 #include "server/HostKeyVault.h"
+#include "server/FirstRunLink.h"
 #include "server/HttpServer.h"
 #include "server/ControlChannel.h"
 #include "server/ControlTunnel.h"
@@ -8604,6 +8605,17 @@ int main(int argc, char* argv[])
         // both on an ordinary connection, and a machine with no internet does
         // not sit staring at nothing — it opens loopback, which is exactly what
         // it did before.
+        //
+        // The first-run wizard is the exception (macOS/Linux): plain HTTP on
+        // loopback, without a key, so that a first launch shows the wizard and
+        // not the self-signed certificate's warning (server/FirstRunLink.h).
+        // Its last step moves to HTTPS. No plain listener: the HTTPS link.
+#ifdef Q_OS_WIN
+        const bool wizardOnHttp = false;
+#else
+        const bool wizardOnHttp = path == QStringLiteral("/setup");
+#endif
+        HttpServer* const plainServer = &server;
         const bool wantRemote = path == QStringLiteral("/admin") && rendezvousShouldRun();
         auto attemptsLeft = std::make_shared<int>(wantRemote ? 14 : 1);
         QTimer* opener = new QTimer(&app);
@@ -8613,7 +8625,9 @@ int main(int argc, char* argv[])
             if (link.isEmpty() && --(*attemptsLeft) > 0) return;
             opener->stop();
             opener->deleteLater();
-            const QString url = link.isEmpty() ? localLink(path) : link;
+            QString url =
+                wizardOnHttp ? FirstRunLink::wizardUrl(plainServer->activeHttpPort()) : QString();
+            if (url.isEmpty()) url = link.isEmpty() ? localLink(path) : link;
             // Without its fragment: that is where the host key rides.
             QUrl logged(url);
             logged.setFragment(QString());

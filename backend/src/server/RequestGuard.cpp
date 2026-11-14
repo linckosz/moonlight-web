@@ -225,6 +225,33 @@ bool forwardedByProxy(const QMap<QString, QString>& headers)
     return false;
 }
 
+namespace {
+
+/// A loopback address, IPv4 mapped into IPv6 included ("::ffff:127.0.0.1").
+bool isLoopbackAddress(const QString& text)
+{
+    const QHostAddress addr(text);
+    if (addr.isNull()) return false;
+    if (addr.isLoopback()) return true;
+    bool mapped = false;
+    const quint32 v4 = addr.toIPv4Address(&mapped);
+    return mapped && QHostAddress(v4).isLoopback();
+}
+
+} // namespace
+
+bool loopbackOnly(const QString& peer, const QString& hostHeader,
+                  const QMap<QString, QString>& headers)
+{
+    if (!isLoopbackAddress(peer)) return false;
+    // A Host is required here, unlike isLocalHostName: every browser sends one,
+    // and a request without one has no loopback name to be served under.
+    const QString host = splitAuthority(hostHeader).host;
+    if (host.isEmpty()) return false;
+    if (host != QLatin1String("localhost") && !isLoopbackAddress(host)) return false;
+    return !forwardedByProxy(headers);
+}
+
 bool isBodyContentTypeAllowed(const QString& contentType, qsizetype bodySize)
 {
     if (bodySize <= 0) return true; // nothing to parse
