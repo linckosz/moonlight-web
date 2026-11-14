@@ -115,10 +115,4 @@ export const Icons = {
             '<path d="M19 10v1a7 7 0 0 1-.11 1.23M16.95 16.95A7 7 0 0 1 5 11v-1"/>' +
             '<line x1="12" y1="18" x2="12" y2="22"/>',
     ),
-    // Share — an app card's link straight to its app (issue #63) on a phone or
-    // a tablet, toward a home-screen icon; on a computer it is `link` above
-    share: svg(
-        '<path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>' +
-            '<polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/>',
-    ),
 };

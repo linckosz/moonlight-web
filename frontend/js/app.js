@@ -89,6 +89,8 @@ import { touchPadSettings } from './stream/TouchPadState.js';
 import { BackendClient } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { showAppLinkShortcut, closeAppLinkShortcut } from './ui/AppLinkShortcut.js';
+import { appIconName } from './ui/AppShortcutSheet.js';
+import { showAppLinkLoader, hideAppLinkLoader } from './ui/AppLinkLoader.js';
 import { DiscordLink } from './ui/DiscordLink.js';
 import * as RemoteNav from './ui/RemoteNav.js';
 import * as ViewHeaderScroll from './ui/ViewHeaderScroll.js';
@@ -279,6 +281,17 @@ const SIDE_KEYS_STORE = 'mw-hs-side-keys';
 
 /** How long the boot waits for the host's answer on this browser's pairing key. */
 const PAIRING_KEY_WAIT_MS = 1500;
+
+/**
+ * How long a link straight to one app waits, just before it launches the app
+ * with no tap, for the host's answer on this browser's key (issue #63). A web
+ * app made from a page on a phone holds that page's cookie but a key of its
+ * own, made the first time it opens, which takes a while: the host's 409 came
+ * after the boot's short wait, and the link launched an app the stream was
+ * then refused for (benches of 14/11).
+ */
+const APP_LINK_PAIRING_KEY_WAIT_MS = 10000;
+
 /** The person asked for the PIN screen after a refused stream: read by the boot
  *  that follows, and gone with it. */
 const PIN_ASKED_KEY = 'mw_pin_asked';
@@ -1191,7 +1204,7 @@ export const MoonlightApp = {
         // A link straight to one app (issue #63) this page was opened with:
         // served once, by pressing that app's card.
         const appLink = pendingAppLink();
-        if (appLink) this.hostListView.openAppLink(appLink);
+        if (appLink) this._serveAppLink(appLink);
 
         // Tell the user how OTHER PCs reach this server (host machine), and —
         // on every machine — what is missing or better than the address they
@@ -1926,7 +1939,7 @@ export const MoonlightApp = {
             Toast.error(t('appLink.makeFailed'));
             return;
         }
-        const title = `${app.displayName} · ${host.displayName}`;
+        const title = appIconName(host, app);
 
         if (!IS_TOUCH_DEVICE) {
             try {
@@ -2072,7 +2085,52 @@ export const MoonlightApp = {
         // A TV on plain HTTP follows none: their routes are not open to it.
         if (this._plainHttpTv) return;
         // Waiting in this tab, it is served by the next host list otherwise.
-        if (this.state === 'host_list' && this.hostListView) this.hostListView.openAppLink(alias);
+        if (this.state === 'host_list' && this.hostListView) this._serveAppLink(alias);
+    },
+
+    /**
+     * Serves a link straight to one app (issue #63): the app's launch shows at
+     * once rather than the list of hosts it goes through, and nothing is
+     * launched with no tap from a session that is another browser's.
+     *
+     * That is what an iOS web app made from a page is: it holds the page's
+     * cookie but a key of its own, and the host refuses its stream — after the
+     * app was launched. So the host's answer on this browser's key is waited
+     * for here, just before the launch, wherever the link came from (a load, or
+     * a shortcut already open that only changed its fragment). Refused: the
+     * PIN, once; the link waits through it and is served after.
+     */
+    async _serveAppLink(alias) {
+        if (!this.hostListView) return;
+        showAppLinkLoader();
+        if (await this._appLinkKeyRefused()) {
+            hideAppLinkLoader();
+            this._askPinAgain();
+            return;
+        }
+        const launches = this._launchCalls;
+        try {
+            await this.hostListView.openAppLink(alias, (name) => showAppLinkLoader(name));
+        } finally {
+            // Nothing launched (gone, missing, a question answered no): the page.
+            // Launched: the loader stays until the stream, or the list again.
+            if (this._launchCalls === launches) hideAppLinkLoader();
+        }
+    },
+
+    /** Whether the host refuses this browser's key (see _serveAppLink). */
+    async _appLinkKeyRefused() {
+        // The host machine has no PIN to ask for, and a booth refuses one.
+        if (this._isHostMachine() || BackendClient.adminLocked) return false;
+        let timer;
+        const answer = await Promise.race([
+            BackendClient.ensurePairingKey().catch(() => null),
+            new Promise((resolve) => {
+                timer = setTimeout(resolve, APP_LINK_PAIRING_KEY_WAIT_MS, null);
+            }),
+        ]);
+        clearTimeout(timer);
+        return !!answer?.sessionKeyRefused;
     },
 
     /** Leaves this page for @p address on this origin, without a history entry. */
@@ -2595,6 +2653,9 @@ export const MoonlightApp = {
     // =========================================================================
 
     async launchApp(host, app, codecOverride, hdrOverride, opts) {
+        // Counted for a link straight to one app, which tells from it whether its
+        // card's press reached a launch (_serveAppLink).
+        this._launchCalls = (this._launchCalls || 0) + 1;
         // A launch is already in flight or a stream is active — ignore. A second
         // launch here would trigger a backend take-over of the session the user
         // just started. (HostListView blocks card clicks too; this covers every
@@ -3393,6 +3454,8 @@ export const MoonlightApp = {
     },
 
     _showAppRunningDialog(host, app, runningId) {
+        // A question about the launch: the page it is asked over, not a loader.
+        hideAppLinkLoader();
         if (document.querySelector('.app-running-overlay')) return;
         const entry =
             this.hostListView && this.hostListView.appsByHost
@@ -3512,6 +3575,7 @@ export const MoonlightApp = {
     },
 
     async _showSelfStreamWarning(host, app) {
+        hideAppLinkLoader();
         // Guard against a double-open (e.g. a replayed click).
         if (document.querySelector('.self-stream-overlay')) return;
 
@@ -6204,6 +6268,8 @@ export const MoonlightApp = {
     transition(newState) {
         console.log(`[MW] State: ${this.state} -> ${newState}`);
         this.state = newState;
+        // A link's loader goes when the stream is there, or the launch ended.
+        if (newState === 'streaming' || newState === 'host_list') hideAppLinkLoader();
         // Fullscreen entered by the launch click: the stream takes it over
         // (and leaves it on Stop); a launch that ends anywhere else gives it
         // back, so a failed launch never strands the user in a fullscreen

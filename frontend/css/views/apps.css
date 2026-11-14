@@ -284,47 +284,61 @@
     pointer-events: none;
 }
 /* ── The link straight to an app (issue #63) ────────────────────────────
-   Top left of the image, small and quiet: a link to copy on a computer, a
-   share icon on a phone or a tablet. Clearer under the pointer, and always
-   there for a finger, which has no hover to find it with. */
-.app-card-link {
-    position: absolute;
-    top: var(--space-2);
-    left: var(--space-2);
-    z-index: 1;
-    display: inline-flex;
+   Made from the host's ⋮ menu: a sheet to pick the app, and on a phone or a
+   tablet the name its home-screen icon will take. */
+.app-shortcut-sheet label {
+    display: block;
+    margin: var(--space-3) 0 var(--space-1);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+}
+.app-shortcut-sheet select {
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    font: inherit;
+    font-size: 16px; /* under 16 px, iOS zooms the page on focus */
+    color: var(--text-primary, #fff);
+    background: var(--surface-1, #05080b);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: var(--radius-sm);
+}
+.app-shortcut-name {
+    margin-top: var(--space-3);
+    font-size: var(--fs-xs);
+    color: var(--text-secondary);
+}
+.app-shortcut-name strong {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--fs-sm);
+    color: var(--text-primary, #fff);
+    overflow-wrap: anywhere;
+}
+
+/* What a link straight to one app shows while it opens: the launch, not the
+   list of hosts behind it. Under the toasts, which say how the launch goes,
+   and under the stream once it is there. */
+.app-link-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    background: var(--surface-0);
     color: var(--text-primary, #fff);
-    background: rgba(5, 8, 11, 0.55);
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    border-radius: var(--radius-sm);
-    opacity: 0.55;
-    cursor: pointer;
-    transition: opacity 0.15s ease;
+    text-align: center;
 }
-.app-card-link .icon {
-    width: 16px;
-    height: 16px;
-}
-.app-card:hover .app-card-link,
-.app-card-link:focus-visible {
-    opacity: 1;
-}
-.app-card-link:hover {
-    color: var(--on-accent);
-    background: var(--neon-cyan);
-}
-.app-card-link:disabled {
-    cursor: progress;
-}
-@media (hover: none) {
-    .app-card-link {
-        opacity: 0.85;
-    }
+.app-link-loader-spin {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--text-3);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: btnSpin 0.8s linear infinite;
 }
 
 /* The banner that turns the page into a home-screen icon for one app. */

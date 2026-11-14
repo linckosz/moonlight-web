@@ -54,6 +54,7 @@ import { loadCachedHosts, saveCachedHosts } from '../util/hostListCache.js';
 import { bootMark } from '../util/bootTiming.js';
 import * as RemoteNav from './RemoteNav.js';
 import { confirmAction } from './ConfirmDialog.js';
+import { pickAppForShortcut } from './AppShortcutSheet.js';
 import { hostUpdate, canSelfUpdate } from './HostUpdate.js';
 
 /**
@@ -353,6 +354,14 @@ export class HostListView {
                 return;
             }
 
+            const shortcutBtn = e.target.closest('.btn-app-shortcut');
+            if (shortcutBtn) {
+                this._closeAllMenus();
+                const host = this.hosts.find((h) => h.uuid === shortcutBtn.dataset.uuid);
+                if (host) this._makeAppShortcut(host);
+                return;
+            }
+
             const restartBtn = e.target.closest('.btn-restart');
             if (restartBtn) {
                 const uuid = restartBtn.dataset.uuid;
@@ -439,27 +448,6 @@ export class HostListView {
                 return;
             }
 
-            // ── The link straight to an app (issue #63) ─────────────────────
-            // Its own button on the card: it copies or shares, and never
-            // launches what the card would.
-            const linkBtn = e.target.closest('.app-card-link');
-            if (linkBtn) {
-                e.preventDefault();
-                const hostCard = linkBtn.closest('.host-card');
-                const uuid = hostCard && hostCard.dataset.uuid;
-                const host = this.hosts.find((h) => h.uuid === uuid);
-                const entry = this.appsByHost[uuid];
-                const appId = parseInt(linkBtn.dataset.appId, 10);
-                const app = entry && entry.apps && entry.apps.find((a) => a.id === appId);
-                if (host && app && this.onAppLink) {
-                    linkBtn.disabled = true;
-                    Promise.resolve(this.onAppLink(host, app)).finally(() => {
-                        if (linkBtn.isConnected) linkBtn.disabled = false;
-                    });
-                }
-                return;
-            }
-
             // The GPU list on the virtual display's card is its own control.
             if (e.target.closest('.app-card-gpu--choice')) return;
 
@@ -504,8 +492,6 @@ export class HostListView {
             if (e.key !== 'Enter' && e.key !== ' ') return;
             // The Quit button of a running app is a real <button>: let it act.
             if (e.target.closest && e.target.closest('.app-card-quit')) return;
-            // So is the link button (issue #63).
-            if (e.target.closest && e.target.closest('.app-card-link')) return;
             // So is the GPU list: Enter and Space open it, never the stream.
             if (e.target.closest && e.target.closest('.app-card-gpu--choice')) return;
             const appCard = e.target.closest && e.target.closest('.app-card');
@@ -1165,6 +1151,18 @@ export class HostListView {
                                     : `<button class="host-menu-item btn-rename" data-uuid="${host.uuid}">${t('hosts.rename')}</button>`
                             }
                             ${
+                                // A link straight to one of its apps (issue #63):
+                                // a home-screen icon on a phone or a tablet, a
+                                // link to copy on a computer.
+                                !booth && host.isAvailable && this._offersAppLinks(host)
+                                    ? `<button class="host-menu-item btn-app-shortcut" data-uuid="${host.uuid}">${t(
+                                          IS_TOUCH_DEVICE
+                                              ? 'appLink.menuTouch'
+                                              : 'appLink.menuDesktop',
+                                      )}</button>`
+                                    : ''
+                            }
+                            ${
                                 // Sharing without a stream: the board opens
                                 // cold, the owner picks the app, and the first
                                 // guest to spend their PIN is what launches it.
@@ -1595,8 +1593,7 @@ export class HostListView {
         const devices = apps.map((a) => a.device).filter(Boolean);
         const host = this.hosts.find((h) => h.uuid === uuid);
         const runningId = host && host.resumableApps ? host.currentGameId : 0;
-        const linkable = this._offersAppLinks(host);
-        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a, devices, runningId, linkable)).join('')}</div>`;
+        cont.innerHTML = `<div class="apps-grid">${apps.map((a) => this.renderApp(a, devices, runningId)).join('')}</div>`;
         this._wireBoxArt(cont, uuid);
     }
 
@@ -1681,7 +1678,7 @@ export class HostListView {
         });
     }
 
-    renderApp(app, devices = [], runningId = 0, linkable = false) {
+    renderApp(app, devices = [], runningId = 0) {
         // The whole card is the launch action. role/tabindex keep it
         // keyboard-accessible (Enter/Space handled by the keydown delegate).
         //
@@ -1714,7 +1711,6 @@ export class HostListView {
                  aria-label="${this.esc(aria)}">
                 <div class="app-card-image${drawsMachine ? ' app-card-image--host' : ''}">
                     ${image}
-                    ${linkable && !off ? this._appLinkButton(app) : ''}
                     ${running && !off ? `<span class="app-card-badge">${this.esc(t('apps.running'))}</span>` : ''}
                     ${off ? `<span class="app-card-off-note">${this.esc(t('apps.displayOff'))}</span>` : ''}
                 </div>
@@ -1731,11 +1727,12 @@ export class HostListView {
     }
 
     /**
-     * Whether the cards of @p host carry the link straight to their app (issue
-     * #63). Not where the server would refuse one: in a booth (--noadmin), and
-     * on a multi-user backend, whose apps are a seat's rather than the host's.
-     * Not on a TV, whose remote has nothing to copy to and no home screen to
-     * add to. And only when the page around this view knows what to do with it.
+     * Whether the ⋮ menu of @p host offers a link straight to one of its apps
+     * (issue #63). Not where the server would refuse one: in a booth
+     * (--noadmin), and on a multi-user backend, whose apps are a seat's rather
+     * than the host's. Not on a TV, whose remote has nothing to copy to and no
+     * home screen to add to. And only when the page around this view knows what
+     * to do with it.
      */
     _offersAppLinks(host) {
         if (!host || typeof this.onAppLink !== 'function') return false;
@@ -1744,17 +1741,19 @@ export class HostListView {
     }
 
     /**
-     * The link button of a card, top left of its image: copy on a computer,
-     * share on a phone or a tablet, where the point is a home-screen icon.
+     * The menu's "Create home app" / "App shortcut…": the app picked in a sheet,
+     * among those the card shows (a display turned off opens nothing, so it is
+     * not offered), then the same way the page has always made a link.
      */
-    _appLinkButton(app) {
-        const share = IS_TOUCH_DEVICE;
-        const label = t(share ? 'appLink.shareAria' : 'appLink.copyAria', {
-            name: app.displayName,
-        });
-        return `<button type="button" class="app-card-link" data-app-id="${app.id}"
-                        aria-label="${this.esc(label)}" title="${this.esc(label)}"
-                        >${share ? Icons.share : Icons.link}</button>`;
+    async _makeAppShortcut(host) {
+        const entry = this.appsByHost[host.uuid];
+        const apps = ((entry && entry.apps) || []).filter((a) => !a.isOff);
+        if (!apps.length) {
+            Toast.error(t('appLink.sheetNoApps'));
+            return;
+        }
+        const app = await pickAppForShortcut({ host, apps, touch: IS_TOUCH_DEVICE });
+        if (app && this.onAppLink && !this._destroyed) await this.onAppLink(host, app);
     }
 
     /**
@@ -1767,8 +1766,9 @@ export class HostListView {
      * Served once, whatever the outcome: a reload, or a Stop that comes back
      * here, never opens it again. A server that does not answer at all is the
      * one case left for later — the page that comes back with it tries again.
+     * @p onName is told the app's name as soon as the host says it.
      */
-    async openAppLink(alias) {
+    async openAppLink(alias, onName = null) {
         const ask = async () => {
             try {
                 return await BackendClient.getAppLink(alias);
@@ -1786,6 +1786,7 @@ export class HostListView {
                 Toast.warning(t('appLink.gone'));
                 return;
             }
+            if (typeof onName === 'function' && where.name) onName(String(where.name));
             // The list of hosts first: the card to press is on it.
             await this._hostsArrived();
             if (this._destroyed) return;
