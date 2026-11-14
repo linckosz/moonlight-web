@@ -543,10 +543,31 @@ Reading:
 - ΔE ITP of the scrolling scene falls from 8.9 at 1.5 Mbit/s to 4.7 at 6 and 4.3 at 30.
 - The HDR runs had more repeated and missing frames than the SDR ones (48–114 and 7–40 per point, against 0–11): if anything that made HDR's score harder.
 
+### What 4:4:4 costs in time
+
+4:4:4 needs no more bitrate, so the remaining question before Auto could turn it on was what it costs in time. On 13 November 2026, the main bench's setup (NVENC on the RTX 5060 Ti, virtual display; Chrome 157 on the same machine, hardware decode) streamed the scrolling page (scene 2) and the coloured code (scene 3) in 4:2:0 and 4:4:4, and read the stages from the page's own stream statistics. Medians in ms; *host to drawn* runs from the host's capture to the client's draw.
+
+| Stream | Set (Mbit/s) | Encode 4:2:0 | Encode 4:4:4 | Host to drawn 4:2:0 | Host to drawn 4:4:4 |
+|---|---:|---:|---:|---:|---:|
+| 1080p60 | 20–50 | 1.5–2.0 | 2.4–2.8 | 3.7–5.7 | 4.5–6.5 |
+| 2160p60 | 27–65 | 4.9–5.6 | 7.8–8.2 | 7.7–10.2 | 11.0–12.9 |
+| 2160p120 | 65 | 5.0–5.4 | 7.0 | 7.3–8.4 | 10.0–10.4 |
+
+- **The host encodes 4:4:4 about 50 % slower**: +0.8 ms at 1080p60, +3 ms at 2160p60. At 2160p120 a 4:4:4 frame takes 7.0 ms of its 8.3 ms budget; 120 frames per second were held.
+- **The RTX decodes HEVC 4:4:4 in Chrome 157 on Windows** at full rate, in 0.4–0.6 ms, as fast as 4:2:0.
+- The same page from the bench host to a MacBook Air M3 (1668×1080 virtual display, a pan at 48 px a frame):
+  - Chrome: host to drawn 8.7 ms in 4:2:0, 11.8 in 4:4:4; decode 1.8 → 3.5 ms; Chrome's renderer took about twice the CPU (18 % → 39 %).
+  - Safari: 16.4 → 17.8 ms. Safari's own render queue (about 8 ms) and its 4–5 % dropped frames were there in both formats.
+- An iPhone on Safari (1080p60, a desktop video): host to drawn 23.9 ms in 4:2:0, 24.3 in 4:4:4; decode 3.9 → 5.3 ms, under the 6.6 ms the phone spends drawing either.
+- **4:4:4 with HDR**: the host keeps HDR and streams 4:2:0 Main10, stably. The stream card then gives the wrong reason ("no 4:4:4 on host" where the cause is HDR).
+
+Reading: 4:4:4 costs no bitrate, but it costs time on both sides: up to 3 ms on a Mac in Chrome, 3 ms of encoding at 2160p60, and twice the browser's CPU on a laptop. What it buys is the colour of text and flat areas, which a game seldom needs. **4:4:4 stays a choice made in the settings: Auto does not turn it on.**
+
 ### Not measured yet
 
 - **A real HDR game**: the highlights above come from a fixed formula over SDR renders.
 - **4:4:4 and HDR on AMF and on Intel**: the figures above are NVENC's.
+- **A 4:4:4 stream across a change of the host's display mode**: the virtual display refused the mode tried (1280×720); reapplying the same mode reset NVENC cleanly, 4:4:4 kept.
 
 ## 16.7 Hardware decode against the reference decoder
 
@@ -568,6 +589,7 @@ Two different hardware decoders disagree with ffmpeg on NVENC streams only, in s
 
 - H.264 and 4:4:4 need no more than HEVC 4:2:0; the HDR desktop needs no more either, and HDR with highlights needs what SDR needs on moving pictures, up to a third more on still ones.
 - 4:4:4 against 4:2:0, both scored against the same full-chroma reference (Bjøntegaard mean over the range both reach, NVENC HEVC 1080p60, 1.5–50 Mbit/s): luma needs ×0.94–×1.09 the bitrate on renders, coloured code, a fast pan, and a picture jumping 234 px a frame that uses about 88 % of the target at every bitrate; for equal colour 4:4:4 needs ×0.3–×0.9 where the QP floor stops the encoder, but on the content that fills the target its chroma trails 4:2:0's by 0.6–1.3 dB from 2 to 6 Mbit/s (twice the chroma samples on the same budget) and matches or passes it from 8. Auto keeps no factor for 4:4:4.
+- 4:4:4 costs time instead (§16.6, *What 4:4:4 costs in time*): about 50 % more encoding on NVENC, up to 3 ms more from host to screen on a Mac in Chrome. Auto does not turn 4:4:4 on; it stays the user's choice.
 
 **The rule since v0.4.2** (`computeAutoBitrate()`): 9.5 Mbit/s × P^0.75, P being the stream's pixels over 1920×1080's — VMAF NEG 93 on the scrolling search page, +10 % — ×1.2 for HDR, rounded up to a whole Mbit/s (the slider's step), to 5 above 30, within 1–150. No frame-rate term, no device factor, nothing for 4:4:4 or H.264. HDR took ×1.5 in v0.4.2 and v0.4.3, until HDR with highlights was measured (§16.6): ×1.2 since v0.4.4, a small margin for still pictures and for what a real game may add. In v0.4.2 that Internet target was used everywhere: the page could not tell at launch whether the stream would cross the LAN or the Internet.
 
