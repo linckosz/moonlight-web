@@ -5,7 +5,13 @@
  * The key is held apart from the address (js/net/linkKey.js); the application
  * says when the host has answered it, and puts it back into the address just
  * before a reload it does itself.
+ *
+ * On HTTPS, where every link that carries a key opens: on plain HTTP loopback
+ * (the first-run wizard, test/firstRunPlainLoopback.test.js) a key is dropped
+ * unspent, which is not what this file is about.
  */
+
+// @vitest-environment-options {"url": "https://localhost:8443/"}
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 

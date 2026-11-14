@@ -134,6 +134,13 @@ public:
     /// The HTTP redirect server port.
     quint16 httpPort() const { return m_HttpPort; }
 
+    /// The port the plain HTTP server actually listens on (0 if it is not up):
+    /// httpPort() keeps the last port tried when every one of them failed.
+    quint16 activeHttpPort() const
+    {
+        return m_HttpServer && m_HttpServer->isListening() ? m_HttpServer->serverPort() : 0;
+    }
+
     /// Reload TLS configuration from cert/ directory.
     /// Called after Let's Encrypt certificate acquisition.
     bool reloadTls();

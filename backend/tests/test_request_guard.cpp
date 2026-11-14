@@ -7,6 +7,7 @@
  * again be enough on its own.
  */
 #include "test_framework.h"
+#include "server/FirstRunLink.h"
 #include "server/RequestGuard.h"
 
 namespace {
@@ -206,6 +207,66 @@ void run_request_guard_tests()
             CHECK(d.adminPrivilege);
         }
     }
+
+    SECTION("RequestGuard — this machine on loopback, and nothing wider");
+
+    // The one plain-HTTP page the host is not sent to HTTPS for (the first-run
+    // wizard): a loopback peer, under a loopback name, with no proxy between.
+    CHECK(loopbackOnly("127.0.0.1", "localhost:8080", hdr({})));
+    CHECK(loopbackOnly("127.0.0.1", "LOCALHOST:8080", hdr({})));
+    CHECK(loopbackOnly("127.0.0.1", "127.0.0.1:8080", hdr({})));
+    CHECK(loopbackOnly("127.0.0.5", "localhost", hdr({})));
+    CHECK(loopbackOnly("::1", "[::1]:8080", hdr({})));
+    CHECK(loopbackOnly("::ffff:127.0.0.1", "localhost:8080", hdr({})));
+    // A LAN caller that writes "localhost" in Host: sent to HTTPS.
+    CHECK(!loopbackOnly("192.168.1.9", "localhost:8080", hdr({})));
+    CHECK(!loopbackOnly("::ffff:192.168.1.9", "localhost:8080", hdr({})));
+    CHECK(!loopbackOnly("fe80::1", "[::1]:8080", hdr({})));
+    // This machine under a wider name: the local privilege has it, this does not.
+    CHECK(!loopbackOnly("127.0.0.1", "192.168.1.40:8080", hdr({})));
+    CHECK(!loopbackOnly("127.0.0.1", "gaming-pc.local:8080", hdr({})));
+    CHECK(!loopbackOnly("127.0.0.1", domain, hdr({})));
+    CHECK(!loopbackOnly("127.0.0.1", "evil.example", hdr({})));
+    CHECK(!loopbackOnly("127.0.0.1", "localhost.evil.example", hdr({})));
+    CHECK(!loopbackOnly("127.0.0.1", "", hdr({})));
+    CHECK(!loopbackOnly("", "localhost", hdr({})));
+    CHECK(!loopbackOnly("not-an-address", "localhost", hdr({})));
+    // A local reverse proxy relaying the LAN under "localhost": sent to HTTPS.
+    for (const char* name : {"x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded", "via",
+                             "cf-connecting-ip"}) {
+        CHECK(!loopbackOnly("127.0.0.1", "localhost:8080",
+                            hdr({{"host", "localhost:8080"}, {name, "192.168.1.9"}})));
+    }
+    // Never wider than the local privilege: whatever it holds for is this
+    // machine to evaluate() too.
+    {
+        Request r;
+        r.method = "GET";
+        r.path = "/api/setup/status";
+        r.headers = hdr({{"host", "localhost:8080"}});
+        CHECK(loopbackOnly("127.0.0.1", r.headers.value("host"), r.headers));
+        Context c;
+        c.peerLocal = true;
+        CHECK(evaluate(r, c).localPrivilege);
+        // An arrival through the rendezvous tunnel is never a local peer
+        // (HttpServer::serveRequest: Arrival::Socket only), so a Host of
+        // "localhost" there is worth nothing: no local privilege.
+        Context tunnel;
+        tunnel.peerLocal = false;
+        CHECK(!evaluate(r, tunnel).localPrivilege);
+        CHECK(!evaluate(r, tunnel).hostMachine);
+    }
+
+    SECTION("First-run wizard link: plain HTTP loopback, no key");
+
+    // The port actually listened on; no key in it; served by loopbackOnly.
+    CHECK_EQ(FirstRunLink::wizardUrl(8080), QString("http://localhost:8080/setup"));
+    CHECK_EQ(FirstRunLink::wizardUrl(47990), QString("http://localhost:47990/setup"));
+    CHECK_EQ(FirstRunLink::wizardUrl(80), QString("http://localhost/setup"));
+    CHECK(!FirstRunLink::wizardUrl(8080).contains(QLatin1Char('#')));
+    CHECK(loopbackOnly("127.0.0.1", "localhost:8080", hdr({{"host", "localhost:8080"}})));
+    // No plain listener: empty, and the opener keeps its HTTPS link.
+    CHECK(FirstRunLink::wizardUrl(0).isEmpty());
 
     SECTION("RequestGuard — body content type");
 
