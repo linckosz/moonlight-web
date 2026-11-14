@@ -118,8 +118,11 @@ void run_lan_http_pairing_tests()
         CHECK(book.approve(r.id, r.code, QString(), t0 + 1) == LanHttpPairing::Answer::Approved);
         // Another address, a wrong claim, no claim: as if there were nothing.
         CHECK(book.poll(r.id, r.claim, other, t0 + 2).state == LanHttpPairing::Poll::Gone);
-        CHECK(book.poll(r.id, QStringLiteral("x") + r.claim.mid(1), tv, t0 + 2).state ==
-              LanHttpPairing::Poll::Gone);
+        // Wrong by its first character, whatever that is: an "x" put there blindly
+        // left a claim drawn with an "x" right, once in 64 runs.
+        QString wrongClaim = r.claim;
+        wrongClaim[0] = wrongClaim[0] == QLatin1Char('x') ? QLatin1Char('y') : QLatin1Char('x');
+        CHECK(book.poll(r.id, wrongClaim, tv, t0 + 2).state == LanHttpPairing::Poll::Gone);
         CHECK(book.poll(r.id, QString(), tv, t0 + 2).state == LanHttpPairing::Poll::Gone);
         // Still there for the right one, approved by the host machine.
         const auto right = book.poll(r.id, r.claim, tv, t0 + 3);
