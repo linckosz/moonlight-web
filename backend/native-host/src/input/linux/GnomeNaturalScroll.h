@@ -46,7 +46,10 @@ namespace mw::native::input {
 /// holds nothing of ours: the app clears its ambient and inheritable
 /// capabilities at main() (common/LinuxCapabilities.h), so an exec of a binary
 /// without file capabilities starts with none, and the child gets /dev/null and
-/// a pipe, nothing else. The path is fixed, never looked up in PATH.
+/// a pipe, nothing else. The path is fixed, never looked up in PATH. It gets
+/// our environment with the user's home put back (gsettingsEnvironment): the
+/// stream worker's own HOME is /nonexistent, where dconf would find no user
+/// database and answer "false" whatever the switch says.
 /// Never as root nor set-uid: there the exec would give the child every
 /// capability back, and the modules gsettings loads are the environment's
 /// choice. The wheel is then left as it is.

@@ -42,6 +42,40 @@ void run_natural_scroll_tests()
     CHECK(!mayAskGsettings(0, 1000));
     CHECK(!mayAskGsettings(1000, 1001));
 
+    SECTION("Natural scroll — gsettings gets the user's home back from the launcher");
+
+    {
+        // The stream worker's environment, as moonlightweb-launch builds it.
+        const std::vector<std::string> env = gsettingsEnvironment(
+            {"HOME=/nonexistent", "XDG_CONFIG_HOME=/nonexistent", "XDG_RUNTIME_DIR=/run/user/1000",
+             "MW_USER_HOME=/home/bruno", "XDG_CURRENT_DESKTOP=ubuntu:GNOME"});
+        auto has = [&](const char* e) {
+            for (const std::string& s : env)
+                if (s == e) return true;
+            return false;
+        };
+        CHECK(has("HOME=/home/bruno"));
+        CHECK(!has("HOME=/nonexistent"));
+        CHECK(!has("XDG_CONFIG_HOME=/nonexistent"));
+        CHECK(has("XDG_RUNTIME_DIR=/run/user/1000"));
+        CHECK(has("XDG_CURRENT_DESKTOP=ubuntu:GNOME"));
+        CHECK(env.size() == 4);
+    }
+    {
+        // No launcher: the environment goes as it is, XDG_CONFIG_HOME included.
+        const std::vector<std::string> env =
+            gsettingsEnvironment({"HOME=/home/bruno", "XDG_CONFIG_HOME=/home/bruno/.cfg"});
+        CHECK(env.size() == 2);
+        CHECK(env[0] == "HOME=/home/bruno");
+        CHECK(env[1] == "XDG_CONFIG_HOME=/home/bruno/.cfg");
+    }
+    // A home that is not an absolute path free of ".." is not taken.
+    CHECK(gsettingsEnvironment({"HOME=/nonexistent", "MW_USER_HOME=home/x"})[0] ==
+          "HOME=/nonexistent");
+    CHECK(gsettingsEnvironment({"HOME=/nonexistent", "MW_USER_HOME=/home/../root"})[0] ==
+          "HOME=/nonexistent");
+    CHECK(gsettingsEnvironment({"HOME=/nonexistent", "MW_USER_HOME="})[0] == "HOME=/nonexistent");
+
     SECTION("Natural scroll — only \"true\" or \"false\" is an answer");
 
     CHECK(parseGsettingsBool("true\n") == std::optional<bool>(true));

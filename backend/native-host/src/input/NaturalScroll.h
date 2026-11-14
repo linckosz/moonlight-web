@@ -19,7 +19,9 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace mw::native::input {
 
@@ -61,6 +63,37 @@ inline bool desktopIsGnome(const char* xdgCurrentDesktop)
 inline bool mayAskGsettings(unsigned long uid, unsigned long euid)
 {
     return uid != 0 && euid != 0 && uid == euid;
+}
+
+/// The environment gsettings runs in: ours, with the user's own home put back.
+/// The stream worker starts from a fixed environment where HOME and
+/// XDG_CONFIG_HOME are /nonexistent (packaging/linux/moonlightweb-launch-env.h),
+/// and dconf, finding no user database there, answers the schema's default —
+/// "false" — whatever the user chose. The launcher keeps the real home in
+/// MW_USER_HOME: HOME takes it, and XDG_CONFIG_HOME is left out so that dconf
+/// reads $HOME/.config/dconf/user. Without MW_USER_HOME, or with one that is
+/// not an absolute path free of "..", the environment is passed as it is.
+inline std::vector<std::string> gsettingsEnvironment(const std::vector<std::string_view>& env)
+{
+    constexpr std::string_view kUserHome = "MW_USER_HOME=";
+    std::string_view home;
+    for (const std::string_view entry : env)
+        if (entry.substr(0, kUserHome.size()) == kUserHome) {
+            home = entry.substr(kUserHome.size());
+            break;
+        }
+    const bool usable =
+        !home.empty() && home.front() == '/' && home.find("..") == std::string_view::npos;
+
+    std::vector<std::string> out;
+    out.reserve(env.size() + 1);
+    for (const std::string_view entry : env) {
+        if (usable && (entry.substr(0, 5) == "HOME=" || entry.substr(0, 16) == "XDG_CONFIG_HOME="))
+            continue;
+        out.emplace_back(entry);
+    }
+    if (usable) out.push_back("HOME=" + std::string(home));
+    return out;
 }
 
 /// What `gsettings get … natural-scroll` printed: "true" or "false", with the

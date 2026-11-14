@@ -28,7 +28,9 @@
 #include <spawn.h>
 #include <string>
 #include <sys/wait.h>
+#include <string_view>
 #include <unistd.h>
+#include <vector>
 
 extern char** environ;
 
@@ -62,8 +64,20 @@ int askGsettings(std::string& out)
     char arg3[] = "natural-scroll";
     char* argv[] = {arg0, arg1, arg2, arg3, nullptr};
 
+    // Our environment, with the user's home put back for dconf (see
+    // gsettingsEnvironment): the stream worker's own HOME is /nonexistent.
+    std::vector<std::string_view> ours;
+    for (char** e = environ; e && *e; ++e)
+        ours.emplace_back(*e);
+    std::vector<std::string> env = gsettingsEnvironment(ours);
+    std::vector<char*> envp;
+    envp.reserve(env.size() + 1);
+    for (std::string& entry : env)
+        envp.push_back(entry.data());
+    envp.push_back(nullptr);
+
     pid_t child = -1;
-    const int rc = ::posix_spawn(&child, kGsettings, &actions, nullptr, argv, environ);
+    const int rc = ::posix_spawn(&child, kGsettings, &actions, nullptr, argv, envp.data());
     posix_spawn_file_actions_destroy(&actions);
     ::close(fds[1]);
     if (rc != 0) {
