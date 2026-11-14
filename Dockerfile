@@ -159,9 +159,10 @@ VOLUME ["/data"]
 # block carries WebRTC media, one port per stream slot (48550 + slot), plus the
 # 47999 Internet Access maps alongside 80/443. The same block in TCP and the
 # rendezvous tunnel's ports in TCP are passive ICE-TCP, for browsers on networks
-# that block UDP. `--network host` is still the supported layout. Full table:
-# docker/README.md.
-EXPOSE 443/tcp 80/tcp 47999/udp 48550-48573/udp 48550-48573/tcp 3478-3481/tcp 5349-5352/tcp 46000-46031/tcp
+# that block UDP. The conferencing ports in UDP (3478-3481, 5349-5352) are the
+# ones every stream shares with "ice_udp_mux", and the tunnel's. `--network host`
+# is still the supported layout. Full table: docker/README.md.
+EXPOSE 443/tcp 80/tcp 47999/udp 48550-48573/udp 48550-48573/tcp 3478-3481/udp 3478-3481/tcp 5349-5352/udp 5349-5352/tcp 46000-46031/tcp
 
 # --status talks to the running instance over loopback and exits non-zero when
 # nothing answers, so it doubles as the liveness probe. start-period covers the

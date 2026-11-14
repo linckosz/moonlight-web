@@ -42,12 +42,18 @@ EDITION=${4:-prod}
 # from outside, so without these a Linux host behind ufw or firewalld is
 # unreachable from such a network. Nothing listens there between connections,
 # and what does listen during one admits only a check signed for it.
+# 3478:3481/udp and 5349:5352/udp are the conferencing ports in UDP. With
+# "ice_udp_mux" every stream shares one of them (the first that is free on
+# this machine and on the router) and one port of the media block, so that a
+# browser on a network that lets only such ports out still streams over UDP.
+# The tunnel binds its own UDP port among the same eight. On the port the
+# streams share, a datagram that belongs to no stream is dropped.
 # The DEV edition listens on its own TCP ports and leaves the media block alone:
 # production opens it, and a DEV uninstall closing it would cut production off.
 # Its tunnel holes are its own block (kDevTunnelPool), so it opens that.
 case "$EDITION" in
     prod) NAME=moonlightweb;     APP=MoonlightWeb;
-          PORTS="443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp" ;;
+          PORTS="443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp" ;;
     dev)  NAME=moonlightweb-dev; APP=MoonlightWebDev; PORTS="48443/tcp 48080/tcp 46064:46095/tcp" ;;
     *) echo "error: edition must be prod or dev (got '$EDITION')" >&2; exit 1 ;;
 esac
@@ -226,13 +232,13 @@ MEDIA_RANGE=48550-48573
 # 48010:48033/udp was the media block up to 0.3.0, on Sunshine's RTSP port: an
 # upgrade closes it.
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-    for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
+    for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp; do
         firewall-cmd --permanent --add-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
     done
     [ -n "$MEDIA_RANGE" ] && firewall-cmd --permanent --remove-port=48010-48033/udp >/dev/null 2>&1
     firewall-cmd --reload >/dev/null 2>&1 || true
 elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
-    for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
+    for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp; do
         ufw allow "$p" >/dev/null 2>&1 || true
     done
     [ -n "$MEDIA_RANGE" ] && ufw delete allow 48010:48033/udp >/dev/null 2>&1
@@ -447,12 +453,12 @@ if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
     fi
 
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
-        for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
+        for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp; do
             firewall-cmd --permanent --remove-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
         done
         firewall-cmd --reload >/dev/null 2>&1 || true
     elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
-        for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp; do
+        for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp; do
             ufw delete allow "$p" >/dev/null 2>&1 || true
         done
     fi
@@ -485,7 +491,7 @@ if [ "$EDITION" = dev ]; then
     sed -i -e "s|/opt/moonlightweb/bin/MoonlightWeb|$PREFIX/bin/$APP|g" \
            -e "s|/opt/moonlightweb/|$PREFIX/|g" \
            -e "s|moonlightweb\.service|$NAME.service|g" \
-           -e "s|443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/tcp 5349:5352/tcp 46000:46031/tcp|$PORTS|g" \
+           -e "s|443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp|$PORTS|g" \
            -e "s|^\( *\)MEDIA_RANGE=.*|\1MEDIA_RANGE=|" \
            -e "s|^\( *\)REPO_KEYS=.*|\1REPO_KEYS=|" \
            -e "s|moonlightweb --|$NAME --|g" \

@@ -38,6 +38,8 @@ sudo ufw allow 443/tcp              # the web UI — required
 sudo ufw allow 80/tcp               # HTTP-to-HTTPS redirect
 sudo ufw allow 48550:48573/udp      # the stream's media
 sudo ufw allow 48550:48573/tcp      # the same, from networks that block UDP
+sudo ufw allow 3478:3481/udp        # the port every stream shares (ice_udp_mux), and the tunnel's
+sudo ufw allow 5349:5352/udp
 sudo ufw allow 3478:3481/tcp        # the rendezvous tunnel, from networks that block UDP
 sudo ufw allow 5349:5352/tcp
 sudo ufw allow 46000:46031/tcp
@@ -222,11 +224,13 @@ outside the LAN.
 | **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. |
 | **48550–48573** | UDP | **Always** (host firewall) | WebRTC media, audio and input. Each stream slot binds `48550 + slot`, with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the slot's own first). |
 | **48550–48573** | TCP | Networks that block UDP (host firewall) | The same ports in TCP: passive ICE-TCP listens on the port the slot's UDP socket holds. It is how a browser on a network that lets no UDP out reaches the stream. A stateful firewall lets UDP answers back in, but never a TCP connection from outside. |
+| **3478–3481**, **5349–5352** | UDP | With Internet Access (host firewall) | The conferencing ports. With `"ice_udp_mux": true` every stream shares one of them (the first that is free on the machine and on the router) and one port of the media block, so a browser on a network that lets only such ports out still streams over UDP. The rendezvous tunnel takes its own among the same eight. On the port the streams share, a datagram that belongs to no stream is dropped. |
 | **3478–3481**, **5349–5352**, **46000–46031** | TCP | Networks that block UDP, with Internet Access | The rendezvous tunnel's ports, taken in that order as browsers connect, and forwarded by UPnP. Passive ICE-TCP listens on them as on the media block. Nothing listens there between connections, and during one only a check signed for that connection is admitted. |
 | **47999** | UDP | Legacy Internet Access | Mapped alongside 80/443 only by an install that still holds a legacy `moonlightweb.top` sub-domain. |
 | *ephemeral* | UDP | Fallback | When the slot's port is already taken (a second instance on the same machine), the stream takes another free port of the block. Only when the whole block is taken does libdatachannel take whatever the kernel gives it, which a host firewall blocks. |
 
 > **In short:** on a LAN, **443/tcp**, **80/tcp** and **48550–48573/udp**;
+> from the Internet, also **3478–3481/udp** and **5349–5352/udp**;
 > for networks that block UDP, also **48550–48573/tcp** and the tunnel's
 > **3478–3481**, **5349–5352** and **46000–46031/tcp**.
 > The `.deb`, `.rpm` and AUR package open them for you in
