@@ -2594,9 +2594,11 @@ export const MoonlightApp = {
         }
 
         // 4:4:4 is asked of the host only in a codec this browser decodes it in
-        // (HEVC RExt, H.264 High 4:4:4). Chrome on Windows decodes neither:
-        // asked anyway, the stream came up, failed three decodes and fell back
-        // to 4:2:0 H.264 three seconds later (B7, 03/09/2026). A browser that
+        // (HEVC RExt, H.264 High 4:4:4). Chrome on Windows once decoded
+        // neither: asked anyway, the stream came up, failed three decodes and
+        // fell back to 4:2:0 H.264 three seconds later (B7, 03/09/2026).
+        // Chrome 157 on Windows with an RTX decodes HEVC 4:4:4 (13/11/2026):
+        // the answer depends on the browser and the GPU. A browser that
         // decodes only H.264 4:4:4 is asked H.264 4:4:4 rather than an HEVC one
         // it would drop in the same way (25/09/2026, Chrome on an AMD iGPU).
         // The settings page greys the box out when neither can; this catches a

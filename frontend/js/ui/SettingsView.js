@@ -1912,10 +1912,13 @@ export class SettingsView {
               : `<div class="settings-note">${t('settings.hdrDeviceSdr')}</div>`;
 
         // 4:4:4 arrives as HEVC RExt or H.264 High 4:4:4, and not every browser
-        // decodes either — Chrome on Windows decodes neither, and a stream asked
-        // for anyway fails three decodes and falls back to 4:2:0 three seconds
-        // in. Greyed out and forced off there, like HDR; the launch gate in
-        // app.js is the backstop for a preference saved on another browser.
+        // decodes either: it depends on the browser and the GPU, so the probe
+        // decides (Chrome on Windows decoded neither in 09/2026; Chrome 157 on
+        // Windows with an RTX decodes HEVC 4:4:4). A stream asked for where
+        // the probe says no fails three decodes and falls back to 4:2:0 three
+        // seconds in. Greyed out and forced off there, like HDR; the launch
+        // gate in app.js is the backstop for a preference saved on another
+        // browser.
         const chromaCap = this._chroma444Capability || { decode: true };
         const chroma444Available = chromaCap.decode !== false;
         if (!chroma444Available) this._chroma444 = false;
