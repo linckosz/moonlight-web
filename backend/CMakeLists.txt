@@ -869,6 +869,10 @@ if(MW_BUILD_TESTS)
         src/server/HttpParser.cpp
         src/server/RequestGuard.cpp
         src/server/LanHttp.cpp
+        # What the host's own sockets serve a home-screen icon, which a TV on
+        # plain HTTP never gets (test_lan_http.cpp), and the links it names.
+        src/server/HomeScreenShell.cpp
+        src/server/AppLinks.cpp
         # Session sharing: the link/PIN state machine is pure Qt Core logic on
         # purpose, so the credentials guarding a shareable link are verified on
         # every platform like the rest of the security units.
