@@ -382,19 +382,30 @@ uint32_t IceMuxTcp::expectToken(std::string_view fragment, uint16_t port)
     return id;
 }
 
-bool IceMuxTcp::awaitToken(uint32_t id, uint64_t forMs)
+bool IceMuxTcp::awaitToken(uint32_t id, uint64_t forMs, const std::atomic<bool>* givenUp)
 {
     bool came = false;
     {
         std::unique_lock<std::mutex> lock(m_Lock);
-        m_TokenCame.wait_for(lock, std::chrono::milliseconds(forMs), [this, id] {
-            return m_Stop || m_Table->token(id) != Table::Token::Waiting;
+        m_TokenCame.wait_for(lock, std::chrono::milliseconds(forMs), [this, id, givenUp] {
+            return m_Stop || (givenUp && givenUp->load()) ||
+                   m_Table->token(id) != Table::Token::Waiting;
         });
         came = m_Table->token(id) == Table::Token::Arrived;
         m_Table->endToken(id, m_Closing);
     }
     m_Wake.notify_one();
     return came;
+}
+
+void IceMuxTcp::wakeTokens()
+{
+    {
+        // Taken and let go: a wait that read its mark before it was set is
+        // by now waiting, and hears what follows
+        const std::lock_guard<std::mutex> lock(m_Lock);
+    }
+    m_TokenCame.notify_all();
 }
 
 bool IceMuxTcp::expects(uint32_t feed) const

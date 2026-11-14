@@ -336,23 +336,28 @@ asked for by a DEV identity.
 **The guard** (`network/Tcp443Guard`). 443 is the port people forward by hand
 and the one a router keeps for itself, so the host asks for it only when it
 can show, alone, that nobody has it and that it then leads here. The guard
-runs on the allocator's thread once the block port has its TCP hole, in this
-order, and the first step that fails leaves 443 as it is, with one line in the
-log that names the step and no address:
+runs once the block port has its TCP hole, in this order, and the first step
+that fails leaves 443 as it is, with one line in the log that names the step
+and no address:
 
 1. the address browsers reach this host at is a public IPv4 one, and it is the
    one the router says is its own: no second router in front;
 2. the router says it has no TCP entry on 443. An entry, whoever it leads to,
    or an answer that says nothing, ends the run. Only this installation's own
    (by its record, its description with the tag, the address and the port
-   noted) is kept, and renewed;
+   noted) is kept, and renewed; but never one that this run of the server wrote
+   and could not prove (a run given up while it waited for its proof, on a
+   router that kept the entry): that one is taken off, and the run goes on as
+   for a free 443. A router that keeps it ends the run here, and the next one
+   waits an hour;
 3. the router leads back here from its own address: a connection dialled to
    the block port there arrives at this host's listener;
 4. nothing completes a handshake on 443 there: a rule made by hand does not
    show in what step 2 asks;
-5. the entry is noted in the record, written, read back, and a connection
-   dialled to 443 must then arrive here. Otherwise it is removed, the removal
-   read back, and the line struck.
+5. the router is asked once more that it has no entry on 443 (the two dials
+   took their time); then the entry is noted in the record, written, read
+   back, and a connection dialled to 443 must arrive here. Otherwise it is
+   removed, the removal read back, and the line struck.
 
 Held, it is written again and read back with the other holes, every half
 hour, without a dial. It is taken off when the server stops, when a switch it
@@ -361,6 +366,31 @@ that was killed leaves a line in the record, and the start-up sweep takes the
 entry back as it does any other; nothing is asked for on 443 before that sweep
 is over, and what is looked at then is the situation as it was last told, not
 one from before a switch went off.
+
+**Where it runs.** A dial waits for up to 2.5 seconds, and a run makes three.
+The allocator's thread, which every claim and every renewal goes through, does
+not wait for them: it makes a run a step at a time (`Guard::begin()`, then
+`after()` with each dial's answer), and between two steps it serves whatever
+else is asked of it. The dials are made on a thread that does nothing else
+(`Dialler`, in `network/Tcp443Probe`), started by the first dial, so a host
+that never asks for 443 has none. That thread is given a dial (an address, a
+port, the shared port a connection must come in on) and gives back a yes or a
+no with the number of the run it was for; it never sees the router, the record
+or the guard, and it logs nothing. Everything that is asked of the router,
+written on it or noted stays the allocator's thread's alone.
+
+There is one run at a time and one dial at a time (`Keeper`). A look that
+comes while a run is under way begins nothing if what the run was begun on
+still stands. If it does not (a switch went off, the block port moved or lost
+its hole, the public address changed), the run is given up: its dial is cut
+short, which takes about a tenth of a second, and an entry it had already
+written is removed, the removal read back; a router that keeps the entry gets
+a warning in the log, and the line stays in the record. The answer of a dial
+whose run was given up is dropped when it comes: it moves no run, and is
+neither counted nor logged. The first dial of the next run is not made before
+that answer is back, so the listener never expects two connections of this
+host's own at once. The same holds when the server stops with a run under
+way, and the dial thread is over before the allocator's own goes.
 
 **How it knows a connection arrived here** (`network/Tcp443Probe`). For steps
 3 and 5 the host makes a fragment for that one try, sixteen characters, which
@@ -373,10 +403,16 @@ is written back. For step 4 it dials and sends nothing.
 
 **How often** (`Pace`, in `Tcp443Guard.h`). A run that stopped before it
 dialled may be made again whenever the holes are looked at. One that dialled
-and stopped (steps 3 and 4) waits an hour. One that wrote and did not keep
-what it wrote (step 5) is the last until the server starts anew, and says so
-in a warning. An entry that was held and is lost is asked for again at once,
-once, and an hour later if it is lost again within the hour.
+and stopped (steps 3 and 4, and the question step 5 asks the router before it
+writes) waits an hour, counted from the time it ended at. One that wrote and
+did not keep what it wrote (step 5) is the last until the server starts anew,
+and says so in a warning. An entry that was held and is lost is asked for
+again at once, once, and an hour later if it is lost again within the hour. A
+run that this host gave up itself (a switch, the block port) is not counted.
+One given up because the public address changed is not this host's doing, and
+is paced as a lost entry is: the next run may begin at once, once, and after an
+hour if the address changes again within the hour, so that an address that
+flips does not have the router written and cleared at every look.
 
 **A former address.** An entry of this installation's noted under another
 address than this machine has today is not left for later, as the other kinds

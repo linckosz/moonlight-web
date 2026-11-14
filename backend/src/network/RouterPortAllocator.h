@@ -154,11 +154,12 @@ public:
     /// nothing else (settings.json ice_tcp_443, Tcp443Guard): asked for by
     /// this allocator, on its thread, once the streams' shared block port has
     /// its TCP hole, and only while every switch it takes is on and the run
-    /// is not a DEV identity's. `probe` dials for it and must outlive this
-    /// object; `publicAddress` says, on the main thread, the address browsers
-    /// reach this host at (empty when it is not known). Before
-    /// ensureStarted() or discover(); without this call 443 is never asked
-    /// for.
+    /// is not a DEV identity's. `probe` dials for it, on a thread of this
+    /// object's that does nothing else (a dial waits for seconds, and no
+    /// claim waits behind one), and must outlive this object;
+    /// `publicAddress` says, on the main thread, the address browsers reach
+    /// this host at (empty when it is not known). Before ensureStarted() or
+    /// discover(); without this call 443 is never asked for.
     void setTcp443(mw::tcp443::Probe* probe, std::function<QString()> publicAddress)
     {
         m_Probe443 = probe;

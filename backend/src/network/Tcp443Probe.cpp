@@ -24,6 +24,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <system_error>
+#include <utility>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -48,6 +50,9 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+/// How long a wait goes on before it looks whether the dial was cut short.
+constexpr uint64_t kSliceMs = 50;
+
 void closeSocket(SOCKET s)
 {
 #ifdef _WIN32
@@ -57,11 +62,19 @@ void closeSocket(SOCKET s)
 #endif
 }
 
+uint64_t since(Clock::time_point began)
+{
+    using namespace std::chrono;
+    return static_cast<uint64_t>(duration_cast<milliseconds>(Clock::now() - began).count());
+}
+
 /// A connection to `address:port` made within `withinMs`, that no process
 /// gets by being started by this one; INVALID_SOCKET when the address is not
 /// IPv4 in figures, the port is 0, or the handshake did not complete in that
-/// time (refused, unanswered, unreachable: all the same to the guard).
-SOCKET dial(const QString& address, uint16_t port, uint64_t withinMs)
+/// time (refused, unanswered, unreachable: all the same to the guard), or
+/// when `cutShort` was set meanwhile: the wait looks at it every kSliceMs.
+SOCKET connectTo(const QString& address, uint16_t port, uint64_t withinMs,
+                 const std::atomic<bool>& cutShort)
 {
     sockaddr_in to{};
     to.sin_family = AF_INET;
@@ -100,24 +113,35 @@ SOCKET dial(const QString& address, uint16_t port, uint64_t withinMs)
 #else
         const bool pending = errno == EINPROGRESS;
 #endif
-        fd_set writable, failed;
-        FD_ZERO(&writable);
-        FD_ZERO(&failed);
-        FD_SET(s, &writable);
-        FD_SET(s, &failed);
-        timeval wait{};
-        wait.tv_sec = static_cast<decltype(wait.tv_sec)>(withinMs / 1000);
-        wait.tv_usec = static_cast<decltype(wait.tv_usec)>((withinMs % 1000) * 1000);
-        int error = 0;
-        socklen_type size = sizeof(error);
-        // Anything that is not a plain "connected" is no connection: a
-        // select() cut short, an error it does not name
-        made = pending && select(static_cast<int>(s) + 1, nullptr, &writable, &failed, &wait) > 0 &&
-               FD_ISSET(s, &writable) && !FD_ISSET(s, &failed) &&
-               getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &size) == 0 &&
-               error == 0;
+        // Waited for a slice at a time, so that a dial nobody wants any more
+        // is over within one
+        const Clock::time_point began = Clock::now();
+        while (pending && !cutShort.load()) {
+            const uint64_t gone = since(began);
+            if (gone >= withinMs) break;
+            const uint64_t slice = (std::min)(withinMs - gone, kSliceMs);
+            fd_set writable, failed;
+            FD_ZERO(&writable);
+            FD_ZERO(&failed);
+            FD_SET(s, &writable);
+            FD_SET(s, &failed);
+            timeval wait{};
+            wait.tv_sec = static_cast<decltype(wait.tv_sec)>(slice / 1000);
+            wait.tv_usec = static_cast<decltype(wait.tv_usec)>((slice % 1000) * 1000);
+            const int ready = select(static_cast<int>(s) + 1, nullptr, &writable, &failed, &wait);
+            if (ready == 0) continue;
+            int error = 0;
+            socklen_type size = sizeof(error);
+            // Anything that is not a plain "connected" is no connection: a
+            // select() cut short, an error it does not name
+            made =
+                ready > 0 && FD_ISSET(s, &writable) && !FD_ISSET(s, &failed) &&
+                getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &size) == 0 &&
+                error == 0;
+            break;
+        }
     }
-    if (!made) {
+    if (!made || cutShort.load()) {
         closeSocket(s);
         return INVALID_SOCKET;
     }
@@ -135,12 +159,6 @@ bool sendWhole(SOCKET s, const std::vector<uint8_t>& bytes)
 #endif
     return send(s, reinterpret_cast<const char*>(bytes.data()), static_cast<int>(bytes.size()),
                 flags) == static_cast<int>(bytes.size());
-}
-
-uint64_t since(Clock::time_point began)
-{
-    using namespace std::chrono;
-    return static_cast<uint64_t>(duration_cast<milliseconds>(Clock::now() - began).count());
 }
 
 } // namespace
@@ -192,9 +210,26 @@ std::vector<uint8_t> Probe::knock(std::string_view fragment)
     return out;
 }
 
-bool Probe::arrivesHere(const QString& address, uint16_t port)
+bool Probe::make(const Dial& dial)
 {
-    if (m_LocalPort == 0) return false;
+    switch (dial.kind) {
+    case Dial::Kind::ArrivesHere: return arrivesHere(dial.address, dial.port, dial.leadsHereOn);
+    case Dial::Kind::Answers: return answers(dial.address, dial.port);
+    case Dial::Kind::None: break;
+    }
+    return false;
+}
+
+void Probe::cancel()
+{
+    m_Cancelled.store(true);
+    // What waits for a try's connection looks at that mark when it is woken
+    m_Listener.wakeTokens();
+}
+
+bool Probe::arrivesHere(const QString& address, uint16_t port, uint16_t leadsHereOn)
+{
+    if (leadsHereOn == 0 || m_Cancelled.load()) return false;
     const std::string fragment = freshFragment();
     const Clock::time_point began = Clock::now();
     const auto left = [this, began]() -> uint64_t {
@@ -202,25 +237,116 @@ bool Probe::arrivesHere(const QString& address, uint16_t port)
         return gone >= m_TryMs ? 0 : m_TryMs - gone;
     };
     // Expected first, and listened for by the time this returns: then dialled
-    const uint32_t id = m_Listener.expectToken(fragment, m_LocalPort);
+    const uint32_t id = m_Listener.expectToken(fragment, leadsHereOn);
     if (id == 0) return false;
-    const SOCKET s = dial(address, port, left());
+    const SOCKET s = connectTo(address, port, left(), m_Cancelled);
     const bool sent = s != INVALID_SOCKET && sendWhole(s, knock(fragment));
-    // Asked about either way: that is what ends the try. The connection
-    // stays open meanwhile, so that what was sent is read before it is over.
-    const bool came = m_Listener.awaitToken(id, sent ? left() : 0);
+    // Asked about either way, cut short or not: that is what ends the try.
+    // The connection stays open meanwhile, so that what was sent is read
+    // before it is over.
+    const bool came = m_Listener.awaitToken(id, sent ? left() : 0, &m_Cancelled);
     if (s != INVALID_SOCKET) closeSocket(s);
-    return came;
+    // A dial that was cut short says no, whatever came
+    return came && !m_Cancelled.load();
 }
 
 bool Probe::answers(const QString& address, uint16_t port)
 {
-    const SOCKET s = dial(address, port, m_TryMs);
+    if (m_Cancelled.load()) return false;
+    const SOCKET s = connectTo(address, port, m_TryMs, m_Cancelled);
     if (s == INVALID_SOCKET) return false;
     // Nothing was sent, and nothing is: whoever answered sees a connection
     // that came and went
     closeSocket(s);
     return true;
+}
+
+// ── The thread the dials are made on ────────────────────────────────────────
+
+Dialler::Dialler(Probe& probe, std::function<void(uint32_t run, bool result)> done)
+    : m_Probe(probe)
+    , m_Done(std::move(done))
+{}
+
+Dialler::~Dialler()
+{
+    stop();
+}
+
+bool Dialler::ask(uint32_t run, const Dial& dial)
+{
+    const std::lock_guard<std::mutex> lock(m_Lock);
+    // One place: never a dial over one that waits there or is being made
+    if (m_Stop || m_Waits || m_Making || dial.kind == Dial::Kind::None) return false;
+    if (!m_Thread.joinable()) {
+        try {
+            m_Thread = std::thread([this] { work(); });
+        } catch (const std::system_error&) {
+            return false;
+        }
+    }
+    m_Number = run;
+    m_Dial = dial;
+    m_Cancelled = false;
+    m_Waits = true;
+    m_Wake.notify_one();
+    return true;
+}
+
+void Dialler::cancel()
+{
+    const std::lock_guard<std::mutex> lock(m_Lock);
+    if (!m_Waits && !m_Making) return;
+    m_Cancelled = true;
+    // Being made: its waits are cut short. Still waiting: it is not made at
+    // all (work()). Told no either way.
+    if (m_Making) m_Probe.cancel();
+}
+
+void Dialler::stop()
+{
+    std::thread thread;
+    {
+        const std::lock_guard<std::mutex> lock(m_Lock);
+        m_Stop = true;
+        if (m_Waits || m_Making) m_Cancelled = true;
+        if (m_Making) m_Probe.cancel();
+        thread = std::move(m_Thread);
+    }
+    m_Wake.notify_all();
+    if (thread.joinable()) thread.join();
+}
+
+void Dialler::work()
+{
+    std::unique_lock<std::mutex> lock(m_Lock);
+    for (;;) {
+        m_Wake.wait(lock, [this] { return m_Stop || m_Waits; });
+        if (m_Stop) return;
+        const uint32_t number = m_Number;
+        const Dial what = m_Dial;
+        m_Waits = false;
+        bool result = false;
+        if (!m_Cancelled) {
+            // Armed under the lock: a cancel() from here on reaches the
+            // probe, and one from before was seen just above
+            m_Making = true;
+            m_Probe.rearm();
+            lock.unlock();
+            result = m_Probe.make(what);
+            lock.lock();
+            m_Making = false;
+            if (m_Cancelled) result = false;
+        }
+        // The place is free, and the dial is answered: in that order, so that
+        // whoever is told may ask for the next at once
+        m_Cancelled = false;
+        m_Dial = Dial{};
+        if (m_Stop) return;
+        lock.unlock();
+        m_Done(number, result);
+        lock.lock();
+    }
 }
 
 } // namespace mw::tcp443

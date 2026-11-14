@@ -130,8 +130,13 @@ public:
     /// thread.
     uint32_t expectToken(std::string_view fragment, uint16_t port);
     /// Waits `forMs` at most for that connection. True when it came. The try
-    /// is over either way. From any thread but the listening one.
-    bool awaitToken(uint32_t id, uint64_t forMs);
+    /// is over either way. `givenUp`, when given: the wait also ends once
+    /// that mark is set and wakeTokens() is called. From any thread but the
+    /// listening one.
+    bool awaitToken(uint32_t id, uint64_t forMs, const std::atomic<bool>* givenUp = nullptr);
+    /// Every wait for a try's connection looks again at whether it goes on:
+    /// called after the mark such a wait was given is set. From any thread.
+    void wakeTokens();
 
     /// Whether one of these ports at least can be listened on now: it is, or
     /// a listener of a moment could be bound to it. What is asked before a

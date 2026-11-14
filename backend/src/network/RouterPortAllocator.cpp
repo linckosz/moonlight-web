@@ -237,8 +237,12 @@ public:
 
     ~Worker() override
     {
-        // On this thread, where the client was created.
+        // On this thread, where the client was created. What dials for TCP
+        // 443 first: its thread is over, and tells nothing any more, before
+        // anything it tells or anything a run stands on goes.
+        if (m_Dialler443) m_Dialler443->stop();
         m_Guard443.reset();
+        m_Dialler443.reset();
         m_Core.reset();
         m_Gateway.reset();
         m_Upnp.reset();
@@ -277,13 +281,24 @@ public:
         m_Core->setRecord(m_Record.get());
         m_Core->setListens(&mw::sockettables::listens);
         // TCP 443 is asked for over the same router and the same record, and
-        // only by a run that has something to dial with
-        if (startup.probe443)
+        // only by a run that has something to dial with. The dials are made
+        // on a thread of their own (a dial waits for seconds, and every claim
+        // and renewal goes through this one); the router and the record stay
+        // this thread's alone: what the dialler tells is a number and a yes
+        // or a no, and all it does with them is post them here.
+        if (startup.probe443) {
+            m_Dialler443 = std::make_unique<mw::tcp443::Dialler>(
+                *startup.probe443, [this](uint32_t run, bool result) {
+                    QMetaObject::invokeMethod(
+                        this, [this, run, result]() { dialled443(run, result); },
+                        Qt::QueuedConnection);
+                });
             m_Guard443 = std::make_unique<mw::tcp443::Keeper>(
-                *m_Gateway, m_Record.get(), *startup.probe443, [this]() {
+                *m_Gateway, m_Record.get(), *m_Dialler443, [this]() {
                     return m_Upnp ? QString::fromStdString(m_Upnp->getExternalIPAddress())
                                   : QString();
                 });
+        }
 
         m_Renew = new QTimer(this);
         connect(m_Renew, &QTimer::timeout, this, [this]() { renew(); });
@@ -387,9 +402,25 @@ public:
     {
         if (!m_Guard443 || !m_Upnp || !m_Core) return;
         // What is due is the keeper's to decide (Tcp443Guard.h): renewed,
-        // taken off, asked for, or left alone for now
+        // taken off, asked for, or left alone for now. A run it begins does
+        // not end here: its dials are made elsewhere (dialled443()).
         now.leaseSec = m_Core->leaseSec();
-        for (const mw::tcp443::Keeper::Line& line : m_Guard443->look(now, ask, monotonicMs())) {
+        said443(m_Guard443->look(now, ask, monotonicMs()));
+    }
+
+    /// What a dial of the run under way found, posted here by the dialler:
+    /// the run goes on, a step, on this thread.
+    void dialled443(uint32_t run, bool result)
+    {
+        if (!m_Guard443) return;
+        said443(m_Guard443->dialled(run, result, monotonicMs()));
+    }
+
+    /// What the keeper had to say goes to the log, and where 443 leads now
+    /// to the main thread.
+    void said443(const QList<mw::tcp443::Keeper::Line>& lines)
+    {
+        for (const mw::tcp443::Keeper::Line& line : lines) {
             if (line.warning)
                 Logger::warning(QStringLiteral("[UPNP] ") + line.text);
             else
@@ -418,9 +449,19 @@ public:
 
     void releaseAll()
     {
-        // TCP 443 before the port it leads to. One that will not go stays in
-        // the record, and the next start takes it back.
-        if (m_Guard443 && m_Guard443->leadsTo() != 0) m_Guard443->release();
+        // TCP 443 before the port it leads to: held, or just written by a
+        // run that waits for its last dial, which is given up. One that will
+        // not go stays in the record, the next start takes it back, and that
+        // is said. The dial under way is cancelled here and its thread ended
+        // when this object goes.
+        if (m_Guard443) {
+            for (const mw::tcp443::Keeper::Line& line : m_Guard443->release()) {
+                if (line.warning)
+                    Logger::warning(QStringLiteral("[UPNP] ") + line.text);
+                else
+                    Logger::info(QStringLiteral("[UPNP] ") + line.text);
+            }
+        }
         if (m_Core) m_Core->releaseAll();
     }
 
@@ -432,8 +473,10 @@ private:
     std::unique_ptr<mw::routerholes::File> m_Record;
     bool m_RecordTried = false;
     std::unique_ptr<RouterPortCore> m_Core;
-    /// TCP 443 on the router: what decides, and when (Tcp443Guard.h). What
-    /// dials for it is the façade's caller's.
+    /// The thread the dials of TCP 443 are made on, with the façade's
+    /// caller's probe. Before the keeper, which asks it for them.
+    std::unique_ptr<mw::tcp443::Dialler> m_Dialler443;
+    /// TCP 443 on the router: what decides, and when (Tcp443Guard.h).
     std::unique_ptr<mw::tcp443::Keeper> m_Guard443;
     /// The look at TCP 443 that waits for the sweep to be over: the latest.
     mw::tcp443::Waiting m_Waiting443;
