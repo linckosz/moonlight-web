@@ -31,6 +31,9 @@ static_assert(kHandedMax >= kWindowsMax * kUnansweredMax,
               "an agent within its bound could find no room for a hand-over");
 // The length travels in two bytes, and the frame with it in the place.
 static_assert(kFrameMin >= 20 && kFrameMax <= 0xFFFF - 2, "the frame's bounds do not fit");
+// A try's fragment is no agent's, here or in the mux: it is longer than any.
+static_assert(kTokenSize > mw::icemux::kUfragMax, "a try's fragment could be an agent's");
+static_assert(kHereUfragMin <= mw::icemux::kUfragMin, "an agent of this process's is held to more");
 
 Source sourceOf(uint8_t family, const uint8_t* address) noexcept
 {
@@ -70,6 +73,12 @@ void Table::release(Entry& entry, Closed& closed)
 {
     if (entry.number == 0) return;
     closed.push_back({entry.socket, true});
+    forget(entry);
+}
+
+void Table::forget(Entry& entry) noexcept
+{
+    if (entry.number == 0) return;
     if (Window* w = windowOf(entry.feed))
         if (w->unanswered > 0) --w->unanswered;
     entry.number = 0;
@@ -80,11 +89,50 @@ void Table::release(Entry& entry, Closed& closed)
     entry.length = 0;
 }
 
+void Table::settle(Closed& closed)
+{
+    if (expected()) return;
+    // Nobody expects a connection: whatever waits has nobody to go to
+    for (Waiting& waiting : m_Waiting) {
+        if (waiting.socket == kNoSocket) continue;
+        ++m_Counters.unexpected;
+        release(waiting, closed);
+    }
+}
+
+void Table::noteEnd(uint16_t port, End why) noexcept
+{
+    if (port == 0) return;
+    PortEnd* slot = nullptr;
+    for (PortEnd& end : m_Ends) {
+        if (end.port == port) {
+            slot = &end;
+            break;
+        }
+        if (end.port == 0 && !slot) slot = &end;
+    }
+    // No room: the one written longest ago gives its place
+    if (!slot) slot = &m_Ends[m_NextEnd++ % kEndsMax];
+    slot->port = port;
+    slot->why = why;
+}
+
+End Table::endedOn(uint16_t port) const noexcept
+{
+    for (const PortEnd& end : m_Ends)
+        if (end.port == port && port != 0) return end.why;
+    return End::None;
+}
+
 bool Table::open(uint32_t feed, std::string_view ufrag, const uint16_t* ports, size_t count,
                  uint64_t nowMs, uint32_t owner)
 {
     if (feed == 0 || owner == 0 || !ports || count == 0 || count > kWindowPortsMax) return false;
-    if (ufrag.size() < mw::icemux::kUfragMin || ufrag.size() > mw::icemux::kUfragMax) return false;
+    // An agent of this process's own is numbered apart, and nobody else's is:
+    // what is handed for the one can never be asked for as the other's
+    if ((owner == kHere) != hereFeed(feed)) return false;
+    const size_t shortest = owner == kHere ? kHereUfragMin : mw::icemux::kUfragMin;
+    if (ufrag.size() < shortest || ufrag.size() > mw::icemux::kUfragMax) return false;
     Window* room = nullptr;
     for (Window& w : m_Windows) {
         if (w.feed == 0) {
@@ -109,7 +157,7 @@ bool Table::open(uint32_t feed, std::string_view ufrag, const uint16_t* ports, s
     return true;
 }
 
-void Table::close(uint32_t feed, Closed& closed)
+void Table::close(uint32_t feed, Closed& closed, End why)
 {
     Window* w = windowOf(feed);
     if (!w) return;
@@ -119,14 +167,10 @@ void Table::close(uint32_t feed, Closed& closed)
         ++m_Counters.unanswered;
         release(entry, closed);
     }
+    for (uint8_t i = 0; i < w->portCount; ++i)
+        noteEnd(w->ports[i], why);
     *w = Window{};
-    if (anyWindow()) return;
-    // Nobody expects a connection: whatever waits has nobody to go to
-    for (Waiting& waiting : m_Waiting) {
-        if (waiting.socket == kNoSocket) continue;
-        ++m_Counters.unexpected;
-        release(waiting, closed);
-    }
+    settle(closed);
 }
 
 void Table::releaseOwner(uint32_t owner, Closed& closed)
@@ -150,6 +194,9 @@ void Table::reset(Closed& closed)
         ++m_Counters.unanswered;
         release(entry, closed);
     }
+    for (Try& t : m_Tries)
+        t = Try{};
+    settle(closed);
 }
 
 bool Table::expects(uint32_t feed) const noexcept
@@ -167,6 +214,14 @@ bool Table::anyWindow() const noexcept
     return false;
 }
 
+bool Table::expected() const noexcept
+{
+    if (anyWindow()) return true;
+    for (const Try& t : m_Tries)
+        if (t.id != 0 && !t.arrived) return true;
+    return false;
+}
+
 size_t Table::listenPorts(uint16_t* out, size_t max) const noexcept
 {
     size_t count = 0;
@@ -178,6 +233,12 @@ size_t Table::listenPorts(uint16_t* out, size_t max) const noexcept
             out[count++] = w.ports[i];
         }
     }
+    for (const Try& t : m_Tries) {
+        if (t.id == 0 || t.arrived) continue;
+        if (std::find(out, out + count, t.port) != out + count) continue;
+        if (count >= max) return count;
+        out[count++] = t.port;
+    }
     return count;
 }
 
@@ -188,14 +249,58 @@ bool Table::idle() const noexcept
         if (waiting.socket != kNoSocket) return false;
     for (const Entry& entry : m_Handed)
         if (entry.number != 0) return false;
+    // One that came stays until it is asked about, or its time is over
+    for (const Try& t : m_Tries)
+        if (t.id != 0) return false;
     return true;
+}
+
+uint32_t Table::expectToken(std::string_view fragment, uint16_t port, uint64_t nowMs)
+{
+    if (fragment.size() != kTokenSize || port == 0) return 0;
+    Try* room = nullptr;
+    for (Try& t : m_Tries) {
+        if (t.id == 0) {
+            if (!room) room = &t;
+        } else if (std::equal(t.fragment.begin(), t.fragment.end(), fragment.begin())) {
+            return 0;
+        }
+    }
+    if (!room) return 0;
+    if (m_NextTry == 0) m_NextTry = 1;
+    room->id = m_NextTry++;
+    std::copy(fragment.begin(), fragment.end(), room->fragment.begin());
+    room->port = port;
+    room->untilMs = nowMs + kTokenMs;
+    room->arrived = false;
+    return room->id;
+}
+
+Table::Token Table::token(uint32_t id) const noexcept
+{
+    if (id == 0) return Token::None;
+    for (const Try& t : m_Tries)
+        if (t.id == id) return t.arrived ? Token::Arrived : Token::Waiting;
+    return Token::None;
+}
+
+void Table::endToken(uint32_t id, Closed& closed)
+{
+    if (id == 0) return;
+    for (Try& t : m_Tries) {
+        if (t.id != id) continue;
+        if (!t.arrived) noteEnd(t.port, End::Tried);
+        t = Try{};
+        settle(closed);
+        return;
+    }
 }
 
 int Table::accept(uintptr_t socket, const Source& from, uint16_t port, uint64_t nowMs,
                   Closed& closed)
 {
     if (socket == kNoSocket) return -1;
-    if (!anyWindow()) {
+    if (!expected()) {
         ++m_Counters.unexpected;
         closed.push_back({socket, false});
         return -1;
@@ -290,10 +395,30 @@ Table::Handed Table::route(int place, uint64_t nowMs, Closed& closed)
         return {};
     }
     const uint8_t* frame = w.bytes.data() + 2;
+    const StunView view = mw::icemux::readStun(frame, w.length);
+    // A try of the way here, before any agent: its fragment has a length no
+    // agent's has, so it is looked for among the tries and nowhere else. It
+    // counts once, on the port it was made for, and its connection is
+    // nobody's: closed here.
+    if (view.kind == Kind::BindingRequest && view.localUfrag.size() == kTokenSize) {
+        for (Try& t : m_Tries) {
+            if (t.id == 0 || t.arrived || nowMs >= t.untilMs || t.port != w.port) continue;
+            if (!std::equal(t.fragment.begin(), t.fragment.end(), view.localUfrag.begin()))
+                continue;
+            t.arrived = true;
+            // As long again for whoever made it to ask about it
+            t.untilMs = nowMs + kTokenMs;
+            ++m_Counters.tried;
+            const uint32_t id = t.id;
+            noteEnd(t.port, End::Tried);
+            release(w, closed);
+            settle(closed);
+            return {0, 0, id};
+        }
+    }
     // A request, and for an agent that expects a connection on this very
     // port: a worker is handed nothing for a fragment that is not its own
     // agent's, and nothing on a port it does not hold.
-    const StunView view = mw::icemux::readStun(frame, w.length);
     Window* target = nullptr;
     if (view.kind == Kind::BindingRequest && !view.localUfrag.empty()) {
         for (Window& candidate : m_Windows) {
@@ -341,7 +466,7 @@ Table::Handed Table::route(int place, uint64_t nowMs, Closed& closed)
     w.socket = kNoSocket;
     w.have = 0;
     w.length = 0;
-    return {room->feed, room->number};
+    return {room->feed, room->number, 0};
 }
 
 bool Table::held(uint32_t number, Held* out) const noexcept
@@ -384,6 +509,20 @@ bool Table::answered(uint32_t owner, uint32_t number, Closed& closed)
     return true;
 }
 
+bool Table::take(uint32_t owner, uint32_t number, Held* out)
+{
+    if (owner == 0 || number == 0 || !out) return false;
+    for (Entry& entry : m_Handed) {
+        if (entry.number != number || entry.owner != owner || entry.named) continue;
+        // The frame stays where it is until the entry is given to another
+        *out = Held{entry.socket, entry.feed, entry.frame.data(), entry.length};
+        ++m_Counters.answered;
+        forget(entry);
+        return true;
+    }
+    return false;
+}
+
 bool Table::letGo(uint32_t number, Closed& closed)
 {
     if (number == 0) return false;
@@ -411,8 +550,16 @@ void Table::expire(uint64_t nowMs, Closed& closed)
     }
     for (const Window& w : m_Windows) {
         if (w.feed == 0 || nowMs < w.untilMs) continue;
-        close(w.feed, closed);
+        close(w.feed, closed, End::TimedOut);
     }
+    bool ended = false;
+    for (Try& t : m_Tries) {
+        if (t.id == 0 || nowMs < t.untilMs) continue;
+        if (!t.arrived) noteEnd(t.port, End::Tried);
+        t = Try{};
+        ended = true;
+    }
+    if (ended) settle(closed);
 }
 
 } // namespace mw::icemuxtcp

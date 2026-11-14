@@ -90,24 +90,28 @@ void RelayBase::setPublicAddress(const std::string& publicIP, uint16_t publicPor
     m_OnSharedPorts = false;
     m_SharedHoles.clear();
     m_SharedTcpHoles.clear();
+    m_Tcp443LeadsTo = 0;
     qInfo() << "[Relay] UPnP public address set:" << QString::fromStdString(publicIP) << ":"
             << publicPort;
 }
 
 void RelayBase::setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports,
-                                     std::vector<uint16_t> tcpPorts)
+                                     std::vector<uint16_t> tcpPorts, uint16_t tcp443)
 {
     m_PublicIP = publicIP;
     m_PublicPort = 0;
     m_OnSharedPorts = true;
     m_SharedHoles = std::move(ports);
     m_SharedTcpHoles = std::move(tcpPorts);
+    // Only towards a port the router forwards in TCP: 443 leads to that port
+    m_Tcp443LeadsTo = mw::ice::publicPortFor(tcp443, true, 0, m_SharedTcpHoles);
     QStringList list;
     for (const uint16_t port : m_SharedHoles)
         list << QString::number(port);
     qInfo().noquote() << "[Relay] Shared ports the router forwards:"
                       << QString::fromStdString(publicIP) << "port"
-                      << list.join(QStringLiteral(", "));
+                      << list.join(QStringLiteral(", "))
+                      << (m_Tcp443LeadsTo != 0 ? "(and TCP 443)" : "");
 }
 
 void RelayBase::logSelectedCandidatePair(rtc::PeerConnection& pc, const char* logTag)
@@ -169,6 +173,8 @@ std::string RelayBase::micOpusFmtp() const
 void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* logTag)
 {
     rtc::Candidate modCandidate = candidate;
+    // The copy on the router's TCP 443, when this candidate has one
+    std::string by443;
 
     QHostAddress addr;
     const bool resolved = candidateAddress(candidate, &addr);
@@ -239,6 +245,20 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
                 qInfo() << logTag << "Host candidate ->" << QString::fromStdString(m_PublicIP)
                         << ":" << publicPort << "priority" << priority
                         << (m_EmitLanCandidate ? "(+ LAN)" : "");
+                // The router's TCP 443 leads to this very port: the same
+                // listener, reached by the one port some networks let out.
+                // Below every other candidate: a browser that gets through
+                // any other way never ends on it.
+                if (mw::ice::has443Copy(candidate.transportType() ==
+                                            rtc::Candidate::TransportType::TcpPassive,
+                                        publicPort, m_Tcp443LeadsTo)) {
+                    rtc::Candidate other = candidate;
+                    other.changeAddress(m_PublicIP, mw::ice::kTcp443);
+                    const uint32_t last = mw::ice::lastResortPriority(candidate.priority());
+                    by443 = mw::ice::withPriority(other.candidate(), last);
+                    qInfo() << logTag << "Host candidate ->" << QString::fromStdString(m_PublicIP)
+                            << ": 443 (TCP) priority" << last;
+                }
             } catch (const std::exception& e) {
                 qWarning() << logTag << "Failed to rewrite candidate:" << e.what();
             }
@@ -283,6 +303,7 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
 
     emit signalingIceCandidate(std::string(modCandidate.candidate()),
                                std::string(modCandidate.mid()));
+    if (!by443.empty()) emit signalingIceCandidate(by443, std::string(candidate.mid()));
 }
 
 QByteArray RelayBase::inputCapsMessage(const InputMsg::Policy& policy)

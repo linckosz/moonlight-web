@@ -260,6 +260,47 @@ void run_router_sweep_tests()
         CHECK(b.core.sweep(line).outcome == Swept::Removed);
         CHECK(b.gw.table.isEmpty() && b.record.lines.isEmpty());
     }
+    // The entry on TCP 443 of a run that was killed (settings.json
+    // ice_tcp_443, Tcp443Guard): the router's 443 towards the streams' shared
+    // port. Taken back at the next start as any other line is, under the same
+    // address, and by the same rules.
+    {
+        Hole line;
+        line.external = 443;
+        line.internal = 48550;
+        line.tcp = true;
+        line.kind = Kind::Tcp443;
+        line.slot = -1;
+        line.lan = kLan;
+        Bench b;
+        b.left(line);
+        CHECK(b.core.sweepList() == QList<Hole>{line});
+        CHECK(b.core.sweepBelieved(b.core.sweepList()));
+        CHECK(b.core.sweep(line).outcome == Swept::Removed);
+        CHECK(b.gw.table.isEmpty() && b.record.lines.isEmpty());
+        CHECK_EQ(b.gw.removes, 1);
+        // Somebody's own rule on 443, towards this very machine and port, in
+        // other words than this installation's: left, and no longer noted
+        Bench other;
+        other.record.note(line);
+        other.gw.table[keyOf(line)] = {kLan, 48550, QStringLiteral("https"), 0};
+        CHECK(other.core.sweep(line).outcome == Swept::NotOurs);
+        CHECK(other.gw.removes == 0 && other.gw.table.size() == 1);
+        // A router that is not believed about a port nobody maps: left
+        Bench liar;
+        liar.left(line);
+        liar.gw.oneAnswer = rowOf(line, kTag);
+        CHECK(!liar.core.sweepBelieved(liar.core.sweepList()));
+        // Noted under another address than today's: not this sweep's to look
+        // at. That one has a rule of its own (Tcp443Guard::formerAddress).
+        Hole old = line;
+        old.lan = kNeighbour;
+        Bench former;
+        former.left(old);
+        CHECK(former.core.sweepList().isEmpty());
+        CHECK(former.core.sweep(old).outcome == Swept::OtherAddress);
+        CHECK(former.gw.removes == 0 && former.record.has(443, true));
+    }
 
     SECTION("RouterSweep: what is not this installation's stays");
     // Left as it is, and no longer in the record: `differs` says by what.

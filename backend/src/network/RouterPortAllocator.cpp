@@ -20,6 +20,8 @@
 #include "PortIdentity.h"
 #include "RouterPortPools.h"
 #include "SocketTables.h"
+#include "Tcp443Guard.h"
+#include "Tcp443Probe.h"
 #include "UPNPClient.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
@@ -33,6 +35,7 @@
 #include <QTimer>
 #include <QUdpSocket>
 
+#include <chrono>
 #include <memory>
 
 namespace {
@@ -102,7 +105,17 @@ struct Startup
     bool devInstance = false;
     /// What a version that kept no such record remembers in the settings.
     mw::routerholes::Earlier earlier;
+    /// What dials for the guard of TCP 443; null: this run never asks for it.
+    mw::tcp443::Probe* probe443 = nullptr;
 };
+
+/// A clock that only goes forward, for what is paced.
+quint64 monotonicMs()
+{
+    using namespace std::chrono;
+    return static_cast<quint64>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
 
 Startup startupOf(const AppSettings& settings)
 {
@@ -225,6 +238,7 @@ public:
     ~Worker() override
     {
         // On this thread, where the client was created.
+        m_Guard443.reset();
         m_Core.reset();
         m_Gateway.reset();
         m_Upnp.reset();
@@ -262,6 +276,14 @@ public:
         }
         m_Core->setRecord(m_Record.get());
         m_Core->setListens(&mw::sockettables::listens);
+        // TCP 443 is asked for over the same router and the same record, and
+        // only by a run that has something to dial with
+        if (startup.probe443)
+            m_Guard443 = std::make_unique<mw::tcp443::Keeper>(
+                *m_Gateway, m_Record.get(), *startup.probe443, [this]() {
+                    return m_Upnp ? QString::fromStdString(m_Upnp->getExternalIPAddress())
+                                  : QString();
+                });
 
         m_Renew = new QTimer(this);
         connect(m_Renew, &QTimer::timeout, this, [this]() { renew(); });
@@ -290,6 +312,7 @@ public:
                                         "router did not answer that it has no such entry: "
                                         "nothing an earlier run left on it is removed"));
             m_Sweep.clear();
+            sweepOver();
             return;
         }
         sweepNext();
@@ -302,6 +325,17 @@ public:
         logSwept(hole, m_Core->sweep(hole));
         if (!m_Sweep.isEmpty())
             QMetaObject::invokeMethod(this, [this]() { sweepNext(); }, Qt::QueuedConnection);
+        else
+            sweepOver();
+    }
+
+    /// Nothing an earlier run left is to be looked at any more: the look at
+    /// TCP 443 that waited for that is made, the latest one only.
+    void sweepOver()
+    {
+        mw::tcp443::Situation now;
+        bool ask = false;
+        if (m_Waiting443.take(now, ask)) look443(now, ask);
     }
 
     void claim(quint64 token, const RouterPortCore::Request& request)
@@ -320,9 +354,52 @@ public:
         if (m_Core->renewFailures() == 2 && m_Core->leaseSec() == 0)
             Logger::warning(QStringLiteral("[UPNP] Renewal failed twice — switching to permanent "
                                            "mappings"));
-        if (lost.isEmpty()) return;
+        if (!lost.isEmpty())
+            QMetaObject::invokeMethod(
+                m_Owner, [o = m_Owner, lost]() { o->onRenewed(lost); }, Qt::QueuedConnection);
+        // TCP 443 after the holes it stands on, and with what the main thread
+        // knows of them once it has heard of those that were lost
+        if (m_Guard443)
+            QMetaObject::invokeMethod(
+                m_Owner, [o = m_Owner]() { o->consider443(); }, Qt::QueuedConnection);
+    }
+
+    /// TCP 443 on the router (Tcp443Guard), looked at again: when the holes
+    /// are renewed, when the streams' shared block port gets its hole or
+    /// loses it, when a switch changes. `ask`: the router may be asked;
+    /// without (UPnP or Internet Access went off), an entry that is held is
+    /// taken back and nothing else is done.
+    void tcp443(mw::tcp443::Situation now, bool ask)
+    {
+        if (!m_Guard443 || !m_Upnp || !m_Core) return;
+        // What an earlier run left on the router is looked at first, a line
+        // at a time: an entry it left on 443 is that sweep's to take back,
+        // and nothing is asked for there before it has. Until then this look
+        // waits, in the place of any that waited before it (sweepOver()).
+        if (!m_Sweep.isEmpty()) {
+            m_Waiting443.put(now, ask);
+            return;
+        }
+        look443(now, ask);
+    }
+
+    void look443(mw::tcp443::Situation now, bool ask)
+    {
+        if (!m_Guard443 || !m_Upnp || !m_Core) return;
+        // What is due is the keeper's to decide (Tcp443Guard.h): renewed,
+        // taken off, asked for, or left alone for now
+        now.leaseSec = m_Core->leaseSec();
+        for (const mw::tcp443::Keeper::Line& line : m_Guard443->look(now, ask, monotonicMs())) {
+            if (line.warning)
+                Logger::warning(QStringLiteral("[UPNP] ") + line.text);
+            else
+                Logger::info(QStringLiteral("[UPNP] ") + line.text);
+        }
+        const quint16 leadsTo = m_Guard443->leadsTo();
+        const bool refused = m_Guard443->formerRefused();
         QMetaObject::invokeMethod(
-            m_Owner, [o = m_Owner, lost]() { o->onRenewed(lost); }, Qt::QueuedConnection);
+            m_Owner, [o = m_Owner, leadsTo, refused]() { o->onTcp443(leadsTo, refused); },
+            Qt::QueuedConnection);
     }
 
     void renew(uint16_t externalPort)
@@ -341,6 +418,9 @@ public:
 
     void releaseAll()
     {
+        // TCP 443 before the port it leads to. One that will not go stays in
+        // the record, and the next start takes it back.
+        if (m_Guard443 && m_Guard443->leadsTo() != 0) m_Guard443->release();
         if (m_Core) m_Core->releaseAll();
     }
 
@@ -352,6 +432,11 @@ private:
     std::unique_ptr<mw::routerholes::File> m_Record;
     bool m_RecordTried = false;
     std::unique_ptr<RouterPortCore> m_Core;
+    /// TCP 443 on the router: what decides, and when (Tcp443Guard.h). What
+    /// dials for it is the façade's caller's.
+    std::unique_ptr<mw::tcp443::Keeper> m_Guard443;
+    /// The look at TCP 443 that waits for the sweep to be over: the latest.
+    mw::tcp443::Waiting m_Waiting443;
     /// The lines of the record still to be looked at.
     QList<mw::routerholes::Hole> m_Sweep;
     QTimer* m_Renew = nullptr;
@@ -399,7 +484,8 @@ void RouterPortAllocator::discover()
     // Asked again: the worker keeps no client after a miss, so start() looks
     // for the router afresh.
     m_State = GatewayState::Discovering;
-    const Startup startup = startupOf(*m_Settings);
+    Startup startup = startupOf(*m_Settings);
+    startup.probe443 = m_Probe443;
     QMetaObject::invokeMethod(
         m_Worker, [w = m_Worker, startup]() { w->start(startup); }, Qt::QueuedConnection);
 }
@@ -414,7 +500,8 @@ void RouterPortAllocator::startWorker()
     connect(m_Thread, &QThread::finished, m_Worker, &QObject::deleteLater);
     m_Thread->start();
 
-    const Startup startup = startupOf(*m_Settings);
+    Startup startup = startupOf(*m_Settings);
+    startup.probe443 = m_Probe443;
     QMetaObject::invokeMethod(
         m_Worker, [w = m_Worker, startup]() { w->start(startup); }, Qt::QueuedConnection);
 }
@@ -448,6 +535,37 @@ void RouterPortAllocator::onDiscovered(bool ok, const QString& publicIp, const Q
     // now on. The worker already took the previous one for the reclaim rule.
     m_Settings->setRouterLanIp(lanIp);
     emit gatewayReady(publicIp);
+    // What an earlier run of this installation left on 443 under another
+    // address is looked for now; 443 itself is asked for once the streams'
+    // shared port has its hole
+    consider443();
+}
+
+void RouterPortAllocator::consider443()
+{
+    if (!m_Probe443 || !m_Worker || m_State != GatewayState::Ready) return;
+    mw::tcp443::Situation now;
+    // The router may be asked while UPnP and Internet Access are on. Off, an
+    // entry that is held is taken back, as every hole is, and nothing else.
+    const bool ask = enabled();
+    now.wanted = ask && !mw::portidentity::devPorts() && m_Settings->iceUdpMux() &&
+                 m_Settings->iceTcpPassive() && m_Settings->iceTcp443();
+    if (m_PublicAddress) now.publicAddress = m_PublicAddress();
+    // Where it would lead: the shared block port, once the router forwards it
+    // in TCP. The worker fills in what only it can ask (the router's own
+    // address, the lease).
+    if (const auto block = heldMuxPort(RouterPortCore::kMuxBlock); block && block->tcp)
+        now.blockPort = block->external;
+    QMetaObject::invokeMethod(
+        m_Worker, [w = m_Worker, now, ask]() { w->tcp443(now, ask); }, Qt::QueuedConnection);
+}
+
+void RouterPortAllocator::onTcp443(quint16 leadsTo, bool staleRemovalRefused)
+{
+    m_Tcp443Refused = staleRemovalRefused;
+    if (leadsTo == m_Tcp443Port) return;
+    m_Tcp443Port = leadsTo;
+    emit tcp443Changed(leadsTo);
 }
 
 void RouterPortAllocator::scheduleRediscovery()
@@ -716,6 +834,8 @@ void RouterPortAllocator::onClaimed(quint64 token, const RouterPortCore::Result&
     Logger::info(line);
 
     deliver(token, claim, {});
+    // The port TCP 443 would lead to has its hole
+    if (purpose == Purpose::Mux && slot == RouterPortCore::kMuxBlock) consider443();
 }
 
 void RouterPortAllocator::onRenewed(const QList<RouterPortCore::Lost>& lost)
@@ -737,6 +857,9 @@ void RouterPortAllocator::onRenewed(const QList<RouterPortCore::Lost>& lost)
         }
         emit portLost(static_cast<int>(l.claim.purpose), l.claim.slot, l.claim.external, l.owner);
     }
+    // One of them may be the port TCP 443 leads to: an entry that leads to a
+    // port the router no longer forwards here is taken off at once
+    consider443();
 }
 
 void RouterPortAllocator::releaseTunnelPort(quint16 externalPort)
@@ -760,6 +883,9 @@ void RouterPortAllocator::releaseMuxPort(int which)
     if (!held) return;
     const Claim claim = *held;
     m_Held.removeAll(claim);
+    // TCP 443 before the port it leads to: asked on the same thread, ahead of
+    // the release, with that port's hole already counted as gone
+    consider443();
     QMetaObject::invokeMethod(
         m_Worker, [w = m_Worker, claim]() { w->release(claim); }, Qt::QueuedConnection);
     Logger::info(QStringLiteral("[UPNP] %1: released %2")
@@ -769,10 +895,13 @@ void RouterPortAllocator::releaseMuxPort(int which)
 
 void RouterPortAllocator::switchChanged()
 {
+    // TCP 443 first: off, it is taken back before the port it leads to is
+    if (!enabled()) consider443();
     if (enabled())
         emit switchedOn();
     else
         emit switchedOff();
+    // On: asked for once the shared block port has its hole again (onClaimed)
 }
 
 QList<RouterPortAllocator::Claim> RouterPortAllocator::heldTunnelPorts() const

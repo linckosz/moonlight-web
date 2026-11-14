@@ -266,7 +266,9 @@ learns of it. The window ends when the agent is connected or gone, when its
 worker is gone, or after 45 seconds, whichever comes first. Between two
 windows nothing of MoonlightWeb listens there: the router's TCP hole on the
 number then leads to a closed port, or to another program of this machine
-that takes the number meanwhile.
+that takes the number meanwhile. Each time a listener is closed the log has
+one line for it, with the port and why nothing is expected there any more
+(connected, no connection in time, gone, a try of the way here over).
 
 **What the server reads.** Of each connection, its first frame (RFC 4571: two
 bytes of length, then a STUN message of 20 to 1024 bytes) and never a byte
@@ -321,6 +323,91 @@ neighbour's TCP forward on the number is left alone, and the port is then
 announced for UDP only. With `ice_tcp_passive` off, no TCP hole is asked for
 and nothing listens.
 
+## TCP 443 on the router
+
+Some networks let out TCP 443 and nothing else. For a browser there, the host
+asks its router for one more entry, TCP only: the router's 443 towards the
+stream block's shared port, where the server listens (above). No socket of the
+host binds 443, and its HTTPS port is not involved. It is behind
+`"ice_tcp_443": true` in settings.json (default false, not seeded), needs the
+shared ports and `ice_tcp_passive`, UPnP and Internet Access, and is never
+asked for by a DEV identity.
+
+**The guard** (`network/Tcp443Guard`). 443 is the port people forward by hand
+and the one a router keeps for itself, so the host asks for it only when it
+can show, alone, that nobody has it and that it then leads here. The guard
+runs on the allocator's thread once the block port has its TCP hole, in this
+order, and the first step that fails leaves 443 as it is, with one line in the
+log that names the step and no address:
+
+1. the address browsers reach this host at is a public IPv4 one, and it is the
+   one the router says is its own: no second router in front;
+2. the router says it has no TCP entry on 443. An entry, whoever it leads to,
+   or an answer that says nothing, ends the run. Only this installation's own
+   (by its record, its description with the tag, the address and the port
+   noted) is kept, and renewed;
+3. the router leads back here from its own address: a connection dialled to
+   the block port there arrives at this host's listener;
+4. nothing completes a handshake on 443 there: a rule made by hand does not
+   show in what step 2 asks;
+5. the entry is noted in the record, written, read back, and a connection
+   dialled to 443 must then arrive here. Otherwise it is removed, the removal
+   read back, and the line struck.
+
+Held, it is written again and read back with the other holes, every half
+hour, without a dial. It is taken off when the server stops, when a switch it
+stands on goes off, and when the block port loses its hole or moves. A run
+that was killed leaves a line in the record, and the start-up sweep takes the
+entry back as it does any other; nothing is asked for on 443 before that sweep
+is over, and what is looked at then is the situation as it was last told, not
+one from before a switch went off.
+
+**How it knows a connection arrived here** (`network/Tcp443Probe`). For steps
+3 and 5 the host makes a fragment for that one try, sixteen characters, which
+no agent's fragment has, and tells its listener to expect one connection that
+names it, for 2.5 seconds; two such tries at most are under way. It dials and
+sends one frame: a Binding request that holds that name and nothing else, 46
+bytes. The listener reads it as it reads any first frame, counts the try, and
+closes the connection: it is handed to no agent and to no worker, and nothing
+is written back. For step 4 it dials and sends nothing.
+
+**How often** (`Pace`, in `Tcp443Guard.h`). A run that stopped before it
+dialled may be made again whenever the holes are looked at. One that dialled
+and stopped (steps 3 and 4) waits an hour. One that wrote and did not keep
+what it wrote (step 5) is the last until the server starts anew, and says so
+in a warning. An entry that was held and is lost is asked for again at once,
+once, and an hour later if it is lost again within the hour.
+
+**A former address.** An entry of this installation's noted under another
+address than this machine has today is not left for later, as the other kinds
+are: that address may be another machine's by now. The router is asked at each
+start and each renewal, and where it still shows the entry as it was written
+(by the record AND the description, never by the address alone) the entry is
+removed. A router that will not remove it leaves a warning in the log, without
+the address, and a yes in the status the admin page reads
+(`router443_stale_removal_refused`: a yes or a no, for the admin alone), under
+which the page shows a text of its own. It is a no again once the entry is
+seen to be gone.
+
+**What the browser is told.** The passive TCP candidate on the block port has
+one more copy at the public address, on port 443, below every other candidate
+of the connection (`streaming/IcePriority.h`): a browser that gets through any
+other way never ends on it. A stream's worker learns which shared port 443
+leads to with the ports the router forwards (`"tcp443"` in `"iceMuxPublic"`).
+
+**The entry link.** The page itself comes through the tunnel, so the tunnel's
+connections are reached that way too. Their ICE agents live in the server
+process, each on its own port with its own listener, as before. With 443 held,
+such an agent is also expected on the block port, under the fragment its own
+description carries, within the bounds of a worker's agent (2 connections it
+has not taken, 32 in a window, 45 seconds). It sends the browser the copy on
+443 of its public TCP candidate, and a connection whose first frame names it
+is taken out of the listener and offered to it (`juice_tcp_passive_offer`,
+which an agent that listens itself takes as well): same process, nothing is
+copied. Its own gate decides, as for a connection to its own listener. These
+agents are numbered apart from the workers' agents, so that what names the one
+is never handed, or taken, as the other's.
+
 ## When it is not used
 
 Every one of these leaves the stream on a socket of its own, as without the
@@ -343,7 +430,6 @@ mux:
 
 - Without a hole, the public address of the block port: an agent asks the STUN
   server from its first shared port only.
-- TCP 443.
 - A switch in the environment serves the latency bench and nothing else:
   `MW_ICEMUX_STATS=1` (every ten seconds the server logs its counters and its
   CPU time, and each worker the delay between the server's read of a datagram

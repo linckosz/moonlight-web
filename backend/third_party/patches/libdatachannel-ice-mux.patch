@@ -37,16 +37,18 @@ index dc003fb8..5672d1b8 100644
  	bool disableAutoNegotiation = false;
  	bool disableAutoGathering = false;
 diff --git a/include/rtc/peerconnection.hpp b/include/rtc/peerconnection.hpp
-index f7a76a16..1943ddad 100644
+index f7a76a16..0ed5a0d1 100644
 --- a/include/rtc/peerconnection.hpp
 +++ b/include/rtc/peerconnection.hpp
-@@ -95,6 +95,10 @@ public:
+@@ -95,6 +95,12 @@ public:
  	optional<string> remoteAddress() const;
  	uint16_t maxDataChannelId() const;
  	bool getSelectedCandidatePair(Candidate *local, Candidate *remote);
-+	// MoonlightWeb patch, libjuice only: a TCP connection accepted on a shared port
-+	// (IceSharedSockets::tcp), with the first RFC 4571 frame read from it. True when the ICE
-+	// agent took the socket, which is then its own to close; false leaves it the caller's.
++	// MoonlightWeb patch, libjuice only: a TCP connection accepted for this connection by
++	// another socket of the process, with the first RFC 4571 frame read from it: on a shared
++	// port (IceSharedSockets::tcp), or, while the ICE agent listens itself
++	// (enableIceTcpPassive), on another port that leads here. True when the ICE agent took the
++	// socket, which is then its own to close; false leaves it the caller's.
 +	bool offerIceTcp(uintptr_t socket, const char *frame, size_t size);
  
  	void setLocalDescription(Description::Type type = Description::Type::Unspec, LocalDescriptionInit init = {});

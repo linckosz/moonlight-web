@@ -73,6 +73,38 @@ inline constexpr size_t kHandedMax = kWindowsMax * kUnansweredMax;
 /// closed here.
 inline constexpr size_t kNamedPerOwnerMax = 4;
 
+/// The owner that is this process itself: an agent that lives in the server
+/// (the entry link's tunnel). It is given its connection by a call, in this
+/// process, and answers for it by taking it (Table::take()). Its feeds are
+/// numbered apart from the workers' agents, which the mux numbers from 1.
+inline constexpr uint32_t kHere = 0xFFFFFFFFu;
+inline constexpr uint32_t kHereFeeds = 0x80000000u;
+constexpr bool hereFeed(uint32_t feed) noexcept
+{
+    return (feed & kHereFeeds) != 0;
+}
+/// The shortest fragment such an agent has: the one its library gives it,
+/// which nobody here chose.
+inline constexpr size_t kHereUfragMin = 4;
+
+/// A try of the way to this host (network/Tcp443Probe): a fragment made for
+/// one connection, which is nobody's. Longer than any agent's fragment, so
+/// that it is never one, in this table or in the mux's.
+inline constexpr size_t kTokenSize = 16;
+inline constexpr size_t kTokensMax = 2;
+/// How long that connection has to come in.
+inline constexpr uint64_t kTokenMs = 2500;
+
+/// Why nothing is expected on a port any more, for the log.
+enum class End : uint8_t
+{
+    None,
+    Connected, ///< the agent has its peer, whichever way
+    TimedOut,  ///< kWindowMs went by
+    Over,      ///< the agent, or its worker, is gone
+    Tried,     ///< a try of the way here is over
+};
+
 /// The value no socket has.
 inline constexpr uintptr_t kNoSocket = ~uintptr_t(0);
 
@@ -111,16 +143,18 @@ public:
     /// The agent `feed`, known by `ufrag`, expects a TCP connection on these
     /// ports from now on, for kWindowMs at most. `owner` says whose worker
     /// the agent is: any number but 0, the same for every agent of one
-    /// worker. False when the agent has a window already, the fragment is
-    /// another window's or is not one the mux takes (kUfragMin to kUfragMax),
-    /// no port or more than kWindowPortsMax are given, one is 0, there is no
-    /// owner, or kWindowsMax agents expect one.
+    /// worker; kHere for an agent of this process's own, whose feed is then
+    /// one of kHereFeeds, as no other is. False when the agent has a window
+    /// already, the fragment is another window's or is not one the mux takes
+    /// (kUfragMin to kUfragMax; from kHereUfragMin for kHere), no port or
+    /// more than kWindowPortsMax are given, one is 0, there is no owner, or
+    /// kWindowsMax agents expect one.
     bool open(uint32_t feed, std::string_view ufrag, const uint16_t* ports, size_t count,
               uint64_t nowMs, uint32_t owner);
-    /// It expects none any more. What was handed for it and not answered is
-    /// let go, but for what was named (name()); and, when it was the last,
-    /// whatever still waits.
-    void close(uint32_t feed, Closed& closed);
+    /// It expects none any more, and `why`. What was handed for it and not
+    /// answered is let go, but for what was named (name()); and, when nothing
+    /// is expected any more, whatever still waits.
+    void close(uint32_t feed, Closed& closed, End why = End::Over);
     /// The worker `owner` is gone: its agents expect nothing, and everything
     /// handed for them is let go, named or not.
     void releaseOwner(uint32_t owner, Closed& closed);
@@ -128,11 +162,36 @@ public:
     void reset(Closed& closed);
     bool expects(uint32_t feed) const noexcept;
     bool anyWindow() const noexcept;
+    /// Somebody expects a connection: an agent, or a try of the way here.
+    bool expected() const noexcept;
     /// The ports somebody expects a connection on, each once. The count,
     /// `max` at most.
     size_t listenPorts(uint16_t* out, size_t max) const noexcept;
-    /// Nothing expected, nothing waiting, nothing handed and unanswered.
+    /// Nothing expected, nothing waiting, nothing handed and unanswered, no
+    /// try left to be asked about.
     bool idle() const noexcept;
+    /// Why the last that expected a connection on `port` no longer does;
+    /// End::None when nothing is known of that port.
+    End endedOn(uint16_t port) const noexcept;
+
+    // ── A try of the way here ───────────────────────────────────────────────
+
+    /// One connection is expected on `port` whose first frame names
+    /// `fragment` (kTokenSize characters, made for this one try), within
+    /// kTokenMs. It is nobody's: route() closes it and says the try's number,
+    /// and nothing of it is ever handed to an agent. That number; 0 when the
+    /// fragment has not that length or is another try's, the port is 0, or
+    /// kTokensMax tries are under way.
+    uint32_t expectToken(std::string_view fragment, uint16_t port, uint64_t nowMs);
+    enum class Token
+    {
+        None,    ///< no such try: over, or never made
+        Waiting, ///< its connection has not come
+        Arrived, ///< it came, once
+    };
+    Token token(uint32_t id) const noexcept;
+    /// The try is over, come or not: its number says nothing from now on.
+    void endToken(uint32_t id, Closed& closed);
 
     // ── The connections that wait for their first frame ─────────────────────
 
@@ -177,11 +236,13 @@ public:
     {
         uint32_t feed = 0; ///< 0: handed to nobody, the socket is in `closed`
         uint32_t number = 0;
+        uint32_t token = 0; ///< the try it was the connection of, 0 for none
     };
     /// The frame in `place` is whole. It goes to the agent it names when it is
     /// a STUN Binding request whose USERNAME starts with the fragment of an
     /// agent that expects a connection on the port this one came in on, and
-    /// that agent is within its bounds. The place is free either way.
+    /// that agent is within its bounds. One that names a try under way on
+    /// that port is that try's, and is closed. The place is free either way.
     Handed route(int place, uint64_t nowMs, Closed& closed);
 
     // ── The connections handed over, until their worker answers ─────────────
@@ -208,13 +269,20 @@ public:
     /// there is none such: a worker answers for what it was handed, and for
     /// nothing of another's.
     bool answered(uint32_t owner, uint32_t number, Closed& closed);
+    /// The owner `owner` takes the connection `number` for itself: it is out
+    /// of the table and NOT in any `closed`, the socket is the caller's from
+    /// here on, and that counts as its answer. For an agent of this process's
+    /// own (kHere), which needs no copy. `out->frame` points into the table
+    /// until its next call. False when there is none such, or it was named.
+    bool take(uint32_t owner, uint32_t number, Held* out);
     /// There is nobody to hand the connection `number` to: it is let go at
     /// once. Not one that was named. False when there is none such.
     bool letGo(uint32_t number, Closed& closed);
 
     /// Lets go of what ran out of time: a connection whose frame did not come
     /// within kFirstFrameMs, one handed over kAnswerMs ago and not named, a
-    /// window open for kWindowMs.
+    /// window open for kWindowMs, a try whose connection did not come within
+    /// kTokenMs, or that came and was not asked about for as long again.
     void expire(uint64_t nowMs, Closed& closed);
 
     /// What became of the connections, for the log: counts, and nothing that
@@ -232,6 +300,7 @@ public:
         uint64_t unrouted = 0;   ///< named no agent that expects one there
         uint64_t bounded = 0;    ///< named an agent that has had its share
         uint64_t unexpected = 0; ///< came when no agent expected one
+        uint64_t tried = 0;      ///< were a try of the way here: this host's own
     };
     const Counters& counters() const noexcept { return m_Counters; }
 
@@ -270,16 +339,41 @@ private:
         uint16_t length = 0;
         std::array<uint8_t, kFrameMax> frame;
     };
+    struct Try
+    {
+        uint32_t id = 0; ///< 0: free
+        std::array<char, kTokenSize> fragment{};
+        uint16_t port = 0;
+        uint64_t untilMs = 0;
+        bool arrived = false;
+    };
+    struct PortEnd
+    {
+        uint16_t port = 0; ///< 0: free
+        End why = End::None;
+    };
+    /// Ports whose last end is remembered: as many as are listened on at once
+    /// (IceMuxTcp::kListenersMax).
+    static constexpr size_t kEndsMax = 8;
 
     Window* windowOf(uint32_t feed) noexcept;
     bool usable(int place) const noexcept;
     void release(Waiting& waiting, Closed& closed);
     void release(Entry& entry, Closed& closed);
+    /// The entry is out of the table; its socket goes where the caller says.
+    void forget(Entry& entry) noexcept;
+    /// When nothing is expected any more, whatever waits has nobody to go to.
+    void settle(Closed& closed);
+    void noteEnd(uint16_t port, End why) noexcept;
 
     std::array<Window, kWindowsMax> m_Windows;
     std::array<Waiting, kPlaces> m_Waiting;
     std::array<Entry, kHandedMax> m_Handed;
+    std::array<Try, kTokensMax> m_Tries;
+    std::array<PortEnd, kEndsMax> m_Ends;
+    size_t m_NextEnd = 0;
     uint32_t m_NextNumber = 1;
+    uint32_t m_NextTry = 1;
     uint64_t m_Order = 0;
     Counters m_Counters;
 };

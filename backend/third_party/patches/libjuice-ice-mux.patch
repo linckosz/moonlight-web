@@ -1,8 +1,8 @@
 diff --git a/include/juice/juice.h b/include/juice/juice.h
-index ee5cf45..c3487df 100644
+index ee5cf45..6871d4f 100644
 --- a/include/juice/juice.h
 +++ b/include/juice/juice.h
-@@ -144,6 +144,66 @@ JUICE_EXPORT const char *juice_state_to_string(juice_state_t state);
+@@ -144,6 +144,68 @@ JUICE_EXPORT const char *juice_state_to_string(juice_state_t state);
  JUICE_EXPORT int juice_mux_listen(const char *bind_address, int local_port, juice_cb_mux_incoming_t cb, void *user_ptr);
  JUICE_EXPORT int juice_set_ice_tcp_mode(juice_agent_t *agent, juice_ice_tcp_mode_t ice_tcp_mode);
  
@@ -32,9 +32,11 @@ index ee5cf45..c3487df 100644
 +JUICE_EXPORT int juice_set_shared_sockets(juice_agent_t *agent,
 +                                          const juice_shared_sockets_t *shared);
 +
-+// A TCP connection accepted on a shared port, with the first RFC 4571 frame read from it (its two
-+// bytes of length left out). The agent must hold shared sockets with `tcp` set and still be
-+// checking. The frame passes the gate of the agent's own listener and nothing else: only an
++// A TCP connection accepted for the agent by another socket of this process, with the first
++// RFC 4571 frame read from it (its two bytes of length left out). The agent must still be
++// checking, and either hold shared sockets with `tcp` set or listen itself (passive ICE-TCP on
++// its own port: the connection then came by another port that leads to this process). The frame
++// passes the gate of the agent's own listener and nothing else: only an
 +// authenticated Binding request makes the connection the agent's. On success the socket is the
 +// agent's, which closes it when it refuses it or is done with it; on an error (not such a
 +// connection, the checks over, too many offered at once) it stays the caller's, as it was given.
@@ -278,7 +280,7 @@ index 1bd47b0..3f32a84 100644
  
  #endif
 diff --git a/src/conn_poll.c b/src/conn_poll.c
-index beeeee7..0b08856 100644
+index beeeee7..321e3d9 100644
 --- a/src/conn_poll.c
 +++ b/src/conn_poll.c
 @@ -58,6 +58,15 @@ typedef struct tcp_passive_pending {
@@ -541,7 +543,7 @@ index beeeee7..0b08856 100644
  	} else {
  		if (conn_impl->send_ds >= 0 && conn_impl->send_ds != ds) {
  			JLOG_VERBOSE("Setting Differentiated Services field to 0x%X", ds);
-@@ -847,7 +1018,62 @@ static int tcp_queue_flush(conn_impl_t *conn_impl) {
+@@ -847,7 +1018,71 @@ static int tcp_queue_flush(conn_impl_t *conn_impl) {
  
  bool conn_poll_tcp_listening(juice_agent_t *agent) {
  	conn_impl_t *conn_impl = agent->conn_impl;
@@ -549,11 +551,20 @@ index beeeee7..0b08856 100644
 +	return conn_impl->listen_sock != INVALID_SOCKET || conn_impl->shared_tcp;
 +}
 +
-+// A connection accepted on a shared port, by the socket that listens there, with its first frame.
-+// Checked for what it must be, then left for the poll thread, which gives it a place in the
-+// waiting list and passes it through tcp_passive_adopt(), the one gate. Called from any thread:
-+// it closes nothing and moves nothing that is being polled. The caller keeps the socket, as it
-+// gave it, unless this succeeds.
++// Whether a connection accepted elsewhere is taken now: while the agent would take one itself.
++// That is while whoever holds its shared ports accepts for it, or while its own listener is
++// open: a router may lead another port than the agent's own to this process, and what comes in
++// that way is the same peer's, held to the same gate. Under the registry lock.
++static bool tcp_passive_offers_taken(const conn_impl_t *conn_impl) {
++	return conn_impl->shared_tcp || conn_impl->listen_sock != INVALID_SOCKET;
++}
++
++// A connection accepted for the agent by another socket of this process (the one that listens on
++// a shared port, or on a port a router leads here), with its first frame. Checked for what it
++// must be, then left for the poll thread, which gives it a place in the waiting list and passes
++// it through tcp_passive_adopt(), the one gate. Called from any thread: it closes nothing and
++// moves nothing that is being polled. The caller keeps the socket, as it gave it, unless this
++// succeeds.
 +int conn_poll_tcp_offer(juice_agent_t *agent, socket_t sock, const char *frame, size_t size) {
 +	conn_impl_t *conn_impl = agent->conn_impl;
 +	if (sock == INVALID_SOCKET || size < TCP_PASSIVE_FIRST_FRAME_MIN ||
@@ -578,8 +589,8 @@ index beeeee7..0b08856 100644
 +	src.socktype = SOCK_STREAM;
 +
 +	conn_poll_lock(agent);
-+	// Only while a listener of the agent's own would be open
-+	if (!conn_impl->shared_tcp ||
++	// Only while a listener of the agent's own is open, or would be
++	if (!tcp_passive_offers_taken(conn_impl) ||
 +	    (conn_impl->state != CONN_STATE_NEW && conn_impl->state != CONN_STATE_READY)) {
 +		conn_poll_unlock(agent);
 +		return JUICE_ERR_FAILED;
@@ -605,7 +616,7 @@ index beeeee7..0b08856 100644
  }
  
  static socket_t tcp_passive_listen(socket_t udp_sock) {
-@@ -900,6 +1126,11 @@ error:
+@@ -900,6 +1135,11 @@ error:
  }
  
  static void tcp_passive_close(conn_impl_t *conn_impl) {
@@ -617,7 +628,7 @@ index beeeee7..0b08856 100644
  	if (conn_impl->listen_sock != INVALID_SOCKET) {
  		JLOG_DEBUG("Passive ICE-TCP: closing the listener");
  		closesocket(conn_impl->listen_sock);
-@@ -947,7 +1178,8 @@ static int tcp_passive_oldest(const conn_impl_t *conn_impl, const addr_record_t
+@@ -947,7 +1187,8 @@ static int tcp_passive_oldest(const conn_impl_t *conn_impl, const addr_record_t
  // a connection that did not send its first frame in time is closed.
  static void tcp_passive_trim(juice_agent_t *agent, timestamp_t now) {
  	conn_impl_t *conn_impl = agent->conn_impl;
@@ -627,7 +638,7 @@ index beeeee7..0b08856 100644
  		return;
  
  	if (agent->state == JUICE_STATE_COMPLETED || agent->state == JUICE_STATE_FAILED ||
-@@ -964,6 +1196,27 @@ static void tcp_passive_trim(juice_agent_t *agent, timestamp_t now) {
+@@ -964,6 +1205,27 @@ static void tcp_passive_trim(juice_agent_t *agent, timestamp_t now) {
  	}
  }
  
@@ -655,7 +666,7 @@ index beeeee7..0b08856 100644
  static void tcp_passive_accept(juice_agent_t *agent) {
  	conn_impl_t *conn_impl = agent->conn_impl;
  	// Bounded: whatever is left waits for the next poll
-@@ -978,31 +1231,13 @@ static void tcp_passive_accept(juice_agent_t *agent) {
+@@ -978,31 +1240,13 @@ static void tcp_passive_accept(juice_agent_t *agent) {
  		addr_unmap_inet6_v4mapped((struct sockaddr *)&src.addr, &src.len);
  		src.socktype = SOCK_STREAM;
  
@@ -688,7 +699,7 @@ index beeeee7..0b08856 100644
  		pending->sock = sock;
  		pending->src = src;
  		pending->deadline = current_timestamp() + TCP_PASSIVE_FIRST_FRAME_TIMEOUT;
-@@ -1153,11 +1388,202 @@ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfd
+@@ -1153,11 +1397,202 @@ static nfds_t tcp_passive_process(juice_agent_t *agent, pfds_record_t *pfds, nfd
  	    listen_pfd->fd == conn_impl->listen_sock && (listen_pfd->revents & POLLIN) &&
  	    conn_impl->state != CONN_STATE_FINISHED)
  		tcp_passive_accept(agent);
@@ -701,7 +712,7 @@ index beeeee7..0b08856 100644
 +		tcp_passive_offer_t *offer = conn_impl->offers + k;
 +		socket_t sock = offer->sock;
 +		offer->sock = INVALID_SOCKET; // out of the box: closed below, or the waiting list's
-+		if (conn_impl->state == CONN_STATE_FINISHED || !conn_impl->shared_tcp) {
++		if (conn_impl->state == CONN_STATE_FINISHED || !tcp_passive_offers_taken(conn_impl)) {
 +			closesocket(sock);
 +			continue;
 +		}

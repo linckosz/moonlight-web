@@ -72,6 +72,38 @@ void tcpTable(const uint8_t* data, size_t size)
             else
                 table->answered(feed, (what & 0x40) ? last : 0, closed);
             break;
+        case 4: {
+            // A try of the way here: made, or over
+            static uint32_t tries[2] = {0, 0};
+            static const char* const tokens[] = {"tokenTOKEN123456", "tokenTOKEN654321"};
+            const size_t which = (what >> 3) & 1;
+            if (what & 0x40) {
+                table->endToken(tries[which], closed);
+                tries[which] = 0;
+            } else if (const uint32_t id =
+                           table->expectToken(tokens[which], ports[(what >> 4) & 1], now)) {
+                tries[which] = id;
+            }
+            break;
+        }
+        case 5: {
+            // An agent of this process's own: its window, its end, and what it
+            // takes for itself, which is then out of the table and in nobody's
+            // list to close
+            static const char* const own[] = {"abcd", "wxyz"};
+            const uint32_t here = kHereFeeds | feed;
+            if (what & 0x40) {
+                Table::Held taken;
+                if (table->take(kHere, last, &taken)) {
+                    if (!hereFeed(taken.feed) || held->erase(taken.socket) != 1) std::abort();
+                }
+            } else if (what & 0x80) {
+                table->close(here, closed);
+            } else {
+                table->open(here, own[feed - 1], ports, 1 + ((what >> 4) & 1), now, kHere);
+            }
+            break;
+        }
         default: {
             const uintptr_t socket = next++;
             held->insert(socket);
@@ -94,6 +126,8 @@ void tcpTable(const uint8_t* data, size_t size)
             else if (step == Table::Step::Whole) {
                 // Handed, and now and then named to its worker
                 const Table::Handed handed = table->route(place, now, closed);
+                // A try's connection is nobody's: closed, and handed to none
+                if (handed.token != 0 && (handed.feed != 0 || handed.number != 0)) std::abort();
                 if (handed.feed != 0) last = handed.number;
                 if (handed.feed != 0 && (what & 0x40)) table->name(last);
             } else if (what & 0x80)

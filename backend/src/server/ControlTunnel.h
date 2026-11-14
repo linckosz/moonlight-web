@@ -127,6 +127,14 @@ public:
         m_KnownCaller = std::move(isKnown);
     }
 
+    /// A TCP connection that came in on the streams' shared port and whose
+    /// first frame names one of this tunnel's ICE agents (network/IceMuxTcp,
+    /// by the router's TCP 443: settings.json ice_tcp_443): it is taken out
+    /// of the listener and offered to that agent, in this process, whose own
+    /// gate decides as for a connection to its own listener. On the main
+    /// thread. One for a peer that is gone is closed.
+    void takeSharedConnection(quint32 feed, quint32 number);
+
     // The wire format lives in server/TunnelFrame.h, on its own and free of
     // libdatachannel — its other half is JavaScript on a machine we will never
     // see, so it is the one part of this that has to be testable in isolation.
@@ -164,6 +172,12 @@ private:
         /// eight identical candidates to check in turn.
         bool publicCandidateSent = false;
         bool publicTcpCandidateSent = false; // the passive listener's, ice_tcp_passive
+        /// The copy of that one on the router's TCP 443 (ice_tcp_443), and the
+        /// number this connection's agent is known under where such a
+        /// connection comes in (IceMuxTcp::openHere()); 0 when none is
+        /// expected there.
+        bool public443CandidateSent = false;
+        quint32 sharedFeed = 0;
         /// The bench switch debug_ice_drop_udp, read when the connection was
         /// built: no UDP candidate crosses either way (mw::ice::isUdpCandidate).
         bool dropUdp = false;
@@ -229,6 +243,13 @@ private:
     /// Refuse this connection and take it down. The peer is DESTROYED — every
     /// caller must return immediately afterwards.
     void abort(Peer& p, const QString& why);
+    /// This peer's agent is expected where a connection by the router's TCP
+    /// 443 comes in, from now on and for as long as an agent checks: true
+    /// when it is (it was already, or the listener of the shared ports took
+    /// it). False when 443 leads nowhere of this host's, or it cannot be.
+    bool expectBy443(Peer& p);
+    /// It expects none there any more: connected, or gone.
+    void endBy443(Peer& p, bool connected);
 
     void onChannelMessage(const QString& sessionId, const QByteArray& message);
     void handleRequestFrame(Peer& p, quint32 id, const QByteArray& payload);

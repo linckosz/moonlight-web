@@ -241,6 +241,19 @@ std::string count(uint64_t n, const char* what)
     return std::to_string(n) + " " + what;
 }
 
+/// Why nothing is expected on a port any more, in words.
+const char* said(End why)
+{
+    switch (why) {
+    case End::Connected: return "whoever expected a connection there is connected";
+    case End::TimedOut: return "no connection was taken in the time one is expected";
+    case End::Over: return "whoever expected a connection there is gone";
+    case End::Tried: return "a try of the way to this host is over";
+    case End::None: break;
+    }
+    return "nothing is expected there";
+}
+
 } // namespace
 
 IceMuxTcp::~IceMuxTcp()
@@ -268,6 +281,7 @@ void IceMuxTcp::stop()
         m_Stop = true;
     }
     m_Wake.notify_all();
+    m_TokenCame.notify_all();
     m_Thread.join();
     // The thread is gone: what is left is closed here
     const std::lock_guard<std::mutex> lock(m_Lock);
@@ -303,13 +317,84 @@ bool IceMuxTcp::open(uint32_t feed, std::string_view ufrag, const std::vector<ui
     return listening;
 }
 
-void IceMuxTcp::close(uint32_t feed)
+void IceMuxTcp::close(uint32_t feed, bool connected)
 {
     {
         const std::lock_guard<std::mutex> lock(m_Lock);
-        m_Table->close(feed, m_Closing);
+        m_Table->close(feed, m_Closing, connected ? End::Connected : End::Over);
     }
     m_Wake.notify_one();
+}
+
+uint32_t IceMuxTcp::openHere(std::string_view ufrag, const std::vector<uint16_t>& ports)
+{
+    uint32_t feed = 0;
+    {
+        const std::lock_guard<std::mutex> lock(m_Lock);
+        // Numbered apart from the workers' agents (kHereFeeds), and never the
+        // number that says "none"
+        m_NextHere = (m_NextHere + 1) & ~kHereFeeds;
+        if (m_NextHere == 0) m_NextHere = 1;
+        feed = kHereFeeds | m_NextHere;
+    }
+    return open(feed, ufrag, ports, kHere) ? feed : 0;
+}
+
+bool IceMuxTcp::take(uint32_t feed, uint32_t number, uintptr_t* socket, std::vector<uint8_t>* frame)
+{
+    if (!socket || !frame || !hereFeed(feed)) return false;
+    const std::lock_guard<std::mutex> lock(m_Lock);
+    Table::Held held;
+    // Asked about first, taken after: one that is another agent's stays
+    // where it is, for whoever it is for
+    if (!m_Table->held(number, &held) || held.feed != feed) return false;
+    if (!m_Table->take(kHere, number, &held)) return false;
+    *socket = held.socket;
+    frame->assign(held.frame, held.frame + held.size);
+    return true;
+}
+
+void IceMuxTcp::closeTaken(uintptr_t socket)
+{
+    if (socket != kNoSocket) closeGone(Gone{socket, false});
+}
+
+uint32_t IceMuxTcp::expectToken(std::string_view fragment, uint16_t port)
+{
+    std::vector<std::string> says;
+    uint32_t id = 0;
+    {
+        const std::lock_guard<std::mutex> lock(m_Lock);
+        if (!m_Running) return 0;
+        const uint64_t now = nowMs();
+        id = m_Table->expectToken(fragment, port, now);
+        if (id != 0) {
+            // Now, in the caller's own time: it dials right after
+            bindListeners(now, true, says);
+            if (!listensOn(port)) {
+                m_Table->endToken(id, m_Closing);
+                id = 0;
+            }
+        }
+    }
+    say(says);
+    m_Wake.notify_one();
+    return id;
+}
+
+bool IceMuxTcp::awaitToken(uint32_t id, uint64_t forMs)
+{
+    bool came = false;
+    {
+        std::unique_lock<std::mutex> lock(m_Lock);
+        m_TokenCame.wait_for(lock, std::chrono::milliseconds(forMs), [this, id] {
+            return m_Stop || m_Table->token(id) != Table::Token::Waiting;
+        });
+        came = m_Table->token(id) == Table::Token::Arrived;
+        m_Table->endToken(id, m_Closing);
+    }
+    m_Wake.notify_one();
+    return came;
 }
 
 bool IceMuxTcp::expects(uint32_t feed) const
@@ -475,7 +560,7 @@ void IceMuxTcp::bindListeners(uint64_t now, bool retryNow, std::vector<std::stri
     }
 }
 
-void IceMuxTcp::trimListeners()
+void IceMuxTcp::trimListeners(std::vector<std::string>& tells)
 {
     uint16_t wanted[kListenersMax];
     const size_t wantedCount = m_Table->listenPorts(wanted, kListenersMax);
@@ -483,7 +568,13 @@ void IceMuxTcp::trimListeners()
         if (listener.port == 0) continue;
         if (std::find(wanted, wanted + wantedCount, listener.port) != wanted + wantedCount)
             continue;
-        if (listener.socket != kNoSocket) closeSocket(static_cast<SOCKET>(listener.socket));
+        if (listener.socket != kNoSocket) {
+            closeSocket(static_cast<SOCKET>(listener.socket));
+            // Each time, with the port and why: what the router forwards
+            // there in TCP reaches nothing of this host's from here on
+            tells.push_back("TCP port " + std::to_string(listener.port) +
+                            " is no longer listened on: " + said(m_Table->endedOn(listener.port)));
+        }
         listener = Listener{};
     }
 }
@@ -502,7 +593,7 @@ std::string IceMuxTcp::summary()
     const uint64_t closedHere = (now.evicted - was.evicted) + (now.timedOut - was.timedOut) +
                                 (now.ended - was.ended) + (now.malformed - was.malformed) +
                                 (now.unrouted - was.unrouted) + (now.bounded - was.bounded) +
-                                (now.unexpected - was.unexpected);
+                                (now.unexpected - was.unexpected) + (now.tried - was.tried);
     const uint64_t handed = now.handed - was.handed;
     if (closedHere + handed == 0) return {};
     std::string out = "TCP on the shared ports: " + count(closedHere + handed, "connection(s), ") +
@@ -515,6 +606,7 @@ std::string IceMuxTcp::summary()
                       count(now.malformed - was.malformed, "sent no frame, ") +
                       count(now.unrouted - was.unrouted, "for no agent, ") +
                       count(now.bounded - was.bounded, "over an agent's share, ") +
+                      count(now.tried - was.tried, "this host's own tries of the way here, ") +
                       count(now.unexpected - was.unexpected, "when none was expected)");
     m_Told = now;
     return out;
@@ -532,12 +624,14 @@ void IceMuxTcp::run()
     Closed closing;
     closing.reserve(kPlaces + kHandedMax);
     std::vector<std::string> says;
+    std::vector<std::string> tells;
     std::vector<std::pair<uint32_t, uint32_t>> deliveries;
     deliveries.reserve(kPlaces);
 
     for (;;) {
         size_t listenerCount = 0;
         bool anyWaiting = false;
+        bool tryCame = false;
         std::string told;
         {
             // Asleep for as long as nothing is expected, nothing waits,
@@ -553,7 +647,7 @@ void IceMuxTcp::run()
             m_Table->expire(now, m_Closing);
             // A listener is closed here and by stop(), nowhere else: this is
             // the thread that waits on it, and it is not waiting now
-            trimListeners();
+            trimListeners(tells);
             bindListeners(now, false, says);
             for (const Listener& listener : m_Listeners)
                 if (listener.socket != kNoSocket)
@@ -573,6 +667,10 @@ void IceMuxTcp::run()
         closing.clear();
         say(says);
         says.clear();
+        if (m_Tell)
+            for (const std::string& what : tells)
+                m_Tell(what);
+        tells.clear();
         if (!told.empty() && m_Tell) m_Tell(told);
 
         if (listenerCount == 0 && !anyWaiting) {
@@ -640,12 +738,20 @@ void IceMuxTcp::run()
                     }
                     const Table::Handed handed = m_Table->route(place, now, m_Closing);
                     if (handed.feed != 0) deliveries.emplace_back(handed.feed, handed.number);
+                    tryCame = tryCame || handed.token != 0;
                     break;
                 }
             }
         }
-        for (const auto& [feed, number] : deliveries)
-            if (m_Deliver) m_Deliver(feed, number);
+        // Whoever waits for a try's connection reads the table under the lock
+        // that was just let go of
+        if (tryCame) m_TokenCame.notify_all();
+        for (const auto& [feed, number] : deliveries) {
+            // An agent of this process's own takes it itself; a worker's is
+            // handed it. The two are numbered apart, and so never confused.
+            const auto& deliver = hereFeed(feed) ? m_DeliverHere : m_Deliver;
+            if (deliver) deliver(feed, number);
+        }
         deliveries.clear();
 
         // Then the new ones: so many from each listener, and on to the next

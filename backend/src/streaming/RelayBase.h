@@ -154,8 +154,12 @@ public:
     /// router does not forward has no such copy: it goes to a peer of our own
     /// network only (setEmitLanHostCandidate), like any internal address.
     /// A TCP candidate is judged by `tcpPorts`, the ones forwarded in TCP.
+    /// `tcp443`: the one of those the router's TCP 443 leads to as well, 0 for
+    /// none (settings.json ice_tcp_443): the passive TCP candidate on that
+    /// port has a second copy at the public address, on port 443, for a
+    /// browser on a network that lets out nothing else. Last of all.
     void setSharedPublicPorts(const std::string& publicIP, std::vector<uint16_t> ports,
-                              std::vector<uint16_t> tcpPorts = {});
+                              std::vector<uint16_t> tcpPorts = {}, uint16_t tcp443 = 0);
     void setForceHostCandidatePublic(bool force) { m_ForceHostPublic = force; }
     void setSuppressIPv6Candidates(bool suppress) { m_SuppressIPv6 = suppress; }
     // When host candidates are rewritten to the public IP, also advertise the
@@ -281,6 +285,8 @@ protected:
     bool m_OnSharedPorts = false;
     std::vector<uint16_t> m_SharedHoles;
     std::vector<uint16_t> m_SharedTcpHoles;
+    /// The shared port the router's TCP 443 leads to, 0 for none.
+    uint16_t m_Tcp443LeadsTo = 0;
     bool m_ForceHostPublic = false;
     ///< Withhold NON-GLOBAL IPv6 candidates (ULA, mesh VPN, link-local) when
     ///< UPnP is active. A global IPv6 address goes out: it is public anyway, and

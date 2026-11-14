@@ -13,6 +13,8 @@
 #include "test_framework.h"
 #include "network/IceMuxTcp.h"
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <functional>
@@ -682,6 +684,180 @@ void stopping()
     // Left to the destructor, with an agent that still expects one
 }
 
+/// A try of the way to this host (network/Tcp443Probe): one connection that
+/// names a fragment made for it, on the port it was made for, in its time.
+void trying()
+{
+    SECTION("IceMuxTcp: a try of the way here is listened for, counted once, and closed here");
+    IceMuxTcp tcp;
+    tcp.keepToLoopback();
+    Heard heard;
+    heard.attach(tcp);
+    const uint16_t port = freeTcpPorts(1)[0];
+    const char* const token = "tokenTOKEN123456";
+    const Bytes knock = requestFrame("tokenTOKEN123456:p");
+
+    // Not started: no try
+    CHECK_EQ(tcp.expectToken(token, port), uint32_t(0));
+    CHECK(tcp.start());
+    CHECK_EQ(tcp.expectToken("tooShort", port), uint32_t(0));
+    CHECK_EQ(tcp.expectToken(token, 0), uint32_t(0));
+    CHECK(nobodyListens(port));
+
+    // Listened on by the time it is made; the connection that names it is
+    // counted, and closed here
+    const uint32_t id = tcp.expectToken(token, port);
+    CHECK(id != 0);
+    const SOCKET a = dial(port);
+    CHECK(a != INVALID_SOCKET && sendAll(a, knock.data(), knock.size()));
+    CHECK(tcp.awaitToken(id, 2000));
+    CHECK(closedWithin(a, 1500));
+    shut(a);
+    // Over: asked about again it says nothing, and the port is let go of
+    CHECK(!tcp.awaitToken(id, 50));
+    CHECK(eventually([port] { return nobodyListens(port); }, 2000));
+    CHECK_EQ(tcp.counters().tried, uint64_t(1));
+    CHECK_EQ(heard.count(), size_t(0));
+
+    // One whose connection does not come: no, after the wait and not before
+    const uint32_t none = tcp.expectToken(token, port);
+    CHECK(none != 0 && none != id);
+    const auto before = std::chrono::steady_clock::now();
+    CHECK(!tcp.awaitToken(none, 300));
+    CHECK(std::chrono::steady_clock::now() - before >= std::chrono::milliseconds(250));
+    CHECK(eventually([port] { return nobodyListens(port); }, 2000));
+
+    // A connection that names another fragment of that length is not it
+    const uint32_t other = tcp.expectToken(token, port);
+    const SOCKET b = dial(port);
+    const Bytes wrong = requestFrame("tokenTOKEN999999:p");
+    CHECK(other != 0 && b != INVALID_SOCKET && sendAll(b, wrong.data(), wrong.size()));
+    CHECK(closedWithin(b, 1500));
+    CHECK(!tcp.awaitToken(other, 200));
+    shut(b);
+    CHECK_EQ(tcp.counters().tried, uint64_t(1));
+
+    // Waited for on another thread while the connection comes: woken by it
+    const uint32_t woken = tcp.expectToken(token, port);
+    std::atomic<int> result{-1};
+    std::thread waiter([&tcp, &result, woken] { result = tcp.awaitToken(woken, 3000) ? 1 : 0; });
+    const SOCKET c = dial(port);
+    CHECK(c != INVALID_SOCKET && sendAll(c, knock.data(), knock.size()));
+    CHECK(eventually([&result] { return result.load() == 1; }, 2000));
+    waiter.join();
+    shut(c);
+
+    // Stopped while one is waited for: told at once, and it is no
+    const uint32_t cut = tcp.expectToken(token, port);
+    std::atomic<int> stopped{-1};
+    std::thread held([&tcp, &stopped, cut] { stopped = tcp.awaitToken(cut, 5000) ? 1 : 0; });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    tcp.stop();
+    CHECK(eventually([&stopped] { return stopped.load() == 0; }, 1000));
+    held.join();
+    CHECK(cut != 0 && nobodyListens(port));
+
+    // What was said: the port and why, each time it was let go of; and
+    // nothing of the fragment
+    const std::string said = heard.everything();
+    CHECK(said.find("TCP port " + std::to_string(port) +
+                    " is no longer listened on: a try of the way to this host is over") !=
+          std::string::npos);
+    CHECK(said.find("tokenTOKEN") == std::string::npos);
+    CHECK_EQ(heard.warnings(), size_t(0));
+}
+
+/// An agent that lives in this process (the entry link's tunnel): what names
+/// it is given to it under its own number, and taken with nothing copied.
+void inThisProcess()
+{
+    SECTION("IceMuxTcp: an agent of this process's own takes its connection; a worker's is "
+            "handed its own");
+    IceMuxTcp tcp;
+    tcp.keepToLoopback();
+    Heard heard;
+    heard.attach(tcp);
+    std::mutex lock;
+    std::vector<std::pair<uint32_t, uint32_t>> here;
+    tcp.setDeliverHere([&lock, &here](uint32_t feed, uint32_t number) {
+        const std::lock_guard<std::mutex> guard(lock);
+        here.emplace_back(feed, number);
+    });
+    const auto hereCount = [&lock, &here] {
+        const std::lock_guard<std::mutex> guard(lock);
+        return here.size();
+    };
+    const uint16_t port = freeTcpPorts(1)[0];
+    CHECK_EQ(tcp.openHere("abcd", {port}), uint32_t(0)); // not started
+    CHECK(tcp.start());
+
+    const uint32_t tunnel = tcp.openHere("abcd", {port});
+    CHECK(tunnel != 0 && mw::icemuxtcp::hereFeed(tunnel) && tcp.expects(tunnel));
+    // One agent for a fragment, whoever asks
+    CHECK_EQ(tcp.openHere("abcd", {port}), uint32_t(0));
+    CHECK_EQ(tcp.openHere("abc", {port}), uint32_t(0));
+    CHECK(tcp.open(1, kUfrag, {port}, 101));
+
+    const Bytes forTunnel = requestFrame("abcd:peerXXXX");
+    const Bytes forWorker = requestFrame("hostAAAA1234:peerXXXX");
+    const SOCKET a = dial(port);
+    const SOCKET b = dial(port);
+    CHECK(a != INVALID_SOCKET && b != INVALID_SOCKET);
+    CHECK(sendAll(a, forTunnel.data(), forTunnel.size()));
+    CHECK(eventually([&hereCount] { return hereCount() == 1; }, 2000));
+    CHECK(sendAll(b, forWorker.data(), forWorker.size()));
+    CHECK(eventually([&heard] { return heard.count() == 1; }, 2000));
+    // Each went its own way, and that way alone
+    CHECK_EQ(hereCount(), size_t(1));
+    std::pair<uint32_t, uint32_t> tunnelGot{0, 0};
+    {
+        const std::lock_guard<std::mutex> guard(lock);
+        if (!here.empty()) tunnelGot = here[0];
+    }
+    const std::pair<uint32_t, uint32_t> workerGot = heard.at(0);
+    CHECK(tunnelGot.first == tunnel && workerGot.first == 1);
+
+    // A worker's connection is not taken here, by any name; the tunnel's is
+    // not a worker's to be handed
+    uintptr_t socket = mw::icemuxtcp::kNoSocket, never = mw::icemuxtcp::kNoSocket;
+    std::vector<uint8_t> frame, none;
+    CHECK(!tcp.take(tunnel, workerGot.second, &never, &none));
+    CHECK(!tcp.take(1, workerGot.second, &never, &none));
+    CHECK(!tcp.take(1, tunnelGot.second, &never, &none));
+    CHECK(!tcp.use(1, tunnelGot.second, kNothing));
+    CHECK(!tcp.take(tunnel, tunnelGot.second, nullptr, &none));
+    CHECK(never == mw::icemuxtcp::kNoSocket && none.empty());
+    // Taken: the socket itself, with its first frame
+    CHECK(tcp.take(tunnel, tunnelGot.second, &socket, &frame));
+    CHECK(socket != mw::icemuxtcp::kNoSocket);
+    CHECK(frame.size() + 2 == forTunnel.size() &&
+          std::equal(frame.begin(), frame.end(), forTunnel.begin() + 2));
+    CHECK(!tcp.take(tunnel, tunnelGot.second, &never, &none));
+    // It is the taker's from here on: this object's end of things (its agent
+    // done, the port let go of) leaves it open
+    tcp.close(tunnel, true);
+    tcp.answered(101, workerGot.second);
+    tcp.close(1);
+    CHECK(eventually([port] { return nobodyListens(port); }, 2000));
+    CHECK(closedWithin(b, 1500));
+    const char sent = 'k';
+    char got = 0;
+    CHECK(send(static_cast<SOCKET>(socket), &sent, 1, 0) == 1);
+    CHECK(readWithin(a, &got, 1, 1500) == 1 && got == 'k');
+    shut(static_cast<SOCKET>(socket));
+    CHECK(closedWithin(a, 1500));
+    shut(a);
+    shut(b);
+
+    CHECK_EQ(tcp.counters().answered, uint64_t(2));
+    CHECK_EQ(tcp.counters().handed, uint64_t(2));
+    tcp.stop();
+    const std::string said = heard.everything();
+    CHECK(said.find("is no longer listened on: whoever expected a connection there is") !=
+          std::string::npos);
+    CHECK(said.find("abcd") == std::string::npos && said.find("127.0.0.1") == std::string::npos);
+}
+
 /// A worker that copies its connections out of the server itself is told a
 /// handle's number, and copies later. However late, the handle is still that
 /// connection's: nothing lets go of it but that worker's answer, or its end.
@@ -789,4 +965,6 @@ void run_ice_mux_tcp_tests()
     busyPort();
     slowWorker();
     stopping();
+    trying();
+    inThisProcess();
 }

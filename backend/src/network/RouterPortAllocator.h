@@ -32,6 +32,9 @@
 class AppSettings;
 class QThread;
 class QTimer;
+namespace mw::tcp443 {
+class Probe;
+}
 
 /**
  * @brief Every hole this host opens in the router, from one place.
@@ -147,6 +150,29 @@ public:
     /// the mux.
     void setStreamMux(std::function<bool(uint16_t)> holds) { m_MuxHolds = std::move(holds); }
 
+    /// TCP 443 on the router, for a browser on a network that lets out
+    /// nothing else (settings.json ice_tcp_443, Tcp443Guard): asked for by
+    /// this allocator, on its thread, once the streams' shared block port has
+    /// its TCP hole, and only while every switch it takes is on and the run
+    /// is not a DEV identity's. `probe` dials for it and must outlive this
+    /// object; `publicAddress` says, on the main thread, the address browsers
+    /// reach this host at (empty when it is not known). Before
+    /// ensureStarted() or discover(); without this call 443 is never asked
+    /// for.
+    void setTcp443(mw::tcp443::Probe* probe, std::function<QString()> publicAddress)
+    {
+        m_Probe443 = probe;
+        m_PublicAddress = std::move(publicAddress);
+    }
+    /// The shared port the router's TCP 443 leads to, 0 when it leads to
+    /// none of this host's: read back on the router, and proved by a
+    /// connection when it was written.
+    quint16 tcp443LeadsTo() const { return m_Tcp443Port; }
+    /// The router keeps a TCP 443 entry this installation wrote under an
+    /// address this machine no longer has, and will not remove it: the person
+    /// who runs the router has to. False again once it is seen to be gone.
+    bool tcp443StaleRemovalRefused() const { return m_Tcp443Refused; }
+
     /// Renew every held hole now, as the half-hour timer does: the admin
     /// page's Force refresh, so a router that dropped its table gets the
     /// entries back without waiting for the timer.
@@ -193,6 +219,8 @@ signals:
     void portLost(int purpose, int slot, quint16 externalPort, const QString& owner);
     void switchedOff();
     void switchedOn();
+    /// tcp443LeadsTo() changed: 443 is held from now on, or no longer is.
+    void tcp443Changed(quint16 leadsTo);
 
 private:
     class Worker;
@@ -220,6 +248,10 @@ private:
     void scheduleRediscovery();
     void onClaimed(quint64 token, const RouterPortCore::Result& result);
     void onRenewed(const QList<RouterPortCore::Lost>& lost);
+    /// TCP 443 is looked at again on the worker's thread, with what stands
+    /// now: the switches, the address, the shared block port and its hole.
+    void consider443();
+    void onTcp443(quint16 leadsTo, bool staleRemovalRefused);
     quint64 submit(RouterPortCore::Request request, QObject* context, Callback callback);
     /// Answer a claim without asking the router, on the next event-loop turn.
     void answerLater(Purpose purpose, int slot, QObject* context, Callback callback,
@@ -244,6 +276,11 @@ private:
     QList<Claim> m_Held;
     /// See setStreamMux(). Unset: no stream shares a port.
     std::function<bool(uint16_t)> m_MuxHolds;
+    /// See setTcp443(). Main-thread mirror of what the worker's guard holds.
+    mw::tcp443::Probe* m_Probe443 = nullptr;
+    std::function<QString()> m_PublicAddress;
+    quint16 m_Tcp443Port = 0;
+    bool m_Tcp443Refused = false;
     QHash<quint64, Pending> m_Pending;
     quint64 m_NextToken = 1;
 };

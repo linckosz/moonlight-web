@@ -66,6 +66,30 @@ inline uint16_t publicPortFor(uint16_t localPort, bool onSharedPorts, uint16_t o
     return 0;
 }
 
+/// The router-side port of the second copy of a passive TCP candidate, where
+/// the router leads its TCP 443 to the port the candidate listens on
+/// (settings.json ice_tcp_443).
+inline constexpr uint16_t kTcp443 = 443;
+/// Below a reflexive address's, above a relay's: the last candidate of the
+/// connection, whatever its interface.
+inline constexpr uint32_t kLastResortTypePreference = 50;
+
+/// The same priority with that type preference: the copy on TCP 443 is below
+/// the copy on the port's own number, and below every other candidate.
+inline constexpr uint32_t lastResortPriority(uint32_t priority)
+{
+    return (kLastResortTypePreference << 24) | (priority & 0x00FFFFFFu);
+}
+
+/// Whether a candidate that has its copy at the public address on
+/// `publicPort` has a second one on TCP 443: a passive TCP candidate, on the
+/// very port the router's 443 leads to (`leadsTo`, 0 for none). An active one
+/// is never dialled, and a UDP one has nothing on 443.
+inline constexpr bool has443Copy(bool tcpPassive, uint16_t publicPort, uint16_t leadsTo)
+{
+    return tcpPassive && leadsTo != 0 && publicPort == leadsTo;
+}
+
 /// The candidate line (RFC 8839: "candidate:<foundation> <component>
 /// <transport> <priority> <address> <port> typ <type> ...") with its priority
 /// replaced. A line that does not parse that far is returned unchanged.

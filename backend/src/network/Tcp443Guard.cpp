@@ -19,6 +19,8 @@
 
 #include <QStringList>
 
+#include <utility>
+
 namespace mw::tcp443 {
 
 using mw::routerholes::Hole;
@@ -267,6 +269,121 @@ Guard::Former Guard::formerAddress()
     }
     m_FormerRefused = true;
     return Former::Refused;
+}
+
+void tellAdmin(QJsonObject& status, bool admin, bool staleRemovalRefused)
+{
+    const QLatin1String key(kStaleRefusedKey);
+    if (admin)
+        status[key] = staleRemovalRefused;
+    else
+        status.remove(key);
+}
+
+void Pace::said(const Verdict& verdict, uint64_t nowMs) noexcept
+{
+    switch (verdict.outcome) {
+    case Outcome::Held: m_Held = true; return;
+    case Outcome::Lost:
+        m_Held = false;
+        // At once, once: a router that was restarted has forgotten the entry.
+        // Lost again within the hour, it is somebody's doing, and waits.
+        m_NotBeforeMs = m_LostBefore && nowMs - m_LostMs < kApartMs ? nowMs + kApartMs : nowMs;
+        m_LostBefore = true;
+        m_LostMs = nowMs;
+        return;
+    case Outcome::Left:
+        m_Held = false;
+        if (verdict.step == 5)
+            m_Over = true;
+        else if (verdict.step == 3 || verdict.step == 4)
+            m_NotBeforeMs = nowMs + kApartMs;
+        return;
+    }
+}
+
+Keeper::Keeper(IUpnpGateway& gateway, mw::routerholes::IRecord* record, IProbe& probe,
+               std::function<QString()> routerAddress)
+    : m_Guard(gateway, record, probe)
+    , m_Probe(probe)
+    , m_RouterAddress(std::move(routerAddress))
+{}
+
+QList<Keeper::Line> Keeper::look(Situation now, bool ask, uint64_t nowMs)
+{
+    QList<Line> out;
+    if (m_Guard.held()) {
+        // Still standing on what it stood on: written again, read back.
+        // Otherwise (a switch, the shared port moved or lost its hole): taken
+        // off, and that is this host's own doing.
+        const bool stands = ask && now.wanted && now.blockPort == m_Guard.leadsTo();
+        Verdict verdict;
+        bool stays = false;
+        if (stands) {
+            if (m_RouterAddress) now.routerAddress = m_RouterAddress();
+            verdict = m_Guard.renew(now);
+            m_Pace.said(verdict, nowMs);
+        } else {
+            // Taken off here, whatever `now` holds: nothing is written again
+            // for an entry that no longer stands. One the router keeps is
+            // said to be still there: whoever switched something off is not
+            // told it is gone.
+            stays = !m_Guard.release();
+            verdict = {Outcome::Lost, 6,
+                       stays ? QStringLiteral("the entry could not be taken off the router (step "
+                                              "6): it stays there until the next start takes it "
+                                              "back, or until it is removed on the router itself")
+                             : QStringLiteral("what TCP 443 stood on changed: the entry is taken "
+                                              "off")};
+            m_Pace.anew();
+        }
+        if (verdict.outcome == Outcome::Held) return out;
+        // The router's doing is a warning; this host's own is not
+        out.append({stands || stays, QStringLiteral("TCP 443: %1").arg(verdict.said)});
+        m_Left.clear();
+        // No longer held: what stands now may be asked for in this same
+        // look, when a run is due
+    }
+    // Switched off: the router is not asked anything more
+    if (!ask) return out;
+
+    // An entry this installation wrote under an address this machine no
+    // longer has is taken off whatever the switches say: that address may be
+    // another machine's by now. Said once when the router will not, and never
+    // with the address.
+    if (m_Guard.formerAddress() == Guard::Former::Refused && !m_FormerSaid) {
+        m_FormerSaid = true;
+        out.append({true, QStringLiteral("TCP 443: the router still has an entry this "
+                                         "installation wrote under an address this machine no "
+                                         "longer has, and will not remove it: it has to be "
+                                         "removed on the router itself")});
+    }
+
+    if (!now.wanted || now.blockPort == 0 || !m_Pace.due(nowMs)) return out;
+    if (m_RouterAddress) now.routerAddress = m_RouterAddress();
+    m_Probe.leadsHereOn(now.blockPort);
+    const Verdict verdict = m_Guard.claim(now);
+    m_Pace.said(verdict, nowMs);
+    if (verdict.outcome == Outcome::Held) {
+        out.append({false, QStringLiteral("TCP 443: the router forwards it to the streams' "
+                                          "shared port %1 (TCP only)")
+                               .arg(m_Guard.leadsTo())});
+        m_Left.clear();
+    } else if (m_Pace.over()) {
+        // The router wrote, or kept, something else than it was asked: not
+        // asked again by this run of the server
+        out.append({true, QStringLiteral("TCP 443 is left as it is: %1 (step %2), and is not "
+                                         "asked for again until the server restarts")
+                              .arg(verdict.said)
+                              .arg(verdict.step)});
+    } else if (verdict.said != m_Left) {
+        // Once for each reason, not at every look
+        m_Left = verdict.said;
+        out.append({false, QStringLiteral("TCP 443 is left as it is: %1 (step %2)")
+                               .arg(verdict.said)
+                               .arg(verdict.step)});
+    }
+    return out;
 }
 
 } // namespace mw::tcp443

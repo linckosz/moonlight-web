@@ -23,6 +23,7 @@
 #include "common/LoopbackKey.h"
 #include "streaming/PacketMarking.h"
 #include "common/PairingCrypto.h"
+#include "network/IceMux.h"
 #include "network/RendezvousClient.h"
 #include "network/RouterPortAllocator.h"
 #include "network/RouterPortPools.h"
@@ -30,6 +31,7 @@
 #include "server/AuthManager.h"
 #include "server/HttpServer.h"
 #include "server/TunnelPeerPolicy.h"
+#include "streaming/IcePriority.h"
 #include "streaming/IceUdpDrop.h"
 #include "streaming/SdpFingerprint.h"
 
@@ -457,6 +459,9 @@ void ControlTunnel::createPeerConnection(Peer& p)
 void ControlTunnel::buildPeerConnection(Peer& p)
 {
     const QString sessionId = p.sessionId;
+    // A connection this one replaces is expected nowhere any more
+    endBy443(p, false);
+    p.public443CandidateSent = false;
 
     // ICE for the control channel.
     //
@@ -601,9 +606,30 @@ void ControlTunnel::buildPeerConnection(Peer& p)
             }
         }
 
+        // The same listener's candidate as the router's TCP 443 gives it,
+        // where the router leads its 443 to the port the streams share
+        // (settings.json ice_tcp_443): whether it does is known on the main
+        // thread, which decides below. Last of this connection's candidates:
+        // a browser that gets through any other way never ends on it.
+        std::string by443Cand;
+        if (tcp && !publicIP.empty() && candidate.type() == rtc::Candidate::Type::Host) {
+            const auto addr = candidate.address();
+            if (addr.has_value() && QHostAddress(QString::fromStdString(*addr)).protocol() ==
+                                        QAbstractSocket::IPv4Protocol) {
+                try {
+                    rtc::Candidate rewritten = candidate;
+                    rewritten.changeAddress(publicIP, mw::ice::kTcp443);
+                    by443Cand = mw::ice::withPriority(
+                        rewritten.candidate(), mw::ice::lastResortPriority(candidate.priority()));
+                } catch (const std::exception&) {
+                    // No such copy, then: the listener's own candidates stand
+                }
+            }
+        }
+
         QMetaObject::invokeMethod(
             this,
-            [this, id, attempt, cand, mid, publicCand, tcp, publicIP, mappedPort]() {
+            [this, id, attempt, cand, mid, publicCand, by443Cand, tcp, publicIP, mappedPort]() {
                 Peer* pp = peer(id);
                 if (!pp || pp->attempt != attempt) return;
                 const auto send = [this, &id, &mid](const std::string& line) {
@@ -630,11 +656,33 @@ void ControlTunnel::buildPeerConnection(Peer& p)
                                      .arg(mappedPort)
                                      .arg(tcp ? QStringLiteral(" (TCP, listening)") : QString()));
                 }
+                // Once, and only when this connection's agent is expected
+                // where such a connection comes in: on the streams' shared
+                // port, where the server listens for it from this moment
+                if (!by443Cand.empty() && !pp->public443CandidateSent && expectBy443(*pp)) {
+                    pp->public443CandidateSent = true;
+                    send(by443Cand);
+                    Logger::info(QStringLiteral("[Tunnel] Session %1 offered %2:443 as well "
+                                                "(TCP, by the router's 443)")
+                                     .arg(id.left(8), QString::fromStdString(publicIP)));
+                }
             },
             Qt::QueuedConnection);
     });
 
     p.pc->onStateChange([this, id, attempt](rtc::PeerConnection::State state) {
+        if (state == rtc::PeerConnection::State::Connected) {
+            // Connected, whichever way: nothing is expected for it on the
+            // streams' shared port any more
+            QMetaObject::invokeMethod(
+                this,
+                [this, id, attempt]() {
+                    Peer* pp = peer(id);
+                    if (pp && pp->attempt == attempt) endBy443(*pp, true);
+                },
+                Qt::QueuedConnection);
+            return;
+        }
         if (state != rtc::PeerConnection::State::Failed &&
             state != rtc::PeerConnection::State::Closed)
             return;
@@ -809,6 +857,8 @@ void ControlTunnel::dropPeer(const QString& sessionId, const QString& why)
         }
     }
     owned->sockets.clear();
+    // Nothing is expected for it on the streams' shared port from here on
+    endBy443(*owned, false);
 
     // Detach the callbacks before the objects go. libdatachannel may still be
     // inside one on a thread of its own, and it must not come back to a peer
@@ -835,6 +885,52 @@ void ControlTunnel::dropPeer(const QString& sessionId, const QString& why)
     releaseTunnelPort(owned->port);
 
     Logger::info(QStringLiteral("[Tunnel] Session %1 closed — %2").arg(sessionId.left(8), why));
+}
+
+bool ControlTunnel::expectBy443(Peer& p)
+{
+    if (p.sharedFeed != 0) return true;
+    const quint16 leadsTo = m_Ports ? m_Ports->tcp443LeadsTo() : quint16{0};
+    IceMux* mux = IceMux::shared();
+    if (leadsTo == 0 || !mux || !p.pc) return false;
+    // Known there by the fragment its own description gives the browser: the
+    // first frame of a connection names it, and nothing else tells whose a
+    // connection that came in by 443 is
+    const auto description = p.pc->localDescription();
+    const std::string ufrag =
+        description ? description->iceUfrag().value_or(std::string()) : std::string();
+    if (ufrag.empty()) return false;
+    p.sharedFeed = mux->tcp().openHere(ufrag, {leadsTo});
+    return p.sharedFeed != 0;
+}
+
+void ControlTunnel::endBy443(Peer& p, bool connected)
+{
+    if (p.sharedFeed == 0) return;
+    if (IceMux* mux = IceMux::shared()) mux->tcp().close(p.sharedFeed, connected);
+    p.sharedFeed = 0;
+}
+
+void ControlTunnel::takeSharedConnection(quint32 feed, quint32 number)
+{
+    IceMux* mux = IceMux::shared();
+    if (!mux) return;
+    for (const std::shared_ptr<Peer>& p : std::as_const(m_Peers)) {
+        if (!p || p->sharedFeed != feed || feed == 0 || !p->pc) continue;
+        // Out of the listener, which forgets it: same process, nothing is
+        // copied. Its agent's own when the agent takes it, whose gate then
+        // decides on the frame as for a connection to its own listener; this
+        // object's to close when it does not (its checks are over, or too
+        // many were offered at once).
+        uintptr_t socket = mw::icemuxtcp::kNoSocket;
+        std::vector<uint8_t> frame;
+        if (!mux->tcp().take(feed, number, &socket, &frame)) return;
+        if (!p->pc->offerIceTcp(socket, reinterpret_cast<const char*>(frame.data()), frame.size()))
+            IceMuxTcp::closeTaken(socket);
+        return;
+    }
+    // Its connection is gone, or connected, since this one named it
+    mux->tcp().letGo(number);
 }
 
 void ControlTunnel::abort(Peer& p, const QString& why)

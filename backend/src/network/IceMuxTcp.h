@@ -63,11 +63,18 @@ public:
     {
         m_Deliver = std::move(deliver);
     }
+    /// The same, for a connection that is for an agent of this process's own
+    /// (openHere()): the one that takes it (take()). Set before start().
+    void setDeliverHere(std::function<void(uint32_t feed, uint32_t number)> deliver)
+    {
+        m_DeliverHere = std::move(deliver);
+    }
     /// Where what is said of the listeners and of the connections goes: a
-    /// port that cannot be listened on, and, each time nothing is expected
-    /// any more, what became of the connections since the last time (counts,
-    /// and nothing that names a peer or an agent). Called from the listening
-    /// thread and from open()'s caller. Set before start().
+    /// port that cannot be listened on; each listener that is closed, with
+    /// its port and why nothing is expected there any more; and, each time
+    /// nothing is expected at all, what became of the connections since the
+    /// last time (counts, and nothing that names a peer or an agent). Called
+    /// from the listening thread and from open()'s caller. Set before start().
     void setReporter(std::function<void(const std::string&)> warn,
                      std::function<void(const std::string&)> tell)
     {
@@ -92,10 +99,39 @@ public:
     /// thread.
     bool open(uint32_t feed, std::string_view ufrag, const std::vector<uint16_t>& ports,
               uint32_t owner);
-    /// It expects none any more: connected, failed, gone. A port nobody
-    /// expects a connection on is no longer listened on. From any thread.
-    void close(uint32_t feed);
+    /// It expects none any more: connected (`connected`, which is only what
+    /// the log then says of the port), or failed, gone. A port nobody expects
+    /// a connection on is no longer listened on. From any thread.
+    void close(uint32_t feed, bool connected = false);
     bool expects(uint32_t feed) const;
+
+    /// An agent that lives in this process (the entry link's tunnel), known
+    /// to its peer by `ufrag`, expects a connection on these ports from now
+    /// on, as a worker's does and within the same bounds. The number it is
+    /// known under here, which is no worker's agent's; 0 when it cannot be
+    /// taken or none of the ports can be listened on. Ended by close().
+    /// From any thread.
+    uint32_t openHere(std::string_view ufrag, const std::vector<uint16_t>& ports);
+    /// The connection kept under `number` for that agent is its own from
+    /// here on: its socket, which this object forgets and no longer closes,
+    /// and its first frame. Nothing is copied: same process. False when
+    /// there is none such, or `feed` is not an agent of this process's.
+    bool take(uint32_t feed, uint32_t number, uintptr_t* socket, std::vector<uint8_t>* frame);
+    /// A connection that was taken, and that its taker will not have after
+    /// all (its agent refused it): closed at once, so that nothing of it
+    /// lingers on the port.
+    static void closeTaken(uintptr_t socket);
+
+    /// A try of the way to this host (network/Tcp443Probe): one connection
+    /// is expected on `port` whose first frame names `fragment`
+    /// (mw::icemuxtcp::kTokenSize characters, made for this try). The port is
+    /// listened on before this returns. The try's number; 0 when it cannot be
+    /// made. Such a connection is closed here and is nobody's. From any
+    /// thread.
+    uint32_t expectToken(std::string_view fragment, uint16_t port);
+    /// Waits `forMs` at most for that connection. True when it came. The try
+    /// is over either way. From any thread but the listening one.
+    bool awaitToken(uint32_t id, uint64_t forMs);
 
     /// Whether one of these ports at least can be listened on now: it is, or
     /// a listener of a moment could be bound to it. What is asked before a
@@ -164,10 +200,10 @@ private:
     /// all the same.
     void bindListeners(uint64_t nowMs, bool retryNow, std::vector<std::string>& says);
     bool listensOn(uint16_t port) const;
-    /// The listeners of ports nobody expects a connection on are closed.
-    /// With m_Lock held, and from the listening thread alone: it is the one
-    /// that waits on them.
-    void trimListeners();
+    /// The listeners of ports nobody expects a connection on are closed, and
+    /// each says so in `tells`. With m_Lock held, and from the listening
+    /// thread alone: it is the one that waits on them.
+    void trimListeners(std::vector<std::string>& tells);
     void say(const std::vector<std::string>& says) const;
     /// What became of the connections since it was last told, empty when
     /// none came. With m_Lock held.
@@ -179,6 +215,10 @@ private:
     /// closed by that thread too, once it is out of the table.
     mutable std::mutex m_Lock;
     std::condition_variable m_Wake;
+    /// awaitToken(): a try's connection came, or everything stops
+    std::condition_variable m_TokenCame;
+    /// The last number given to an agent of this process's own
+    uint32_t m_NextHere = 0;
     /// Its places and their frames, off whatever stack this object is on
     std::unique_ptr<mw::icemuxtcp::Table> m_Table = std::make_unique<mw::icemuxtcp::Table>();
     std::array<Listener, kListenersMax> m_Listeners;
@@ -192,6 +232,7 @@ private:
     std::thread m_Thread;
     std::atomic<bool> m_Running{false};
     std::function<void(uint32_t, uint32_t)> m_Deliver;
+    std::function<void(uint32_t, uint32_t)> m_DeliverHere;
     std::function<void(const std::string&)> m_Warn;
     std::function<void(const std::string&)> m_Tell;
 };

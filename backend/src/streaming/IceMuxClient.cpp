@@ -468,6 +468,12 @@ void setPublic(const QJsonObject& announced)
     for (const uint16_t port : mine(announced.value(QStringLiteral("tcpPorts"))))
         if (std::find(out.ports.cbegin(), out.ports.cend(), port) != out.ports.cend())
             out.tcpPorts.push_back(port);
+    // TCP 443 leads to one of those, or to nothing this worker listens for
+    const int by443 = announced.value(QStringLiteral("tcp443")).toInt();
+    if (by443 > 0 && by443 <= 65535 &&
+        std::find(out.tcpPorts.cbegin(), out.tcpPorts.cend(), static_cast<uint16_t>(by443)) !=
+            out.tcpPorts.cend())
+        out.tcp443 = static_cast<uint16_t>(by443);
     out.ip = address.toString().toStdString();
     s.announced = std::move(out);
 }

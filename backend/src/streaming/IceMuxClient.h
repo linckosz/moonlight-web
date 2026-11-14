@@ -74,8 +74,9 @@ bool available();
 bool tcpAvailable();
 
 /// What the server says of its router, for the streams on the shared ports:
-/// the config line's "iceMuxPublic", {"ip": "…", "ports": […]}, its public
-/// address and the shared ports the router forwards there, each to itself.
+/// the config line's "iceMuxPublic", {"ip": "…", "ports": […], "tcpPorts":
+/// […], "tcp443": n}, its public address, the shared ports the router
+/// forwards there, each to itself, and the one its TCP 443 leads to as well.
 /// After configure(); kept only for the ports this worker has.
 void setPublic(const QJsonObject& announced);
 
@@ -87,6 +88,9 @@ struct Public
     std::vector<uint16_t> ports;
     /// Of those, the ones it forwards in TCP too ("tcpPorts").
     std::vector<uint16_t> tcpPorts;
+    /// Of those again, the one its TCP 443 leads to as well ("tcp443"); 0
+    /// when it leads to none of them.
+    uint16_t tcp443 = 0;
 };
 Public publicPorts();
 

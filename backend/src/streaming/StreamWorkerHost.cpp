@@ -890,7 +890,7 @@ void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
         if (!m_MuxFeed) return;
         // Connected: it expects no connection any more, whichever way it is
         muxTcpHosts().remove(m_MuxFeed);
-        mux->tcp().close(m_MuxFeed);
+        mux->tcp().close(m_MuxFeed, true);
         const int port = event["port"].toInt();
         if (port <= 0 || port > 65535) return;
         mux->confirm(m_MuxFeed, event["address"].toString().toStdString(),

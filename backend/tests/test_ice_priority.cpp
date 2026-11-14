@@ -82,6 +82,36 @@ void testPublicPortOfAHostCandidate()
     CHECK_EQ(publicPortFor(0, true, 46100, both), uint16_t(0));
 }
 
+void testTheCopyOnTcp443()
+{
+    using mw::ice::has443Copy;
+    // The passive TCP candidate on the very port the router's 443 leads to,
+    // and no other: not another shared port, not an active candidate (never
+    // dialled), not a UDP one, and none when 443 leads nowhere.
+    CHECK(has443Copy(true, 48550, 48550));
+    CHECK(!has443Copy(true, 3478, 48550));
+    CHECK(!has443Copy(false, 48550, 48550));
+    CHECK(!has443Copy(true, 48550, 0));
+    CHECK(!has443Copy(true, 0, 0));
+    CHECK_EQ(mw::ice::kTcp443, uint16_t(443));
+
+    // Below the copy on the port's own number, and below every other
+    // candidate of the connection, whatever the interface
+    const uint32_t passive = 2105524479u;
+    const uint32_t last = mw::ice::lastResortPriority(passive);
+    CHECK(last < mw::ice::srflxPriority(passive));
+    CHECK(last < mw::ice::srflxPriority(0u));
+    CHECK_EQ(last >> 24, mw::ice::kLastResortTypePreference);
+    CHECK_EQ(last & 0x00FFFFFFu, passive & 0x00FFFFFFu);
+    CHECK(last > 0x00FFFFFFu);
+
+    // As it goes out: the same line, on 443, with that priority
+    const std::string own =
+        "candidate:2 1 TCP 2105524479 203.0.113.10 443 typ host tcptype passive";
+    CHECK_EQ(mw::ice::withPriority(own, last),
+             std::string("candidate:2 1 TCP 847233279 203.0.113.10 443 typ host tcptype passive"));
+}
+
 } // namespace
 
 void run_ice_priority_tests()
@@ -90,4 +120,5 @@ void run_ice_priority_tests()
     testWithPriorityRewritesOnlyThePriority();
     testWithPriorityLeavesAMalformedLineAlone();
     testPublicPortOfAHostCandidate();
+    testTheCopyOnTcp443();
 }

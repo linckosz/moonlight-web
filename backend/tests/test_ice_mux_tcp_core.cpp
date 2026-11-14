@@ -699,6 +699,178 @@ void named()
     CHECK_EQ(c2.handed, c2.answered + c2.unanswered);
 }
 
+/// A try of the way here (network/Tcp443Probe): one connection, on one port,
+/// within its time. It is nobody's: never an agent's, and closed here.
+void tries()
+{
+    SECTION("IceMuxTcpCore: a try of the way here is nobody's, and counts once");
+    const uint16_t one[] = {kPort};
+    const std::string token = "tokenTOKEN123456";
+    const Bytes knock = request(token + ":p");
+    Table t;
+    Sockets closed;
+    CHECK_EQ(token.size(), kTokenSize);
+    // What cannot be a try
+    CHECK_EQ(t.expectToken("fifteenCharsLon", kPort, 0), uint32_t(0));
+    CHECK_EQ(t.expectToken("seventeenCharsLon", kPort, 0), uint32_t(0));
+    CHECK_EQ(t.expectToken(token, 0, 0), uint32_t(0));
+    CHECK(t.idle() && !t.expected());
+
+    // Alone, it is what the port is listened on for
+    const uint32_t id = t.expectToken(token, kPort, 0);
+    CHECK(id != 0);
+    CHECK(t.expected() && !t.anyWindow() && !t.idle());
+    CHECK(t.token(id) == Table::Token::Waiting);
+    uint16_t ports[8] = {};
+    CHECK_EQ(t.listenPorts(ports, 8), size_t(1));
+    CHECK_EQ(ports[0], kPort);
+    // The same fragment is not two tries; so many at once, and no more
+    CHECK_EQ(t.expectToken(token, kOther, 0), uint32_t(0));
+    const uint32_t second = t.expectToken("tokenTOKEN654321", kOther, 0);
+    CHECK(second != 0 && second != id);
+    CHECK_EQ(t.expectToken("tokenTOKEN000000", kPort, 0), uint32_t(0));
+    t.endToken(second, closed);
+    CHECK(t.token(second) == Table::Token::None);
+    CHECK(t.token(0) == Table::Token::None);
+
+    // On another port than the one it was made for: not it
+    CHECK(sends(t, 1, v4(1), kOther, knock, 10, closed).token == 0 && has(closed, 1));
+    CHECK(t.token(id) == Table::Token::Waiting);
+    // A frame that names something else of that length: not it
+    CHECK(sends(t, 2, v4(1), kPort, request("tokenTOKEN999999:p"), 10, closed).token == 0);
+    CHECK(has(closed, 2));
+    // Its own: closed here, as a connection nobody else has an end of
+    const Table::Handed came = sends(t, 3, v4(1), kPort, knock, 20, closed);
+    CHECK(came.token == id && came.feed == 0 && came.number == 0);
+    CHECK(has(closed, 3) && !handedOver(closed, 3));
+    CHECK(t.token(id) == Table::Token::Arrived);
+    CHECK_EQ(t.counters().tried, uint64_t(1));
+    CHECK_EQ(t.counters().handed, uint64_t(0));
+    // Once: nothing is expected any more, and a second one is turned away
+    CHECK(!t.expected() && !t.idle());
+    CHECK_EQ(t.listenPorts(ports, 8), size_t(0));
+    CHECK(sends(t, 4, v4(1), kPort, knock, 30, closed).token == 0 && has(closed, 4));
+    CHECK_EQ(t.counters().unexpected, uint64_t(1));
+    CHECK_EQ(t.counters().tried, uint64_t(1));
+    CHECK(t.endedOn(kPort) == End::Tried);
+    CHECK(t.endedOn(kOther) == End::Tried && t.endedOn(5349) == End::None);
+    t.endToken(id, closed);
+    CHECK(t.token(id) == Table::Token::None && t.idle());
+
+    // Its time: a connection that comes after it is not it
+    Table late;
+    closed.clear();
+    const uint32_t slow = late.expectToken(token, kPort, 1000);
+    const int place = late.accept(1, v4(1), kPort, 1000 + kTokenMs - 1, closed);
+    CHECK(slow != 0 && place >= 0);
+    CHECK(give(late, place, framed(knock), 4096) == Table::Step::Whole);
+    CHECK(late.route(place, 1000 + kTokenMs, closed).token == 0 && has(closed, 1));
+    CHECK(late.token(slow) == Table::Token::Waiting);
+    late.expire(1000 + kTokenMs, closed);
+    CHECK(late.token(slow) == Table::Token::None && late.idle());
+    CHECK(late.endedOn(kPort) == End::Tried);
+
+    // One that came and is never asked about goes too, as long after
+    Table kept;
+    closed.clear();
+    const uint32_t unread = kept.expectToken(token, kPort, 0);
+    CHECK(sends(kept, 1, v4(1), kPort, knock, 100, closed).token == unread);
+    kept.expire(100 + kTokenMs - 1, closed);
+    CHECK(kept.token(unread) == Table::Token::Arrived);
+    kept.expire(100 + kTokenMs, closed);
+    CHECK(kept.token(unread) == Table::Token::None && kept.idle());
+
+    // Beside an agent: the try's connection is never the agent's, nor the
+    // agent's the try's
+    Table both;
+    closed.clear();
+    CHECK(both.open(1, kUfrag, one, 1, 0, ownerOf(1)));
+    const uint32_t beside = both.expectToken(token, kPort, 0);
+    const Table::Handed forAgent =
+        sends(both, 1, v4(1), kPort, request(std::string(kUfrag) + ":x"), 0, closed);
+    CHECK(forAgent.feed == 1 && forAgent.token == 0 && closed.empty());
+    const Table::Handed forTry = sends(both, 2, v4(2), kPort, knock, 0, closed);
+    CHECK(forTry.token == beside && forTry.feed == 0 && has(closed, 2) && closed.size() == 1);
+    Table::Held held;
+    CHECK(both.held(forAgent.number, &held) && held.socket == 1);
+    CHECK_EQ(both.counters().handed, uint64_t(1));
+    // What waits when the try is over waits on, for the agent
+    const int waits = both.accept(3, v4(3), kPort, 0, closed);
+    both.endToken(beside, closed);
+    CHECK(waits >= 0 && both.socketAt(waits) == 3);
+    // ...and has nobody to go to once the agent expects none either
+    both.close(1, closed, End::Connected);
+    CHECK(has(closed, 3) && has(closed, 1) && both.endedOn(kPort) == End::Connected);
+    // The server's own end takes the tries with it
+    const uint32_t last = both.expectToken(token, kPort, 0);
+    CHECK(last != 0);
+    both.reset(closed);
+    CHECK(both.token(last) == Table::Token::None && both.idle());
+}
+
+/// An agent that lives in this process (the entry link's tunnel) is numbered
+/// apart from the workers' agents, takes its connection itself, and is held
+/// to the bounds a worker's agent is.
+void thisProcess()
+{
+    SECTION("IceMuxTcpCore: an agent of this process's own takes its connection itself");
+    const uint16_t one[] = {kPort};
+    const uint32_t here = kHereFeeds | 1, worker = 7;
+    const Bytes knock = request("abcd:peer");
+    Table t;
+    Sockets closed;
+    CHECK(hereFeed(here) && !hereFeed(1));
+    // Numbered apart, both ways
+    CHECK(!t.open(5, kUfrag, one, 1, 0, kHere));
+    CHECK(!t.open(here, kUfrag, one, 1, 0, worker));
+    // The fragment its library gave it, four characters at least; a worker's
+    // agent is held to what the mux takes
+    CHECK(!t.open(here, "abc", one, 1, 0, kHere));
+    CHECK(!t.open(5, "abcd", one, 1, 0, worker));
+    CHECK(!t.open(here, "sixteenCharsLong", one, 1, 0, kHere));
+    CHECK(t.open(here, "abcd", one, 1, 0, kHere));
+    CHECK(t.open(1, kUfrag, one, 1, 0, worker));
+
+    const Table::Handed forTunnel = sends(t, 1, v4(1), kPort, knock, 0, closed);
+    const Table::Handed forWorker =
+        sends(t, 2, v4(2), kPort, request(std::string(kUfrag) + ":peer"), 0, closed);
+    CHECK(forTunnel.feed == here && forWorker.feed == 1 && closed.empty());
+    // Each is its own's alone: what names the tunnel never reaches a worker,
+    // and what names a worker's agent is never taken here
+    Table::Held held;
+    CHECK(!t.take(kHere, forWorker.number, &held));
+    CHECK(!t.take(worker, forTunnel.number, &held));
+    CHECK(!t.answered(worker, forTunnel.number, closed));
+    CHECK(!t.take(kHere, 0, &held) && !t.take(0, forTunnel.number, &held));
+    CHECK(!t.take(kHere, forTunnel.number, nullptr));
+    CHECK(closed.empty());
+    // Taken: out of the table, and its socket is in nobody's list to close
+    CHECK(t.take(kHere, forTunnel.number, &held));
+    CHECK(held.socket == 1 && held.feed == here);
+    CHECK(held.size == knock.size() && std::equal(knock.begin(), knock.end(), held.frame));
+    CHECK(!t.take(kHere, forTunnel.number, &held));
+    CHECK(closed.empty());
+    CHECK_EQ(t.counters().answered, uint64_t(1));
+    // The bounds of a worker's agent: so many it has not answered for
+    const Table::Handed second = sends(t, 3, v4(1), kPort, knock, 0, closed);
+    const Table::Handed third = sends(t, 4, v4(2), kPort, knock, 0, closed);
+    CHECK(second.feed == here && third.feed == here);
+    CHECK(sends(t, 5, v4(3), kPort, knock, 0, closed).feed == 0 && has(closed, 5));
+    CHECK_EQ(t.counters().bounded, uint64_t(1));
+    // One that was named stays for whoever it was named to
+    CHECK(t.name(second.number) && !t.take(kHere, second.number, &held));
+    // Its end lets go of all it did not take, and of nothing of the worker's
+    t.releaseOwner(kHere, closed);
+    CHECK(has(closed, 3) && has(closed, 4) && closed.size() == 3);
+    CHECK(!t.expects(here) && t.expects(1));
+    // And the time a window lasts
+    CHECK(t.open(here, "abcd", one, 1, 1000, kHere));
+    t.expire(1000 + kWindowMs - 1, closed);
+    CHECK(t.expects(here));
+    t.expire(1000 + kWindowMs, closed);
+    CHECK(!t.expects(here) && t.endedOn(kPort) == End::TimedOut);
+}
+
 } // namespace
 
 void run_ice_mux_tcp_core_tests()
@@ -711,5 +883,7 @@ void run_ice_mux_tcp_core_tests()
     timeouts();
     closing();
     named();
+    tries();
+    thisProcess();
     everySocketOnce();
 }

@@ -28,6 +28,7 @@
 #include "server/RememberMeWrite.h"
 #include "network/InternetAccessManager.h"
 #include "network/RouterPortAllocator.h"
+#include "network/Tcp443Guard.h"
 #include "backend/ComputerManager.h"
 #include "backend/GamepadDriver.h"
 #include "backend/VirtualDisplay.h"
@@ -168,6 +169,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                 !req.viaTunnel && req.hostTrusted && AuthManager::isLanAddress(req.clientAddress);
             if (lanDirect && rendezvousStatus) obj[QStringLiteral("rendezvous")] = rdv;
         }
+        // The router keeps a TCP 443 forward this installation made under an
+        // address this machine no longer has, and will not let it be removed
+        // from here: the admin page says so, in words of its own. A yes or a
+        // no, for whoever holds the admin's privilege and for nobody else.
+        const RouterPortAllocator* ports = internetAccess.routerPorts();
+        mw::tcp443::tellAdmin(obj, req.isLocal, ports && ports->tcp443StaleRemovalRefused());
         return HttpResponse::json(obj);
     });
 

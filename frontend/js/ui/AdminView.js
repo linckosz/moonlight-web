@@ -114,6 +114,9 @@ export class AdminView {
         this._rendezvousOnline = false; // the held line is actually up
         this._rendezvousError = ''; // why the client stopped trying, if it did
         this._lastError = '';
+        // The router keeps a 443 forward this install made under an address
+        // this PC no longer has, and will not let it be removed from here.
+        this._router443StaleRefused = false;
 
         // Activation loader: live step reported by the backend (statusJson.phase).
         this._activating = false;
@@ -369,6 +372,9 @@ export class AdminView {
             // Show the activation checklist whenever the backend is mid-activation,
             // even when it was triggered by first-run provisioning (not the toggle).
             this._activating = AdminView.IN_PROGRESS_PHASES.includes(this._phase);
+            // A yes or a no from the server, sent to the admin alone; the words
+            // are this page's own (see the notice in render()).
+            this._router443StaleRefused = status.router443_stale_removal_refused === true;
             this._lastError = status.last_error || '';
             // Auto-uncheck the toggle when the backend reports an error: an error
             // means the feature is not operational, so the checkbox must not look
@@ -1044,6 +1050,20 @@ export class AdminView {
                             ? `
                         <div class="internet-info-box internet-info-error">
                             <p>${this.esc(this._lastError)}</p>
+                        </div>
+                    `
+                            : ''
+                    }
+
+                    <!-- A 443 forward this install made under an address this
+                         PC no longer has, which the router will not let it
+                         remove. A fixed text, in English only: nothing a
+                         router answered is ever shown here, and no address. -->
+                    ${
+                        this._router443StaleRefused
+                            ? `
+                        <div class="internet-info-box internet-info-error">
+                            <p>A 443 forward to an old address of this PC could not be removed: remove it in your box.</p>
                         </div>
                     `
                             : ''

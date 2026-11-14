@@ -430,7 +430,9 @@ void SignalingServer::onNewWsConnection()
     if (muxed) {
         const mw::icemuxclient::Public forwarded = mw::icemuxclient::publicPorts();
         const bool any = !forwarded.ip.empty() && !forwarded.ports.empty();
-        if (any) m_Relay->setSharedPublicPorts(forwarded.ip, forwarded.ports, forwarded.tcpPorts);
+        if (any)
+            m_Relay->setSharedPublicPorts(forwarded.ip, forwarded.ports, forwarded.tcpPorts,
+                                          forwarded.tcp443);
         m_Relay->setForceHostCandidatePublic(any);
         m_Relay->setSuppressIPv6Candidates(any);
         m_Relay->setEmitLanHostCandidate(any && clientIsLocal);

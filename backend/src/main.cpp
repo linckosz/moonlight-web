@@ -150,6 +150,7 @@
 #include "network/RendezvousClient.h"
 #include "network/RouterPortAllocator.h"
 #include "network/RouterPortPools.h"
+#include "network/Tcp443Probe.h"
 #include "network/GeoIpService.h"
 #include "network/SelfUpdater.h"
 #include "network/SessionMetrics.h"
@@ -1659,6 +1660,13 @@ static quint16 slotMediaPort(int slot)
 // The shared ports and their holes in the router (IceMuxPorts), once started.
 // Set as the server starts, cleared before it goes.
 static IceMuxPorts* g_StreamMuxPorts = nullptr;
+// The shared port the router's TCP 443 leads to as well (settings.json
+// ice_tcp_443, RouterPortAllocator::tcp443LeadsTo()); 0 when it leads to none
+// of this host's. On the main thread.
+static quint16 g_Tcp443LeadsTo = 0;
+// The entry link's tunnel, for a connection that came in on a shared port and
+// names one of its agents. Set once it exists, cleared before it goes.
+static ControlTunnel* g_ControlTunnel = nullptr;
 
 // Whether the stream this config starts goes on the server's shared ports
 // rather than on a socket of its own: the mux is in use and reads well, and
@@ -1693,8 +1701,12 @@ static QJsonObject withSharedPortsAnnounced(QJsonObject cfg)
         ports.append(static_cast<int>(port));
     for (const uint16_t port : announced.tcpPorts)
         tcpPorts.append(static_cast<int>(port));
-    cfg["iceMuxPublic"] =
-        QJsonObject{{"ip", announced.publicIp}, {"ports", ports}, {"tcpPorts", tcpPorts}};
+    QJsonObject told{{"ip", announced.publicIp}, {"ports", ports}, {"tcpPorts", tcpPorts}};
+    // The router's TCP 443 leads to one of them as well: that one's listener
+    // is reached by the one port some networks let out
+    if (g_Tcp443LeadsTo != 0 && announced.tcpPorts.contains(g_Tcp443LeadsTo))
+        told["tcp443"] = static_cast<int>(g_Tcp443LeadsTo);
+    cfg["iceMuxPublic"] = told;
     return cfg;
 }
 
@@ -3235,10 +3247,21 @@ int main(int argc, char* argv[])
         qWarning().noquote() << "[Ports]" << said;
 
     InternetAccessManager internetAccess(&appSettings);
+    // What dials for the guard of TCP 443 (network/Tcp443Guard): it knows a
+    // connection of its own by asking the listener of the shared ports.
+    // Declared before the allocator, whose thread uses it until it stops.
+    mw::tcp443::Probe tcp443Probe(g_IceMux.tcp());
     // Every hole in the router, from one place: the tunnel's and each stream
     // slot's. Inert until a rendezvous line-up or a stream start asks for one,
     // and then only with UPnP on and Internet Access consented.
     RouterPortAllocator routerPorts(&appSettings);
+    // TCP 443 on the router, for a browser on a network that lets out nothing
+    // else (settings.json ice_tcp_443): asked for by the allocator once the
+    // streams' shared port has its TCP hole, at the address browsers reach
+    // this host at. What it leads to is told to the streams that start after.
+    routerPorts.setTcp443(&tcp443Probe, [&internetAccess]() { return internetAccess.publicIp(); });
+    QObject::connect(&routerPorts, &RouterPortAllocator::tcp443Changed, &app,
+                     [](quint16 leadsTo) { g_Tcp443LeadsTo = leadsTo; });
     // The one UPnP discovery of the process: Internet Access reads the
     // gateway from the allocator rather than looking for it a second time.
     internetAccess.setRouterPorts(&routerPorts);
@@ -3289,6 +3312,22 @@ int main(int argc, char* argv[])
             if (!here) return;
             QMetaObject::invokeMethod(
                 here, [feed, number]() { StreamWorkerHost::handMuxConnection(feed, number); },
+                Qt::QueuedConnection);
+        });
+        // The same, for one that names an agent of the entry link's tunnel,
+        // which lives in this process and takes it itself. No tunnel to take
+        // it: closed.
+        g_IceMux.tcp().setDeliverHere([](uint32_t feed, uint32_t number) {
+            QCoreApplication* here = QCoreApplication::instance();
+            if (!here) return;
+            QMetaObject::invokeMethod(
+                here,
+                [feed, number]() {
+                    if (g_ControlTunnel)
+                        g_ControlTunnel->takeSharedConnection(feed, number);
+                    else if (IceMux* mux = IceMux::shared())
+                        mux->tcp().letGo(number);
+                },
                 Qt::QueuedConnection);
         });
         QString why;
@@ -7867,6 +7906,13 @@ int main(int argc, char* argv[])
     // It is created unconditionally: it does nothing at all until the rendezvous
     // line announces a browser, and the line only runs with consent.
     ControlTunnel controlTunnel(&server, &authManager, &appSettings, &rendezvous, &routerPorts);
+    // What comes in on a shared port for one of its agents is taken by it
+    // (the router's TCP 443). Declared after it, gone before it.
+    g_ControlTunnel = &controlTunnel;
+    struct ControlTunnelForgotten
+    {
+        ~ControlTunnelForgotten() { g_ControlTunnel = nullptr; }
+    } controlTunnelForgotten;
     // A device that signed in, or a player holding a live invitation, keeps its
     // tunnel when the introduction server goes away under it (TunnelPeerPolicy).
     controlTunnel.setKnownCaller([&server, &shareManager](const HttpRequest& req) {
