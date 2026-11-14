@@ -252,7 +252,11 @@ describe('TouchPadLayoutEditor', () => {
         expect(line.closest('.tp-bar-body')).not.toBeNull();
         expect(container.querySelector('.tp-bar-head .tp-layout-editor-orientation')).toBeNull();
         expect(line.querySelector('select, button, input')).toBeNull();
-        expect(line.querySelector('.tp-orient-icon').getAttribute('aria-hidden')).toBe('true');
+        // A phone and a turn arrow, drawn: nothing that looks like a box to tick.
+        const icon = line.querySelector('svg.tp-orient-icon');
+        expect(icon.getAttribute('aria-hidden')).toBe('true');
+        expect(icon.querySelector('.tp-orient-phone rect')).not.toBeNull();
+        expect(icon.querySelectorAll(':scope > path').length).toBe(2);
     });
 
     it('takes the ring of a stick, never its zone', () => {

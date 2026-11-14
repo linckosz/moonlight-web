@@ -1632,14 +1632,15 @@ body.streaming-active::after {
 }
 .tp-orient-icon {
     flex: none;
-    width: 16px;
-    height: 11px;
-    border: 1.5px solid currentColor;
-    border-radius: 2px;
 }
-.is-portrait .tp-orient-icon {
-    width: 11px;
-    height: 16px;
+/* The phone lies down in landscape and stands up in portrait; the arrow stays. */
+.tp-orient-phone {
+    transform-box: fill-box;
+    transform-origin: center;
+    transform: rotate(90deg);
+}
+.is-portrait .tp-orient-phone {
+    transform: none;
 }
 .tp-bar-fold,
 .tp-bar-unfold {

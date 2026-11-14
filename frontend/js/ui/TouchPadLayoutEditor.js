@@ -98,6 +98,14 @@ const GRIP = `<svg width="12" height="18" viewBox="0 0 12 18" fill="currentColor
 const CHEVRON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
     stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d="m6 9 6 6 6-6"/></svg>`;
+// A phone and a turn arrow: the phone lies down in landscape and stands up in
+// portrait (stream.css), so the line reads as "turn the device", never as a box
+// to tick.
+const ORIENT_ICON = `<svg class="tp-orient-icon" width="20" height="20" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+    aria-hidden="true" focusable="false">
+    <g class="tp-orient-phone"><rect x="3.5" y="6.5" width="9" height="15" rx="2"/><path d="M7 18.5h2"/></g>
+    <path d="M15 3.5a6.5 6.5 0 0 1 5.6 6.2"/><path d="m22.2 7.6-1.6 2.3-2.3-1.6"/></svg>`;
 
 const clone = (layout) => JSON.parse(JSON.stringify(layout));
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -218,7 +226,7 @@ export class TouchPadLayoutEditor {
                 </div>
                 <div class="tp-bar-body">
                     <p class="tp-layout-editor-orientation">
-                        <span class="tp-orient-icon" aria-hidden="true"></span>
+                        ${ORIENT_ICON}
                         <span class="tp-orient-text"></span>
                     </p>
                     <label class="tp-layout-editor-style">
