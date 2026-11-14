@@ -140,6 +140,7 @@ Name: "zh"; MessagesFile: "ChineseSimplified.isl"
 ; of its own.
 RouterEntriesLeft=Some port forwards MoonlightWeb made may still be on your router. To remove them, open your router's port forwarding (UPnP) page and delete the entries named MoonlightWeb.
 fr.RouterEntriesLeft=Des redirections de ports créées par MoonlightWeb peuvent rester sur votre box. Pour les retirer, ouvrez la page de redirection de ports (UPnP) de votre box et supprimez les entrées nommées MoonlightWeb.
+zh.RouterEntriesLeft=MoonlightWeb 创建的部分端口转发可能仍保留在您的路由器上。如需删除，请打开路由器的端口转发（UPnP）页面，并删除名为 MoonlightWeb 的条目。
 ; InternetPageBody keeps the literal product name in both editions: it is the
 ; consent the app's own setup wizard shows word for word, and the text recorded
 ; as agreed to (frontend/test/InternetConsentText.test.js holds the two together).
