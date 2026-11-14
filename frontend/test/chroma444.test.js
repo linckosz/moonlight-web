@@ -3,7 +3,7 @@
  * GPLv3 — see repository LICENSE.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { chroma444Codec } from '../js/util/BrowserDetect.js';
+import { chroma444Codec, chroma444DeclineReason } from '../js/util/BrowserDetect.js';
 import { isChroma444Profile } from '../js/util/Mp4Muxer.js';
 import { StreamView } from '../js/ui/StreamView.js';
 
@@ -87,6 +87,28 @@ describe('chroma444Codec — the codec a 4:4:4 launch asks for', () => {
 
     it('leaves AV1 to the host on a browser that decodes 4:4:4', () => {
         expect(chroma444Codec('av1', only264)).toBe('av1');
+    });
+});
+
+describe('chroma444DeclineReason — what the overlay says beside the codec', () => {
+    it('says HDR when the host kept HDR and dropped 4:4:4 (bench of 13/11/2026)', () => {
+        expect(chroma444DeclineReason(null, true, false, true)).toBe('no 4:4:4 with HDR');
+    });
+
+    it('still blames the host when it streams neither', () => {
+        expect(chroma444DeclineReason(null, true, false, false)).toBe('no 4:4:4 on host');
+    });
+
+    it("keeps the page's own reason first", () => {
+        expect(chroma444DeclineReason('no 4:4:4 decoder', true, false, true)).toBe(
+            'no 4:4:4 decoder',
+        );
+        expect(chroma444DeclineReason('4:4:4 dropped', false, false, false)).toBe('4:4:4 dropped');
+    });
+
+    it('says nothing when 4:4:4 was granted or never asked', () => {
+        expect(chroma444DeclineReason(null, true, true, false)).toBe(null);
+        expect(chroma444DeclineReason(null, false, false, true)).toBe(null);
     });
 });
 

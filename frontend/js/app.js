@@ -97,6 +97,7 @@ import {
     SCM_AV1_MAIN10,
     chroma444ClientCapability,
     chroma444Codec,
+    chroma444DeclineReason,
     IS_GECKO,
 } from './util/BrowserDetect.js';
 import {
@@ -4167,11 +4168,13 @@ export const MoonlightApp = {
             // the moment of the drop; what is left is the host's answer.
             // The codec was Auto's to choose: the overlay says so beside it.
             codecAuto: viewOpts.playerMode !== true && this._codecAuto === true,
-            chroma444Declined:
-                this._chroma444Declined ||
-                (streamingSettings.chroma_444_enabled === true && result.yuv444 !== true
-                    ? 'no 4:4:4 on host'
-                    : null),
+            // A native host that grants HDR drops 4:4:4 to keep it: said as such.
+            chroma444Declined: chroma444DeclineReason(
+                this._chroma444Declined,
+                streamingSettings.chroma_444_enabled === true,
+                result.yuv444 === true,
+                result.native === true && result.hdr === true,
+            ),
             // What the host knows this stream by: asked how it ended once its
             // link goes (_onLiveLinkLost).
             streamId: typeof result.stream_id === 'string' ? result.stream_id : '',

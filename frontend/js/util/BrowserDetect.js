@@ -1029,6 +1029,25 @@ export function chroma444Codec(codec, cap) {
     return cap.decode ? c : null;
 }
 
+/**
+ * Why a stream asked for 4:4:4 arrived in 4:2:0, as the stats overlay says it
+ * beside the codec; null when nothing was declined. A reason the page recorded
+ * itself (no decoder, codec fallback) wins. Otherwise the host said no: a
+ * native host that grants HDR drops 4:4:4 to keep it (no browser decodes
+ * 10-bit 4:4:4), which is not "no 4:4:4 on host" — the bench of 13/11/2026
+ * showed that label on a host that encodes 4:4:4.
+ * @param {string|null} clientReason what the page recorded at the drop
+ * @param {boolean} asked 4:4:4 was asked of the host
+ * @param {boolean} granted the host streams 4:4:4
+ * @param {boolean} hdrGranted the host streams HDR
+ * @returns {string|null}
+ */
+export function chroma444DeclineReason(clientReason, asked, granted, hdrGranted) {
+    if (clientReason) return clientReason;
+    if (!asked || granted) return null;
+    return hdrGranted ? 'no 4:4:4 with HDR' : 'no 4:4:4 on host';
+}
+
 /** 8-bit HEVC (Main) at the sizes a guest's picture comes in. */
 const HEVC_DECODE_PROBES = ['hev1.1.6.L123.B0', 'hvc1.1.6.L123.B0', 'hvc1.1.6.L153.B0'];
 let hevcProbe = null;
