@@ -65,21 +65,24 @@ void Logger::setLogFile(const QString& path, bool rotating)
     m_File.setFileName(path);
     m_Rotating = rotating;
     m_BytesSinceCheck = 0;
+    m_LostLines = 0;
+    m_RetryClock.invalidate();
 
     // Roll BEFORE opening, not after the first oversized write: a host that is
     // started and stopped often would otherwise keep appending to a file that
     // was already over the ceiling and never cross it again mid-run.
     if (m_Rotating && QFileInfo(path).size() >= m_MaxFileBytes) rollOver();
 
-    m_FileOpen = m_File.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
-    if (m_FileOpen) {
-        m_Stream.setDevice(&m_File);
-    } else {
+    m_FileOpen = openLocked();
+    if (!m_FileOpen) {
         // stderr is the only place left (launchd captures it in agent.log).
         // Seen in the wild: app-data dir created root-owned by the pkg
-        // postinstall → every log write silently vanished.
+        // postinstall → every log write silently vanished. Tried again later,
+        // like a log that breaks while running.
         fprintf(stderr, "[Logger] Cannot open log file '%s': %s\n", qPrintable(path),
                 qPrintable(m_File.errorString()));
+        m_BrokenSince = QDateTime::currentDateTime();
+        m_RetryClock.start();
     }
 
     // This is what reclaims the log of a host upgrading from the unbounded era:
@@ -110,12 +113,15 @@ void Logger::log(Level level, const QString& message)
             std::cout << line.toStdString();
     }
 
-    // Write to file if configured
+    // Write to file if configured. A file that was set but is not open broke
+    // (or never opened): it is tried again before this line, so the line lands
+    // in the file whenever it can.
+    if (!m_FileOpen && !m_File.fileName().isEmpty()) tryReopenLocked();
     if (m_FileOpen) {
-        m_Stream << line;
-        m_Stream.flush();
-
-        if (m_Rotating) {
+        if (!writeLocked(line)) {
+            markBrokenLocked("write");
+            ++m_LostLines;
+        } else if (m_Rotating) {
             // Ask the filesystem for the real size rarely: stat on every line
             // would put a syscall on a path that runs several times a second.
             m_BytesSinceCheck += line.size();
@@ -126,6 +132,8 @@ void Logger::log(Level level, const QString& message)
                 rotateIfNeeded();
             }
         }
+    } else if (!m_File.fileName().isEmpty()) {
+        ++m_LostLines;
     }
 }
 
@@ -144,27 +152,102 @@ void Logger::setBudgetForTests(qint64 maxFileBytes, qint64 maxTotalBytes, qint64
         retentionSeconds > 0 ? retentionSeconds : qint64(kRetentionDays) * 24 * 60 * 60;
 }
 
+void Logger::setReopenRetryForTests(qint64 ms)
+{
+    QMutexLocker lock(&m_Mutex);
+    m_ReopenRetryMs = ms >= 0 ? ms : kReopenRetryMs;
+}
+
+void Logger::failNextForTests(int opens, int writes)
+{
+    QMutexLocker lock(&m_Mutex);
+    m_FailOpensForTests = opens;
+    m_FailWritesForTests = writes;
+}
+
+bool Logger::openLocked()
+{
+    if (m_FailOpensForTests > 0) {
+        --m_FailOpensForTests;
+        return false;
+    }
+    return m_File.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+}
+
+bool Logger::writeLocked(const QString& line)
+{
+    if (m_FailWritesForTests > 0) {
+        --m_FailWritesForTests;
+        return false;
+    }
+    // In Text mode QIODevice counts each "\n" it turns into "\r\n" as one byte
+    // of the input, so a complete write returns exactly the input's size.
+    const QByteArray bytes = line.toUtf8();
+    return m_File.write(bytes) == bytes.size() && m_File.flush();
+}
+
+void Logger::markBrokenLocked(const char* what)
+{
+    fprintf(stderr, "[Logger] Log file '%s' refused a %s (%s): trying again every %lld ms\n",
+            qPrintable(m_File.fileName()), what, qPrintable(m_File.errorString()),
+            static_cast<long long>(m_ReopenRetryMs));
+    m_File.close();
+    m_FileOpen = false;
+    m_BrokenSince = QDateTime::currentDateTime();
+    m_RetryClock.start();
+}
+
+void Logger::tryReopenLocked()
+{
+    if (m_ReopenRetryMs > 0 && m_RetryClock.isValid() && !m_RetryClock.hasExpired(m_ReopenRetryMs))
+        return;
+
+    m_FileOpen = openLocked();
+    if (!m_FileOpen) {
+        m_RetryClock.start();
+        return;
+    }
+    m_RetryClock.invalidate();
+    m_BytesSinceCheck = 0;
+
+    // Said in the file itself: a gap in a log reads as a host that had nothing
+    // to say, which is the opposite of what happened.
+    const QString now = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz");
+    const QString line =
+        QStringLiteral("[%1] [WARN] [Logger] Log resumed: it stopped taking lines at %2, "
+                       "%3 lines lost\n")
+            .arg(now, m_BrokenSince.toString("yyyy-MM-dd hh:mm:ss"))
+            .arg(m_LostLines);
+    m_LostLines = 0;
+    if (!writeLocked(line)) markBrokenLocked("write");
+}
+
 void Logger::rotateIfNeeded()
 {
     if (!m_FileOpen || m_File.size() < m_MaxFileBytes) return;
 
     const QString path = m_File.fileName();
-    m_Stream.flush();
     m_File.close();
     m_FileOpen = false;
 
-    rollOver();
+    const QString archive = rollOver();
 
     m_File.setFileName(path);
-    m_FileOpen = m_File.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
-    if (m_FileOpen) {
-        m_Stream.setDevice(&m_File);
-    } else {
-        // The rollover renamed the live file away and we cannot make a new one.
-        // Say so on stderr; losing the log must never take the server with it.
-        m_Stream.setDevice(nullptr);
+    m_FileOpen = openLocked();
+    if (!m_FileOpen && !archive.isEmpty() && QFile::rename(archive, path)) {
+        // No new file could be made: the archive goes back under the live
+        // name and takes the lines again, so nothing is lost. The next size
+        // check rolls it again.
+        m_FileOpen = openLocked();
+    }
+    if (!m_FileOpen) {
+        // Say so on stderr; losing the log must never take the server with
+        // it. Tried again like any log that broke.
         fprintf(stderr, "[Logger] Cannot reopen log file '%s' after rotation: %s\n",
                 qPrintable(path), qPrintable(m_File.errorString()));
+        m_BrokenSince = QDateTime::currentDateTime();
+        m_RetryClock.start();
+        return;
     }
 
     // After reopening, so the line explaining the trim lands in the new
@@ -172,10 +255,10 @@ void Logger::rotateIfNeeded()
     pruneArchives();
 }
 
-void Logger::rollOver()
+QString Logger::rollOver()
 {
     const QString path = m_File.fileName();
-    if (path.isEmpty()) return;
+    if (path.isEmpty()) return {};
 
     // The archive's name is when it was closed, and its modification time is
     // when its last line was written — which is what retention is measured on.
@@ -188,7 +271,7 @@ void Logger::rollOver()
     for (int n = 1; QFile::exists(target) && n < 1000; ++n)
         target = path + QLatin1Char('.') + stamp + QStringLiteral("-%1").arg(n);
 
-    QFile::rename(path, target);
+    return QFile::rename(path, target) ? target : QString();
 }
 
 QStringList Logger::archivePathsOldestFirst() const
@@ -268,11 +351,8 @@ void Logger::pruneArchives()
                    .arg(expired / (1024 * 1024))
                    .arg(m_RetentionSecs / (24 * 60 * 60));
     }
-    // Written straight to the stream: log() would re-enter the lock we hold.
-    if (m_FileOpen) {
-        m_Stream << line;
-        m_Stream.flush();
-    }
+    // Written straight to the file: log() would re-enter the lock we hold.
+    if (m_FileOpen && !writeLocked(line)) markBrokenLocked("write");
 }
 
 qint64 Logger::footprintLocked() const

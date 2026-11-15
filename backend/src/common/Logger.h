@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <QDateTime>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QFile>
 #include <QMutex>
@@ -99,6 +101,23 @@ public:
     /// would dominate the run. Retention is given in SECONDS here.
     void setBudgetForTests(qint64 maxFileBytes, qint64 maxTotalBytes, qint64 retentionSeconds);
 
+    /**
+     * A log that stops taking lines comes back by itself. The 15/11 host kept
+     * running for hours after a rotation whose first write was refused, writing
+     * nothing anywhere, and only a restart gave its log back. Now a refused open
+     * or write closes the file and the logger tries again, at most once per
+     * kReopenRetryMs, counting what it could not keep; the first line of the
+     * reopened file says how many were lost and since when.
+     */
+    static constexpr qint64 kReopenRetryMs = 5000;
+    /// The TNR's seams: the delay between two reopen attempts (0 = on every
+    /// line, negative = back to kReopenRetryMs), and a number of opens and
+    /// writes to refuse, for the failures no real path can be made to cause on
+    /// demand (a write refused on an open file, an open refused right after a
+    /// rollover).
+    void setReopenRetryForTests(qint64 ms);
+    void failNextForTests(int opens, int writes);
+
     /// Route ALL console echo to stderr (worker mode: stdout is the JSON
     /// event protocol and must stay clean).
     void setConsoleToStderr(bool enable) { m_ForceStderr = enable; }
@@ -118,7 +137,8 @@ public:
     using Tap = std::function<void(Level, const QString&)>;
     void setTap(Tap tap);
 
-    /// Whether setLogFile() has opened a file.
+    /// Whether the file set by setLogFile() is open right now: false while a
+    /// log that broke waits for its next reopen attempt.
     bool hasLogFile() const;
     /// The file set by setLogFile(), empty when none was.
     QString logFilePath() const;
@@ -140,8 +160,9 @@ private:
     /// Rename the live file to `name.<yyyyMMdd-hhmmss>`. Timestamped rather than
     /// a shifting .1/.2/.3 chain: retention is by age, so the count of archives
     /// is whatever seven days happen to need, not a number fixed in advance.
-    /// Caller holds m_Mutex and the file must be closed.
-    void rollOver();
+    /// Caller holds m_Mutex and the file must be closed. Returns the archive's
+    /// path, empty when the rename failed and the live file is still in place.
+    QString rollOver();
     /// Close, roll and reopen when the live file has reached the roll point.
     /// Caller holds m_Mutex.
     void rotateIfNeeded();
@@ -153,9 +174,19 @@ private:
     QStringList archivePathsOldestFirst() const;
     /// logFootprintBytes without taking the lock. Caller holds m_Mutex.
     qint64 footprintLocked() const;
+    /// Open m_File for appending. Caller holds m_Mutex.
+    bool openLocked();
+    /// Write one finished line and flush it; false when the file refused it.
+    /// Straight to the QFile, no QTextStream: a stream that fails once stays
+    /// failed and drops every later line without a word. Caller holds m_Mutex.
+    bool writeLocked(const QString& line);
+    /// The file refused a line: close it and start counting. Caller holds m_Mutex.
+    void markBrokenLocked(const char* what);
+    /// Reopen a log that broke, if the retry delay has passed, and say in the
+    /// file how much was lost. Caller holds m_Mutex.
+    void tryReopenLocked();
 
     QFile m_File;
-    QTextStream m_Stream;
     mutable QMutex m_Mutex;
     bool m_FileOpen;
     bool m_ForceStderr = false;
@@ -168,4 +199,14 @@ private:
     qint64 m_RetentionSecs = qint64(kRetentionDays) * 24 * 60 * 60;
     /// Written since the last size check, so the common path costs no syscall.
     qint64 m_BytesSinceCheck = 0;
+    /// Lines that found the log broken, and when it broke (for the line that
+    /// says so once the file is back).
+    qint64 m_LostLines = 0;
+    QDateTime m_BrokenSince;
+    /// Started when the log broke or a reopen failed: the next attempt waits
+    /// for m_ReopenRetryMs on it.
+    QElapsedTimer m_RetryClock;
+    qint64 m_ReopenRetryMs = kReopenRetryMs;
+    int m_FailOpensForTests = 0;
+    int m_FailWritesForTests = 0;
 };

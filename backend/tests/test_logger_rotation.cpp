@@ -22,7 +22,9 @@
  * the unbounded era gets its disk back on the first open, the archive glob
  * never touches a neighbouring worker or probe log, and the two callers whose
  * file is NOT a long-lived server log — an operator's --log path, a
- * per-session worker — are left completely alone.
+ * per-session worker — are left completely alone. And since 15/11/2026, a log
+ * that stops taking lines (an open or a write refused, a rollover whose new
+ * file cannot be made) comes back by itself and says how much it lost.
  */
 #include "test_framework.h"
 
@@ -220,6 +222,74 @@ void run_logger_rotation_tests()
         CHECK(sizeOf(fixed) > kTotal); // grew straight past the brake
         CHECK(archivesOf(fixed).isEmpty());
     }
+
+    // ── A log that stops taking lines comes back by itself ──────────────────
+    // 15/11/2026: a host's log went silent at a rotation and stayed silent for
+    // hours, the server still running, until a restart. A refused open or
+    // write must close the file and try again, bounded in time, and the file
+    // must say how much was lost.
+    {
+        // A real path that cannot be opened: a directory under the log's name.
+        const QString blocked = dir.filePath(QStringLiteral("blocked.log"));
+        CHECK(QDir().mkdir(blocked));
+        Logger::instance()->setReopenRetryForTests(3600 * 1000);
+        Logger::instance()->setLogFile(blocked, /*rotating=*/false);
+        CHECK(!Logger::instance()->hasLogFile());
+        writeLines(3);
+
+        // The path is free again, but the delay has not passed: no attempt on
+        // every line, a broken log costs one open per delay at most.
+        CHECK(QDir().rmdir(blocked));
+        writeLines(2);
+        CHECK(!QFile::exists(blocked));
+
+        Logger::instance()->setReopenRetryForTests(0);
+        Logger::info(QStringLiteral("blocked log is back"));
+        CHECK(Logger::instance()->hasLogFile());
+        CHECK(fileContains(blocked, QStringLiteral("Log resumed")));
+        CHECK(fileContains(blocked, QStringLiteral("5 lines lost")));
+        CHECK(fileContains(blocked, QStringLiteral("blocked log is back")));
+    }
+
+    // A write refused on an open file, then one refused reopen: the two lines
+    // are counted, and the first line that gets through follows the notice.
+    {
+        const QString live = dir.filePath(QStringLiteral("refused.log"));
+        Logger::instance()->setLogFile(live, /*rotating=*/false);
+        Logger::info(QStringLiteral("refused-before"));
+        Logger::instance()->failNextForTests(/*opens=*/1, /*writes=*/1);
+        Logger::info(QStringLiteral("refused-first"));  // the write is refused
+        Logger::info(QStringLiteral("refused-second")); // and so is the reopen
+        Logger::info(QStringLiteral("refused-after"));
+        CHECK(Logger::instance()->hasLogFile());
+        CHECK(fileContains(live, QStringLiteral("refused-before")));
+        CHECK(!fileContains(live, QStringLiteral("refused-first")));
+        CHECK(!fileContains(live, QStringLiteral("refused-second")));
+        CHECK(fileContains(live, QStringLiteral("2 lines lost")));
+        CHECK(fileContains(live, QStringLiteral("refused-after")));
+    }
+
+    // A rollover whose new file cannot be opened: the archive goes back under
+    // the live name and keeps the lines, and the next size check rolls it.
+    {
+        const QString kept = dir.filePath(QStringLiteral("kept.log"));
+        Logger::instance()->setReopenRetryForTests(-1); // the real delay
+        Logger::instance()->setLogFile(kept);
+        Logger::info(QStringLiteral("kept-marker"));
+        Logger::instance()->failNextForTests(/*opens=*/1, /*writes=*/0);
+        CHECK(fillUntilRollover(kept));
+        CHECK(Logger::instance()->hasLogFile());
+        const QStringList archives = archivesOf(kept);
+        CHECK(archives.size() == 1); // the refused roll left no archive of its own
+        if (archives.size() == 1) {
+            const QString archive = QFileInfo(kept).dir().filePath(archives.first());
+            CHECK(fileContains(archive, QStringLiteral("kept-marker")));
+            CHECK(!fileContains(archive, QStringLiteral("lines lost")));
+        }
+        CHECK(!fileContains(kept, QStringLiteral("lines lost")));
+    }
+    Logger::instance()->failNextForTests(0, 0);
+    Logger::instance()->setReopenRetryForTests(-1);
 
     // Leave the singleton pointing somewhere harmless: QTemporaryDir cannot
     // remove a file this process still holds open.
