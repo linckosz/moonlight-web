@@ -1020,6 +1020,38 @@ jobs:
         with:
           files: ${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.version }}-macos-arm64.pkg
 
+  # ── macOS .pkg, installed ────────────────────────────────────────────────
+  # The package the job above built, installed on a fresh runner by its
+  # logged-in user, five times over, and what its postinstall leaves checked
+  # each time: its log, the files in the user's home and whose they are, the
+  # installer pane's hand-off, provisioning.json. test-pkg.sh lists the five
+  # installs. The runner's sudo asks for no password, and no install asks for
+  # Internet Access. The job reads the repository and nothing more, and keeps
+  # no token in the checkout, since the package's own scripts and app run here.
+  macos-pkg-check:
+    needs: [setup, macos]
+    if: ${{ needs.setup.outputs.macos == 'true' }}
+    name: Install the macOS .pkg
+    runs-on: macos-15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: backend/installer/macos
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v6
+        with:
+          name: ${{ needs.setup.outputs.pkg }}-macos-arm64-${{ needs.setup.outputs.label }}
+
+      - name: Install it, and check what its postinstall leaves
+        run: |
+          bash backend/installer/macos/test-pkg.sh \
+            "${{ needs.setup.outputs.pkg }}-${{ needs.setup.outputs.version }}-macos-arm64.pkg" \
+            ${{ needs.setup.outputs.edition }}
+
   # ── Homebrew tap ─────────────────────────────────────────────────────────
   # Publishes the cask that makes `brew install --cask linckosz/tap/moonlightweb`
   # work. This is the only macOS install path with no Gatekeeper warning at all:
