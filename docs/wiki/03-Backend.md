@@ -126,7 +126,7 @@ All under `QStandardPaths::AppDataLocation` (e.g. `%APPDATA%\MoonlightWeb\Moonli
 
 ## 3.7 Headless operator CLI
 
-On a server there is no browser on the machine, and the admin API is localhost-only — so the two ends never meet. Five flags close the gap by driving the **already-running** instance through the very endpoints the admin page calls, printing the result as text and exiting. They branch **before** the single-instance `QLockFile` (they are queries against another process, not a second server) and route the log echo to stderr so stdout carries only the report.
+On a server there is no browser on the machine, and the admin API is localhost-only — so the two ends never meet. A few flags close the gap by driving the **already-running** instance through the very endpoints the admin page calls, printing the result as text and exiting. They branch **before** the single-instance `QLockFile` (they are queries against another process, not a second server) and route the log echo to stderr so stdout carries only the report.
 
 | Flag | Endpoint(s) | Prints |
 |---|---|---|
@@ -134,6 +134,7 @@ On a server there is no browser on the machine, and the admin API is localhost-o
 | `--new-pin` | `POST /api/admin/pin/generate` | A fresh access PIN. Deliberately the non-revoking endpoint (`/api/auth/regenerate` destroys every session) |
 | `--enable-internet [--yes]` | `POST /api/internet/enable` | Prints the consent text, requires `yes` on a TTY (or `--yes`), sends that exact text as `consent_message` so the consent record keeps what was shown, then the router verdict |
 | `--set-admin-password` / `--clear-admin-password [--yes]` | `POST /api/admin/password` | Sets or removes the remote admin password ([Security §6.2.1](06-Security.md#621-remote-admin-password-lan-internet-on-request)) |
+| `--allow-viewer-microphone on\|off` | `POST /api/settings/streaming` (`viewer_mic_allowed`) | Whether the host accepts a viewer's microphone from the next stream on ([Settings](07-Settings-Reference.md)), read back |
 
 The loopback port is read from this user's `settings.json` (or from the `--config` file given to the command), then falls back to 443 — running the CLI as a different user than the service (a `sudo`-less `moonlightweb --status` against a root-owned unit) reads a different file, or none. Peer verification is off for these calls: the certificate on 127.0.0.1 is the self-signed LAN one, and no certificate authenticates a loopback socket better than the kernel already does.
 

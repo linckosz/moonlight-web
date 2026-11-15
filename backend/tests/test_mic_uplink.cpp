@@ -178,13 +178,19 @@ void run_mic_uplink_tests()
 
     SECTION("MicUplink — the session's gate");
     {
-        CHECK(MicUplink::refusal(true, true).empty());
+        CHECK(MicUplink::refusal(true, true, true).empty());
         // A remote host would never hear it, whoever asks.
-        CHECK(!MicUplink::refusal(false, true).empty());
-        CHECK(!MicUplink::refusal(false, false).empty());
+        CHECK(!MicUplink::refusal(false, true, true).empty());
+        CHECK(!MicUplink::refusal(false, false, true).empty());
         // An invited player never sends one, even to this machine.
-        CHECK(!MicUplink::refusal(true, false).empty());
-        CHECK(MicUplink::refusal(true, false) != MicUplink::refusal(false, true));
+        CHECK(!MicUplink::refusal(true, false, true).empty());
+        CHECK(MicUplink::refusal(true, false, true) != MicUplink::refusal(false, true, true));
+        // The administrator refused them all (issue #69): the owner on this
+        // machine too, and said as the host's own reason, not as another one.
+        CHECK(!MicUplink::refusal(true, true, false).empty());
+        CHECK(MicUplink::refusal(true, true, false) != MicUplink::refusal(false, true, true));
+        CHECK(MicUplink::refusal(true, true, false) != MicUplink::refusal(true, false, true));
+        CHECK(MicUplink::refusal(false, false, false) == MicUplink::refusal(true, true, false));
     }
 
     SECTION("MicCable — the cables Windows may play into, in order");

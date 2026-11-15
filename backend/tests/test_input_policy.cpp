@@ -54,7 +54,7 @@ void run_input_policy_tests()
 
     CHECK(!tv.unrestricted());
     // Hence no microphone (and no clipboard, Session.cpp), even on this machine.
-    CHECK(!MicUplink::refusal(true, tv.unrestricted()).empty());
+    CHECK(!MicUplink::refusal(true, tv.unrestricted(), true).empty());
     // A TV without a keyboard in its policy still has none.
     Policy padOnly = tv;
     padOnly.keyboardMouse = false;

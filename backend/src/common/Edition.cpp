@@ -175,10 +175,12 @@ bool stdoutIsPayload(int argc, char** argv)
                                          "-?",
                                          "--version",
                                          "-v"};
-    // The stream limits: operator commands too, given with a value. And a
-    // script's request to the running server: its answer is the output.
+    // The stream limits and the viewers' microphone: operator commands too,
+    // given with a value. And a script's request to the running server: its
+    // answer is the output.
     static const char* const kWithValue[] = {"--max-allowed-frame-rate", "--max-allowed-bitrate",
-                                             "--max-allowed-stream-resolution", "--local-request"};
+                                             "--max-allowed-stream-resolution",
+                                             "--allow-viewer-microphone", "--local-request"};
     for (int i = 1; i < argc; ++i) {
         for (const char* mode : kModes)
             if (std::strcmp(argv[i], mode) == 0) return true;

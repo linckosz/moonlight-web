@@ -57,15 +57,16 @@ export function micSupported(nav = globalThis.navigator, secure = globalThis.isS
 }
 
 /**
- * Whether the launch should ask the host for the microphone. A viewer who never
- * touched the list has the default, the system's microphone; `mic_enabled` alone
- * cannot say that, as every saved settings object carries it.
+ * Whether the launch should ask the host for the microphone: only once the
+ * viewer picked one in the list (issue #69). A viewer who never touched it has
+ * the default, off; `mic_enabled` alone cannot say that, as every saved settings
+ * object carries it, and an older page saved it true by default.
  *
  * @param {{mic_chosen?: boolean, mic_enabled?: boolean}} [settings]
  * @returns {boolean}
  */
 export function micRequested(settings) {
-    return settings?.mic_chosen === true ? settings.mic_enabled === true : true;
+    return settings?.mic_chosen === true && settings.mic_enabled === true;
 }
 
 const DEVICE_KEY = 'mw-mic-device';

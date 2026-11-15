@@ -84,6 +84,9 @@ public:
     /// only where it can land on the right machine — see the gate in
     /// onLaunchResult — and the /start reply says which (`mic`, `mic_why`).
     void setMicRequested(bool on) { m_MicRequested = on; }
+    /// settings.json `viewer_mic_allowed` (issue #69): false refuses every
+    /// request, with that reason in `mic_why`.
+    void setMicAllowed(bool allowed) { m_MicAllowed = allowed; }
     /// settings.json `mic_device`: which device it plays into (MicOutput.h).
     void setMicDevice(const QString& device) { m_MicDevice = device; }
 
@@ -499,6 +502,7 @@ private:
     bool m_DebugIceDropUdp = false;
     bool m_LowAudio = false;
     bool m_MicRequested = false;
+    bool m_MicAllowed = true;
     QString m_MicDevice;
     /// Started when the gate let the microphone in; the relay holds it from
     /// then on, and this session (which deletes itself once streaming) lets go.

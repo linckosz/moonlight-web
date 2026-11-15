@@ -802,7 +802,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
     // carries it: the WebRTC ones on the audio track, the WebSocket one as
     // frames on its socket.
     if (m_MicRequested) {
-        std::string why = MicUplink::refusal(hostIsHere, m_InputPolicy.unrestricted());
+        std::string why =
+            MicUplink::refusal(hostIsHere, m_InputPolicy.unrestricted(), m_MicAllowed);
         if (why.empty()) why = MicUplink::unavailable(m_MicDevice.toStdString());
         if (why.empty()) {
             auto mic = std::make_shared<MicUplink>(m_MicDevice.toStdString());

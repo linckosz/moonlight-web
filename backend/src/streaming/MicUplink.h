@@ -79,12 +79,15 @@ public:
     static std::string unavailable(const std::string& device);
 
     /// The session's gate, before any device is looked at: why a requested
-    /// microphone is refused, or empty. It only lands where the game is when
-    /// the streamed host is this machine (a remote Sunshine would never hear
-    /// it: GameStream carries no microphone), and only the owner may send
-    /// one, never an invited player — the clipboard's rule.
-    static std::string refusal(bool hostIsHere, bool owner)
+    /// microphone is refused, or empty. The administrator may refuse them all
+    /// (settings.json viewer_mic_allowed, issue #69). Otherwise it only lands
+    /// where the game is when the streamed host is this machine (a remote
+    /// Sunshine would never hear it: GameStream carries no microphone), and
+    /// only the owner may send one, never an invited player — the clipboard's
+    /// rule.
+    static std::string refusal(bool hostIsHere, bool owner, bool hostAllows)
     {
+        if (!hostAllows) return "this host does not accept viewers' microphones";
         if (!hostIsHere)
             return "the host is another machine, and a microphone can only reach the one "
                    "MoonlightWeb runs on";

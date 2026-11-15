@@ -1034,6 +1034,53 @@ static int runStreamLimitsCommand(quint16 persistedHttpsPort, const std::optiona
     return 0;
 }
 
+// `moonlightweb --allow-viewer-microphone on|off`: whether this host takes a
+// viewer's microphone at all (issue #69, AppSettings::viewerMicAllowed),
+// written by the running instance into its own settings.json, like the
+// ceilings above. Every stream started afterwards follows it.
+static int runViewerMicCommand(quint16 persistedHttpsPort, const QString& value)
+{
+    QTextStream out(stdout);
+    const QString v = value.trimmed().toLower();
+    bool allowed = false;
+    if (v == QLatin1String("on"))
+        allowed = true;
+    else if (v != QLatin1String("off")) {
+        out << "--allow-viewer-microphone takes on or off. Nothing was changed.\n";
+        out.flush();
+        return 1;
+    }
+    if (!serverRunning()) {
+        out << notRunningText(persistedHttpsPort);
+        out.flush();
+        return 1;
+    }
+    QJsonObject body;
+    body["viewer_mic_allowed"] = allowed;
+    const LocalReply reply =
+        localRequest("/api/settings/streaming", QJsonDocument(body).toJson(QJsonDocument::Compact));
+    if (!reply.ok) {
+        const QString apiError = reply.json.value("error").toString();
+        out << "Failed: "
+            << (!apiError.isEmpty()
+                    ? apiError
+                    : (reply.error.isEmpty() ? QStringLiteral("HTTP %1").arg(reply.httpStatus)
+                                             : reply.error))
+            << "\n";
+        out.flush();
+        return 1;
+    }
+    // Read back: what the instance holds now.
+    const QJsonObject now = localRequest("/api/settings/streaming", QByteArray(), 10000).json;
+    out << (now.value("viewer_mic_allowed").toBool(true)
+                ? "\n  Viewers' microphones are accepted: a viewer who turns theirs on is heard\n"
+                  "  by this PC's apps, when the stream is of this PC.\n\n"
+                : "\n  Viewers' microphones are refused: no stream takes one, whatever the\n"
+                  "  viewer's Settings say. A stream already running keeps its own.\n\n");
+    out.flush();
+    return 0;
+}
+
 // `moonlightweb --enable-internet`: record the operator's consent and enable
 // the Internet link. A legacy instance re-publishes its sub-domain and renews
 // its certificate; a fresh one authorizes the per-session router mapping and
@@ -2188,6 +2235,12 @@ int main(int argc, char* argv[])
         "height only), 0 for no limit; then exit",
         "WxH");
     parser.addOption(maxResolutionOption);
+    // The administrator's word on viewers' microphones (issue #69).
+    QCommandLineOption viewerMicOption(
+        "allow-viewer-microphone",
+        "Accept (on, the default) or refuse (off) the microphone a viewer sends, then exit",
+        "on|off");
+    parser.addOption(viewerMicOption);
 
     QCommandLineOption yesOption("yes", "Accept the --enable-internet agreement, or confirm "
                                         "--clear-admin-password, non-interactively");
@@ -2459,6 +2512,9 @@ int main(int argc, char* argv[])
     if (parser.isSet(waitLinkOption)) return runWaitLinkCommand();
     if (parser.isSet(localRequestOption))
         return runLocalRequestCommand(parser.value(localRequestOption));
+    if (parser.isSet(viewerMicOption))
+        return runViewerMicCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
+                                   parser.value(viewerMicOption));
     if (parser.isSet(maxFrameRateOption) || parser.isSet(maxBitrateOption) ||
         parser.isSet(maxResolutionOption)) {
         // Not given: nothing to change; given empty: a bad value.
@@ -4809,6 +4865,7 @@ int main(int argc, char* argv[])
             s->setMuteHostAudio(reqMuteHost);
             s->setAudioSource(reqAudioSource);
             s->setMicRequested(reqMic);
+            s->setMicAllowed(appSettings.viewerMicAllowed());
             s->setMicDevice(appSettings.micDevice());
             s->setClientUniqueId(reqClientUniqueId);
             // The browser opts in: it decodes through a gap rather than asking
@@ -4991,6 +5048,9 @@ int main(int argc, char* argv[])
             // The viewer's microphone; the device it plays into travels with
             // the other settings a SYSTEM worker cannot read (StreamWorkerHost).
             cfg["mic"] = reqMic;
+            // The administrator's word on it (issue #69): a SYSTEM worker reads
+            // another account's settings.json, so it travels here too.
+            cfg["micAllowed"] = appSettings.viewerMicAllowed();
             // The browser's opt-in to decode through a gap instead of demanding
             // a keyframe. The worker owns the media engine, so the flag has to
             // travel with the config — setting it on the in-process session

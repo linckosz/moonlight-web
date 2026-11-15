@@ -1372,6 +1372,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         }
         obj["hdr_enabled"] = appSettings.hdrEnabled();
         obj["mute_host_audio"] = appSettings.muteHostAudio();
+        // Whether this host takes a viewer's microphone (issue #69): Settings
+        // says so beside the list when it does not.
+        obj["viewer_mic_allowed"] = appSettings.viewerMicAllowed();
         obj["audio_source"] = appSettings.audioSource();
         obj["audio_source_focused_supported"] = audioSourceFocusedSupported();
         obj["chroma_444_enabled"] = appSettings.chroma444Enabled();
@@ -1447,6 +1450,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // First, so that a bad value refuses the whole request before any of
         // its other keys is written. Refused rather than stored: a typo saved
         // would read back as "auto" and hide behind the default.
+        if (body.contains("viewer_mic_allowed") && !body["viewer_mic_allowed"].isBool())
+            return HttpResponse::error(400, "viewer_mic_allowed must be true or false");
         if (body.contains("native_video_pipeline")) {
             if (!appSettings.setNativeVideoPipeline(body["native_video_pipeline"].toString()))
                 return HttpResponse::error(
@@ -1607,6 +1612,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["mute_host_audio"].toBool();
             appSettings.setMuteHostAudio(enabled);
             obj["mute_host_audio"] = enabled;
+            obj["status"] = "saved";
+            hadChange = true;
+        }
+
+        // The administrator's word on viewers' microphones (issue #69), from
+        // the admin page or --allow-viewer-microphone. The next stream reads it.
+        if (body.contains("viewer_mic_allowed")) {
+            const bool allowed = body["viewer_mic_allowed"].toBool();
+            appSettings.setViewerMicAllowed(allowed);
+            obj["viewer_mic_allowed"] = allowed;
             obj["status"] = "saved";
             hadChange = true;
         }

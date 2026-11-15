@@ -208,7 +208,7 @@ export class SettingsView {
         // Send this device's microphone to the host (off by default): opened
         // only once the host said it can take it (audio/MicUplink.js), and how
         // it sounds (MIC_QUALITY: voice cleanup, or none at a higher bitrate).
-        this._micEnabled = true;
+        this._micEnabled = false;
         this._micChosen = false;
         /** @type {{id: string, label: string}|null} null follows the system */
         this._micDevice = loadMicDevice();
@@ -1757,7 +1757,7 @@ export class SettingsView {
         this._hdrEnabled = false;
         this._chroma444 = false;
         this._muteHostAudio = true;
-        this._micEnabled = true;
+        this._micEnabled = false;
         this._micChosen = false;
         this._micDevice = null;
         saveMicDevice(null);

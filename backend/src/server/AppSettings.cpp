@@ -299,6 +299,18 @@ QString AppSettings::micDevice() const
     return readAll().value("mic_device").toString().trimmed();
 }
 
+bool AppSettings::viewerMicAllowed() const
+{
+    return readAll().value("viewer_mic_allowed").toBool(true);
+}
+
+void AppSettings::setViewerMicAllowed(bool allowed)
+{
+    QJsonObject obj = readAll();
+    obj["viewer_mic_allowed"] = allowed;
+    writeAll(obj);
+}
+
 // ── Stream worker (per-session child process) ─────────────────────────────────
 // Hosts each streaming session in a `--stream-worker` subprocess, enabling two
 // concurrent sessions (dual-stream seamless switching) despite the process-

@@ -722,6 +722,8 @@ int runStreamWorker(QCoreApplication& app)
     }
     // Absent (an older parent, a guest) → no microphone.
     session->setMicRequested(cfg["mic"].toBool(false));
+    // Absent from an older host's config: it had no such switch, so allowed.
+    session->setMicAllowed(cfg["micAllowed"].toBool(true));
     session->setMicDevice(cfg["micDevice"].toString());
     // Absent (an older parent) → off, which is exactly today's behaviour.
     session->setRideOutLoss(cfg["rideOutLoss"].toBool(false));

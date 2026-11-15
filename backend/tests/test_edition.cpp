@@ -116,6 +116,10 @@ void run_edition_tests()
         CHECK(payload({"--max-allowed-bitrate=20"}));
         CHECK(payload({"--max-allowed-frame-rate=60"}));
         CHECK(payload({"--dev", "--max-allowed-stream-resolution", "1080"}));
+        // The viewers' microphone switch (issue #69), the same way.
+        CHECK(payload({"--allow-viewer-microphone", "off"}));
+        CHECK(payload({"--dev", "--allow-viewer-microphone=on"}));
+        CHECK(!payload({"--allow-viewer-microphones"}));
         // A script's request to the running server: the answer alone.
         CHECK(payload({"--local-request", "GET /api/settings/streaming"}));
         CHECK(payload({"--dev", "--local-request=GET /api/server/status"}));

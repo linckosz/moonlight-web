@@ -141,6 +141,9 @@ export class AdminView {
         // Network priority: the stream's packets ask the Wi-Fi for its video
         // queue (AF41). On unless the admin unticks it for the house's sake.
         this._packetMarking = true;
+        // Whether this host takes a viewer's microphone (issue #69). On unless
+        // the admin unticks it; null while an older server names no such key.
+        this._viewerMicAllowed = null;
         // The other screens off while a stream runs on the virtual display
         // (issue #39). Offered on Windows once the display is installed.
         this._vdExclusiveSupported = false;
@@ -308,6 +311,9 @@ export class AdminView {
             const settings = await BackendClient.getStreamingSettings();
             this._videoPipeline = settings.native_video_pipeline || 'auto';
             this._videoPipelineSupported = settings.native_video_pipeline_supported === true;
+            if (typeof settings.viewer_mic_allowed === 'boolean') {
+                this._viewerMicAllowed = settings.viewer_mic_allowed;
+            }
             // An older server names no values: Windows', the only ones it had.
             if (Array.isArray(settings.native_video_pipeline_options)) {
                 this._videoPipelineValues = settings.native_video_pipeline_options;
@@ -1215,6 +1221,21 @@ export class AdminView {
                     </div>
 
                     ${
+                        this._viewerMicAllowed !== null
+                            ? `
+                    <div class="settings-field" id="admin-viewer-mic">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-viewer-mic"
+                                   ${this._viewerMicAllowed ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.viewerMic')}</span>
+                        </label>
+                        <p class="setting-desc">${t('admin.viewerMicDesc')}</p>
+                    </div>
+                    `
+                            : ''
+                    }
+
+                    ${
                         this._hostLayoutOffered
                             ? `
                     <div class="settings-field" id="admin-host-layout">
@@ -1912,6 +1933,24 @@ export class AdminView {
                     console.error('[Admin] Failed to save start-at-login setting:', err);
                     Toast.error(t('admin.saveFailed', { message: err.message }));
                     autostartChk.checked = !enabled; // revert
+                }
+            });
+        }
+
+        // ── Viewers' microphones (issue #69) ───────────────────────────────
+        // Saved on the spot; the next stream reads it as it opens.
+        const viewerMicChk = this.container.querySelector('#chk-viewer-mic');
+        if (viewerMicChk) {
+            viewerMicChk.addEventListener('change', async () => {
+                const allowed = viewerMicChk.checked;
+                try {
+                    await BackendClient.saveStreamingSettings({ viewer_mic_allowed: allowed });
+                    this._viewerMicAllowed = allowed;
+                    Toast.success(allowed ? t('admin.viewerMicOn') : t('admin.viewerMicOff'));
+                } catch (err) {
+                    console.error("[Admin] Failed to save the viewers' microphone switch:", err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                    viewerMicChk.checked = !allowed; // revert
                 }
             });
         }

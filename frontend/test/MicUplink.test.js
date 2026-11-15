@@ -336,11 +336,12 @@ describe('the microphone chosen', () => {
         expect(loadMicDevice(storage)).toBe(null);
     });
 
-    it('asks the host by default, and not once the viewer turned it off', () => {
-        expect(micRequested(undefined)).toBe(true);
-        expect(micRequested({})).toBe(true);
-        // Saved before the list existed: not a choice.
-        expect(micRequested({ mic_enabled: false })).toBe(true);
+    it('asks the host only once the viewer picked a microphone (issue #69)', () => {
+        expect(micRequested(undefined)).toBe(false);
+        expect(micRequested({})).toBe(false);
+        // Saved by an older page, which stored true by default: not a choice.
+        expect(micRequested({ mic_enabled: true })).toBe(false);
+        expect(micRequested({ mic_enabled: false })).toBe(false);
         expect(micRequested({ mic_chosen: true, mic_enabled: false })).toBe(false);
         expect(micRequested({ mic_chosen: true, mic_enabled: true })).toBe(true);
     });

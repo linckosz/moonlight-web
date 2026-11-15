@@ -571,6 +571,14 @@ public:
     // Ignored on Linux, which makes its own virtual source.
     QString micDevice() const;
 
+    // Whether this host takes a viewer's microphone at all (issue #69): JSON
+    // bool "viewer_mic_allowed", default true. Off, every launch that asks for
+    // one is refused with that reason (MicUplink::refusal), whatever the
+    // browser's Settings say. Set from the admin page or the command line
+    // (--allow-viewer-microphone), read as each stream starts.
+    bool viewerMicAllowed() const;
+    void setViewerMicAllowed(bool allowed);
+
     /// Host each streaming session in a --stream-worker subprocess (enables two
     /// concurrent sessions). File-only kill switch, default true.
     bool streamWorkerEnabled() const;
