@@ -217,6 +217,18 @@ public:
     /// Whether @p slot's live activation was opened by a booth's stream PIN.
     bool isBooth(int slot);
 
+    /// Who holds a booth seat: an opaque, stable digest of the joining session
+    /// (never its token), set once with markHolder(). One session holds at most
+    /// one seat per host: boothSeatOf() finds it, so a second join hands the
+    /// same seat back instead of filling the room.
+    void markHolder(int slot, const QString& holder);
+    int boothSeatOf(const QString& hostUuid, const QString& holder);
+    /// The same seat handed back to its holder: its link token, and a fresh
+    /// cookie in place of the one it had (the browser that joined again keeps
+    /// one device's seat, never two). False when @p slot holds no booth seat or
+    /// the token is no longer known (a restart, which ends booth seats anyway).
+    bool reissueBound(int slot, QString& outToken, QString& outCookie);
+
     /// The raw link token and PIN of a live activation, so the owner reopening
     /// the popin can read what they already sent out. False when the slot is
     /// Off, or when the process restarted since: the clear values live in
@@ -377,6 +389,10 @@ signals:
     /// The owner picked another height for the guests' picture.
     void feedHeightChanged(int height);
 
+    /// The stream of a guest who joined by a booth's stream PIN went down: the
+    /// PIN of the stream they joined changes (issue #68).
+    void boothGuestStreamEnded(int slot);
+
 private:
     struct Activation
     {
@@ -420,6 +436,7 @@ private:
         /// named after the machine that joined, never saved.
         bool booth = false;
         QString label;
+        QString holder; ///< booth only: who joined (markHolder), a digest
 
         bool live() const { return !tokenHash.isEmpty(); }
         qint64 expiresAt() const { return expiresAtSecs; }

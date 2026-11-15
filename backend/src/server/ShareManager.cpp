@@ -315,6 +315,9 @@ bool ShareManager::activateBound(int slot, const QString& hostUuid, int appId,
     Activation act;
     act.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     act.tokenHash = hash(outToken);
+    // In memory only, like a board link's: what hands the same seat back to
+    // its holder (reissueBound).
+    act.tokenClear = outToken;
     // No PIN of its own: the stream's PIN was proved to get here, and this
     // invitation is bound to the device that proved it from the start.
     act.cookieHashes.append(hash(outCookie));
@@ -344,6 +347,39 @@ bool ShareManager::isBooth(int slot)
     pruneExpired();
     const Slot* s = slotFor(slot);
     return s && s->activation.live() && s->activation.booth;
+}
+
+void ShareManager::markHolder(int slot, const QString& holder)
+{
+    Slot* s = slotFor(slot);
+    if (s && s->activation.live() && s->activation.booth && s->activation.holder.isEmpty())
+        s->activation.holder = holder;
+}
+
+int ShareManager::boothSeatOf(const QString& hostUuid, const QString& holder)
+{
+    if (hostUuid.isEmpty() || holder.isEmpty()) return -1;
+    pruneExpired();
+    for (int slot = kFirstSlot; slot <= kLastSlot; ++slot) {
+        const Activation& a = m_Slots[slot].activation;
+        if (a.live() && a.booth && a.hostUuid == hostUuid && constantTimeEquals(a.holder, holder))
+            return slot;
+    }
+    return -1;
+}
+
+bool ShareManager::reissueBound(int slot, QString& outToken, QString& outCookie)
+{
+    pruneExpired();
+    Slot* s = slotFor(slot);
+    if (!s || !s->activation.live() || !s->activation.booth) return false;
+    if (s->activation.tokenClear.isEmpty()) return false;
+    outToken = s->activation.tokenClear;
+    outCookie = randomToken();
+    // One device's seat: the new cookie replaces the old one.
+    s->activation.cookieHashes = QStringList{hash(outCookie)};
+    emit slotChanged(slot);
+    return true;
 }
 
 bool ShareManager::secrets(int slot, QString& outToken, QString& outPin)
@@ -663,6 +699,8 @@ void ShareManager::setStreaming(int slot, bool streaming)
     // Nothing freezes here any more: the policy follows the owner's board for
     // the whole life of the stream (see permissionsChanged).
     emit slotChanged(slot);
+    // A booth guest's picture gone: the PIN they read changes (issue #68).
+    if (!streaming && s->activation.booth) emit boothGuestStreamEnded(slot);
 }
 
 ShareManager::Permissions ShareManager::permissions(int slot)

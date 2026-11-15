@@ -41,8 +41,10 @@
 #include <QTextStream>
 #include <QTimer>
 #include <QUrl>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QHostInfo>
+#include <QSet>
 #include <QHostAddress>
 #include <QNetworkInterface>
 #include <QSysInfo>
@@ -90,11 +92,14 @@
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
 #include "server/RequestGuard.h"
+#include "server/BoothPin.h"
+#include "server/OwnerProof.h"
 #include "server/ShareManager.h"
 #include "server/SessionPool.h"
 #include "server/SingleSessionHosts.h"
 #include "server/StreamActivity.h"
 #include "server/routes/AuthRoutes.h"
+#include "server/routes/BoothRoutes.h"
 #include "server/routes/HostRoutes.h"
 #include "server/routes/HostAppRoutes.h"
 #include "server/routes/ShareRoutes.h"
@@ -2797,6 +2802,35 @@ int main(int argc, char* argv[])
             << "— slot 0 signaling" << signalingPort << ", slots 1.. from" << kSlotPlan.extraBase
             << ", media block from" << kMediaBasePort;
 
+    // ── A booth's stream PINs (booth_stream_pin, issue #68) ───────────────────
+    // One PIN per owner stream, kept under a key naming its host, its app and
+    // who started it: the standby leg of a quality switch is the same stream and
+    // keeps it, a stream someone else starts gets one of its own. The PINs of
+    // streams that ended go whenever a slot is let go.
+    BoothPin boothPins;
+    const auto isOwnerSlot = [](int i) { return i < kOwnerSlots || i >= kTotalSlots; };
+    const auto boothStreamKey = [](const SessionPool::Slot& sl) -> QString {
+        // Who, as a digest: a session's token, nothing for this machine, and
+        // the browser's id for an owner nobody knows (two such are two keys).
+        const QByteArray who = sl.owner.kind == StreamOwner::Kind::Session ? sl.owner.token.toUtf8()
+                               : sl.owner.kind == StreamOwner::Kind::Unknown
+                                   ? sl.clientUniqueId.toUtf8()
+                                   : QByteArray();
+        return QStringLiteral("%1|%2|%3:%4")
+            .arg(sl.hostUuid)
+            .arg(sl.appId)
+            .arg(QLatin1String(StreamOwner::kindName(sl.owner.kind)),
+                 QString::fromLatin1(
+                     QCryptographicHash::hash(who, QCryptographicHash::Sha256).toHex()));
+    };
+    const auto liveBoothKeys = [&g_Pool, isOwnerSlot, boothStreamKey]() {
+        QSet<QString> keys;
+        for (int i = 0; i < g_Pool.size(); ++i)
+            if (isOwnerSlot(i) && g_Pool.at(i).worker && !g_Pool.at(i).hostUuid.isEmpty())
+                keys.insert(boothStreamKey(g_Pool.at(i)));
+        return keys;
+    };
+
     // Thin names kept over the pool: they read better at the call sites and
     // leave the slot arithmetic in one place.
     auto slotSignalingPort = [&g_Pool](int slot) -> quint16 { return g_Pool.signalingPort(slot); };
@@ -3036,8 +3070,8 @@ int main(int argc, char* argv[])
     // down. Suppresses the slot's normal ended-cleanup (no Sunshine /cancel:
     // take-over and standby-restart both want the Sunshine session kept alive
     // for the /resume that follows). The host object self-deletes on exit.
-    auto detachWorkerSlot = [&g_Pool, &authManager, &g_StreamEnds,
-                             &historyEnd](int i, bool takenOver, bool sessionEnded = false) {
+    auto detachWorkerSlot = [&g_Pool, &authManager, &g_StreamEnds, &historyEnd, &boothPins,
+                             liveBoothKeys](int i, bool takenOver, bool sessionEnded = false) {
         SessionPool::Slot& sl = g_Pool.at(i);
         StreamWorkerHost* old = g_Pool.workerAs<StreamWorkerHost>(i);
         const QString token = sl.sessionToken;
@@ -3057,6 +3091,8 @@ int main(int argc, char* argv[])
         sl.sessionToken.clear();
         sl.owner = StreamOwner{};
         sl.appId = 0;
+        // A stream gone takes its PIN along; the standby leg of the same one keeps it.
+        boothPins.retainOnly(liveBoothKeys());
         if (onVirtualDisplay) VirtualDisplayJob::instance().releaseSoon();
         if (!old) return static_cast<StreamWorkerHost*>(nullptr);
         // Whatever its worker does next, this stream was stopped here.
@@ -7495,7 +7531,84 @@ int main(int argc, char* argv[])
             readyThenStart();
     };
 
+    // ── A booth's stream PIN (booth_stream_pin, issue #68) ────────────────────
+    // The owner stream of a host, as the PIN routes need it: on a named app when
+    // one is (two people may stream two apps of a native host side by side).
+    const auto boothStreamOf = [&g_Pool, &computerManager, isOwnerSlot,
+                                boothStreamKey](const QString& hostUuid, int appId) {
+        BoothRoutesDeps::Stream s;
+        if (NvComputer* host = computerManager.getHost(hostUuid)) {
+            const QString backend = host->backendType;
+            // Each device has its own session there: nothing is taken over.
+            s.supported = backend != QLatin1String("wolf") && backend != QLatin1String("multiseat");
+        }
+        for (int i = 0; i < g_Pool.size(); ++i) {
+            const SessionPool::Slot& sl = g_Pool.at(i);
+            if (!isOwnerSlot(i) || !sl.worker || sl.hostUuid != hostUuid) continue;
+            if (appId > 0 && sl.appId != appId) continue;
+            s.live = true;
+            s.key = boothStreamKey(sl);
+            s.appId = sl.appId;
+            s.owner = sl.owner;
+            break;
+        }
+        return s;
+    };
+    auto ownerProofs = std::make_shared<OwnerProof>();
+    shareDeps.proofs = ownerProofs;
+    shareDeps.boothPinFor = [&shareManager, &boothPins, boothStreamOf,
+                             liveBoothKeys](int slot) -> std::pair<QString, qint64> {
+        const BoothRoutesDeps::Stream s =
+            boothStreamOf(shareManager.hostForSlot(slot), shareManager.appForSlot(slot));
+        if (!s.live || !s.supported) return {};
+        boothPins.retainOnly(liveBoothKeys());
+        if (!boothPins.has(s.key)) boothPins.mint(s.key);
+        return {boothPins.read(s.key), static_cast<qint64>(boothPins.generation(s.key))};
+    };
+    shareDeps.boothManages = [&shareManager, boothStreamOf](const HttpRequest& req, int slot) {
+        const BoothRoutesDeps::Stream s =
+            boothStreamOf(shareManager.hostForSlot(slot), shareManager.appForSlot(slot));
+        return s.live && s.owner.sameAs(StreamOwner::of(req.isThisMachine,
+                                                        HttpServer::sessionTokenFromRequest(req)));
+    };
+    shareDeps.boothGuestGone = [&boothPins, boothStreamOf](const QString& hostUuid, int appId) {
+        const BoothRoutesDeps::Stream s = boothStreamOf(hostUuid, appId);
+        if (s.live && boothPins.has(s.key)) boothPins.rotate(s.key, BoothPin::Reason::Departed);
+    };
+    QObject::connect(&shareManager, &ShareManager::boothGuestStreamEnded, qApp,
+                     [&shareManager, guestGone = shareDeps.boothGuestGone](int slot) {
+                         guestGone(shareManager.hostForSlot(slot), shareManager.appForSlot(slot));
+                     });
+
     registerShareRoutes(server, shareManager, shareDeps);
+
+    BoothRoutesDeps boothDeps;
+    boothDeps.sessionToken = [](const HttpRequest& req) {
+        return HttpServer::sessionTokenFromRequest(req);
+    };
+    boothDeps.pairingKey = [&authManager](const QString& token) {
+        return authManager.sessionPairingKey(token);
+    };
+    boothDeps.machineName = [&authManager](const QString& token) {
+        return authManager.sessionMachineName(token);
+    };
+    boothDeps.hostKeyId = [&appSettings]() {
+        return PairingCrypto::keyId(appSettings.hostSigningPublicKey());
+    };
+    // The caller the server trusts: through a proxy on this machine, the
+    // visitor it names; through the tunnel, the address ICE settled on.
+    boothDeps.addressKey = [](const HttpRequest& req) {
+        return AuthManager::rateLimitKey(
+            AuthManager::attemptAddress(req.clientAddress, req.headers));
+    };
+    boothDeps.reportAuthFailure = [&server](const QString& address) {
+        server.reportAuthFailure(address);
+    };
+    boothDeps.ownerStream = boothStreamOf;
+    boothDeps.liveStreamKeys = liveBoothKeys;
+    boothDeps.joinLevel = [&appSettings]() { return appSettings.boothJoinLevel(); };
+    boothDeps.nowMs = []() { return QDateTime::currentMSecsSinceEpoch(); };
+    registerBoothRoutes(*server.router(), shareManager, boothPins, *ownerProofs, boothDeps);
 
     // Diagnostics: the browsers' console (debug mode) and the "Download logs"
     // archive. Static: its thread must be joined after the event loop, and

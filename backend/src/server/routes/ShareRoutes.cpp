@@ -79,6 +79,8 @@ QJsonObject slotJson(const ShareManager::SlotStatus& st)
     }
     obj[QStringLiteral("devices")] = devices;
     if (!st.opening.isEmpty()) obj[QStringLiteral("opening")] = st.opening;
+    // Joined by a booth's stream PIN: the owner's panel lists these (issue #68).
+    if (st.booth) obj[QStringLiteral("booth")] = true;
 
     // The event an owner had no way of seeing before: someone else opened this
     // link with the right PIN and was turned away.
@@ -140,8 +142,9 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     RestRouter* router = server.router();
 
     // The board's proofs that it is the browser its session was paired with
-    // (OwnerProof). One store for every route, copied into each closure.
-    auto proofs = std::make_shared<OwnerProof>();
+    // (OwnerProof). One store for every route, copied into each closure — the
+    // booth's routes check theirs in the same one when it is handed in.
+    auto proofs = deps.proofs ? deps.proofs : std::make_shared<OwnerProof>();
 
     // Asked of every request that hands out a guest's way in: nullopt when it
     // may go on, else the refusal to answer with. A proof that does not hold
@@ -175,14 +178,17 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
 
     // POST /api/share/owner-proof — a challenge for the next request of the
     // board that hands out a guest's way in, when this session has a key to
-    // prove: {required:false} otherwise, and the board signs nothing.
+    // prove: {required:false} otherwise, and the board signs nothing. A
+    // booth's stream PIN routes (BoothRoutes) ask their proof of every
+    // session, through the tunnel too, so a session is handed a challenge
+    // whatever `required` says; the board signs only when it is required.
     router->post(QStringLiteral("/api/share/owner-proof"), [&deps, proofs](const HttpRequest& req) {
         QJsonObject obj;
         const QByteArray key = deps.ownerProofKey ? deps.ownerProofKey(req) : QByteArray();
         obj[QStringLiteral("required")] = !key.isEmpty();
-        if (key.isEmpty()) return HttpResponse::json(obj);
-        const QByteArray nonce = proofs->issue(HttpServer::sessionTokenFromRequest(req),
-                                               QDateTime::currentMSecsSinceEpoch());
+        const QString session = HttpServer::sessionTokenFromRequest(req);
+        if (key.isEmpty() && (!req.boothPin || session.isEmpty())) return HttpResponse::json(obj);
+        const QByteArray nonce = proofs->issue(session, QDateTime::currentMSecsSinceEpoch());
         if (nonce.isEmpty()) return HttpResponse::error(503, "Too many requests in flight");
         obj[QStringLiteral("nonce")] = QString::fromLatin1(nonce.toBase64());
         obj[QStringLiteral("host_id")] = deps.hostKeyId ? deps.hostKeyId() : QString();
@@ -449,21 +455,32 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     // POST /api/share/slots/:n/permissions — at any time, including mid-stream.
     // ShareManager pushes the new policy down to the live worker; nothing here
     // freezes, so a guest is promoted or demoted without losing their picture.
-    router->post(QStringLiteral("/api/share/slots/:n/permissions"), [&share, ownerRefusal](
-                                                                        const HttpRequest& req) {
-        const int slot = slotParam(req);
-        if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+    // Under booth_stream_pin, a guest's level, name and removal belong to whoever
+    // started the stream that guest joined, not to any session of the booth.
+    auto boothRefusal = [&deps](const HttpRequest& req, int slot) -> std::optional<HttpResponse> {
+        if (!req.boothPin) return std::nullopt;
+        if (deps.boothManages && deps.boothManages(req, slot)) return std::nullopt;
+        return HttpResponse::json(
+            QJsonObject{{QStringLiteral("error"), QStringLiteral("booth_owner_only")}}, 403);
+    };
 
-        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-        if (auto refused = ownerRefusal(req, body, QStringLiteral("permissions"), slot))
-            return *refused;
-        ShareManager::Permissions perms = ShareManager::Permissions::fromJson(body);
-        // Accepted whatever the row's state: shared, streaming, or not yet
-        // started (where it records what START will be minted with).
-        if (!share.setPermissions(slot, perms))
-            return HttpResponse::error(404, "Unknown player slot");
-        return HttpResponse::json(slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
-    });
+    router->post(
+        QStringLiteral("/api/share/slots/:n/permissions"),
+        [&share, ownerRefusal, boothRefusal](const HttpRequest& req) {
+            const int slot = slotParam(req);
+            if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+            if (auto refused = boothRefusal(req, slot)) return *refused;
+
+            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+            if (auto refused = ownerRefusal(req, body, QStringLiteral("permissions"), slot))
+                return *refused;
+            ShareManager::Permissions perms = ShareManager::Permissions::fromJson(body);
+            // Accepted whatever the row's state: shared, streaming, or not yet
+            // started (where it records what START will be minted with).
+            if (!share.setPermissions(slot, perms))
+                return HttpResponse::error(404, "Unknown player slot");
+            return HttpResponse::json(slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
+        });
 
     // POST /api/share/slots/:n/ttl — how long this invitation lives.
     router->post(QStringLiteral("/api/share/slots/:n/ttl"), [&share](const HttpRequest& req) {
@@ -477,28 +494,36 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     });
 
     // POST /api/share/slots/:n/name — label a player row.
-    router->post(QStringLiteral("/api/share/slots/:n/name"), [&share](const HttpRequest& req) {
-        const int slot = slotParam(req);
-        if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
-
-        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-        if (!share.setName(slot, body.value(QStringLiteral("name")).toString()))
-            return HttpResponse::error(400, "Could not rename this slot");
-        return HttpResponse::json(slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
-    });
-
-    // POST /api/share/slots/:n/deactivate — owner clicked a live player row.
     router->post(
-        QStringLiteral("/api/share/slots/:n/deactivate"), [&share, &deps](const HttpRequest& req) {
+        QStringLiteral("/api/share/slots/:n/name"), [&share, boothRefusal](const HttpRequest& req) {
             const int slot = slotParam(req);
             if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+            if (auto refused = boothRefusal(req, slot)) return *refused;
 
-            // Kill the worker first, then the credentials: the player
-            // must not be able to rejoin between the two.
-            if (deps.stopPlayerStream) deps.stopPlayerStream(slot, true);
-            share.deactivate(slot, ShareManager::EndReason::OwnerToggle);
+            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+            if (!share.setName(slot, body.value(QStringLiteral("name")).toString()))
+                return HttpResponse::error(400, "Could not rename this slot");
             return HttpResponse::json(slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
         });
+
+    // POST /api/share/slots/:n/deactivate — owner clicked a live player row.
+    router->post(QStringLiteral("/api/share/slots/:n/deactivate"), [&share, &deps, boothRefusal](
+                                                                       const HttpRequest& req) {
+        const int slot = slotParam(req);
+        if (slot < 0) return HttpResponse::error(404, "Unknown player slot");
+        if (auto refused = boothRefusal(req, slot)) return *refused;
+
+        // A booth guest removed: the PIN they read must die with their seat.
+        const bool booth = share.isBooth(slot);
+        const QString boothHost = share.hostForSlot(slot);
+        const int boothApp = share.appForSlot(slot);
+        // Kill the worker first, then the credentials: the player
+        // must not be able to rejoin between the two.
+        if (deps.stopPlayerStream) deps.stopPlayerStream(slot, true);
+        share.deactivate(slot, ShareManager::EndReason::OwnerToggle);
+        if (booth && deps.boothGuestGone) deps.boothGuestGone(boothHost, boothApp);
+        return HttpResponse::json(slotJson(share.status().at(slot - ShareManager::kFirstSlot)));
+    });
 
     // ── Player side ─────────────────────────────────────────────────────────
     // Exempt from the session gate (see HttpServer::processRequest) — a player
@@ -738,7 +763,19 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
             obj[QStringLiteral("owner")] =
                 !hostUuid.isEmpty() && deps.ownerWatching && deps.ownerWatching(hostUuid);
             obj[QStringLiteral("players")] = players;
-            return HttpResponse::json(obj);
+            // A guest who joined by a booth's stream PIN sees that PIN, as
+            // everyone watching the stream does (issue #68) — and only such a
+            // guest: a board invitation's never does.
+            if (share.isBooth(self) && deps.boothPinFor) {
+                const std::pair<QString, qint64> pin = deps.boothPinFor(self);
+                if (!pin.first.isEmpty()) {
+                    obj[QStringLiteral("booth_pin")] = pin.first;
+                    obj[QStringLiteral("booth_pin_generation")] = pin.second;
+                }
+            }
+            HttpResponse resp = HttpResponse::json(obj);
+            resp.headers[QStringLiteral("Cache-Control")] = QStringLiteral("no-store");
+            return resp;
         });
 
     // POST /api/share/player/leave — the player pressed Leave.
@@ -749,6 +786,14 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
 
             // Leaving frees the slot for a later join — it does NOT end the share.
             if (deps.stopPlayerStream) deps.stopPlayerStream(slot, false);
+            // A booth guest's seat, though, is theirs only while they hold it:
+            // leaving gives it up, and the PIN they read changes.
+            if (share.isBooth(slot)) {
+                const QString host = share.hostForSlot(slot);
+                const int app = share.appForSlot(slot);
+                share.deactivate(slot, ShareManager::EndReason::GuestLeft);
+                if (deps.boothGuestGone) deps.boothGuestGone(host, app);
+            }
             QJsonObject obj;
             obj[QStringLiteral("status")] = QStringLiteral("ok");
             return HttpResponse::json(obj);

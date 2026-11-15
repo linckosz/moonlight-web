@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QHash>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -99,6 +100,12 @@ public:
     /// A new PIN for a stream that has one, different from the last. Empty
     /// when @p key has none.
     QString rotate(const QString& key, Reason why);
+    /// Forget every PIN whose key is not in @p live: the streams that ended.
+    void retainOnly(const QSet<QString>& live);
+    /// Seconds until both of the caller's buckets are open, 0 when they are:
+    /// asked before anything else is checked, so a caller held back is told so
+    /// without its proof or its PIN being looked at.
+    int heldFor(const QString& sessionKey, const QString& addressKey);
     /// How many times this stream's PIN has changed since it was minted, and
     /// why the last time. A page that saw generation n knows a change by n+1.
     quint64 generation(const QString& key) const;

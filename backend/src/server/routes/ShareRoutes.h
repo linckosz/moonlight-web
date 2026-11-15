@@ -24,9 +24,11 @@
 #include <QString>
 
 #include <functional>
+#include <memory>
 #include <utility>
 
 class HttpServer;
+class OwnerProof;
 
 /**
  * Everything the share routes need from the stream lifecycle, which lives in
@@ -139,6 +141,27 @@ struct ShareRoutesDeps
         bool shared = false;
     };
     std::function<GuestPicture(const QString& hostUuid)> guestPicture;
+
+    // ── A booth's stream PIN (issue #68) ─────────────────────────────────────
+
+    /// The store of the board's and the booth's proof challenges, one for both:
+    /// a challenge drawn at /api/share/owner-proof is checked by the booth's
+    /// routes too. A store of its own when none is given.
+    std::shared_ptr<OwnerProof> proofs;
+
+    /// The PIN of the stream a booth guest on @p slot joined, and how many times
+    /// it has changed, for that guest's presence answer. Empty when there is
+    /// none (the stream ended, or the slot is no booth guest's).
+    std::function<std::pair<QString, qint64>(int slot)> boothPinFor;
+
+    /// Under booth_stream_pin: whether @p req comes from whoever started the
+    /// stream the guest on @p slot joined, the one who may change that guest's
+    /// level or name, or remove them.
+    std::function<bool(const HttpRequest& req, int slot)> boothManages;
+
+    /// A booth guest left, or was removed, from the stream of @p hostUuid on
+    /// @p appId: that stream's PIN changes, so the one they read is dead.
+    std::function<void(const QString& hostUuid, int appId)> boothGuestGone;
 };
 
 /// Register the share API. A no-op when ShareManager::kSessionSharingEnabled is

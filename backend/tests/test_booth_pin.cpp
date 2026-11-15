@@ -304,6 +304,45 @@ void testIdleBucketsAreForgotten()
     CHECK_EQ(o.lockoutSeconds, 0);
 }
 
+void testHeldBackBeforeAnythingIsLookedAt()
+{
+    SECTION("BoothPin: a caller held back is told so before its PIN is looked at");
+    BoothPin pins;
+    Clock clock;
+    pins.setClockForTesting([&clock]() { return clock.now; });
+    pins.mint(kStream);
+    CHECK_EQ(pins.heldFor("eve", "10.0.0.9"), 0);
+    for (int i = 0; i < 3; ++i)
+        pins.check(kStream, "x", "eve", QStringLiteral("10.0.1.%1").arg(i));
+    // Her session's bucket, whichever address she asks from next.
+    CHECK_EQ(pins.heldFor("eve", "10.0.0.9"), 30);
+    CHECK_EQ(pins.heldFor("someone-else", "10.0.0.9"), 0);
+    // An address's bucket, whichever session asks from it.
+    for (int i = 0; i < 3; ++i)
+        pins.check(kStream, "x", QStringLiteral("s%1").arg(i), "10.0.2.2");
+    CHECK_EQ(pins.heldFor("fresh", "10.0.2.2"), 30);
+    clock.now += 30;
+    CHECK_EQ(pins.heldFor("eve", "10.0.0.9"), 0);
+    CHECK_EQ(pins.heldFor("fresh", "10.0.2.2"), 0);
+}
+
+void testEndedStreamsLoseTheirPins()
+{
+    SECTION("BoothPin: the PINs of streams that ended are forgotten");
+    BoothPin pins;
+    pins.mint(QStringLiteral("a"));
+    pins.mint(QStringLiteral("b"));
+    pins.mint(QStringLiteral("c"));
+    pins.retainOnly({QStringLiteral("b"), QStringLiteral("z")});
+    CHECK(!pins.has(QStringLiteral("a")));
+    CHECK(pins.has(QStringLiteral("b")));
+    CHECK(!pins.has(QStringLiteral("c")));
+    // A key that had no PIN is not given one.
+    CHECK(!pins.has(QStringLiteral("z")));
+    pins.retainOnly({});
+    CHECK(!pins.has(QStringLiteral("b")));
+}
+
 } // namespace
 
 void run_booth_pin_tests()
@@ -316,4 +355,6 @@ void run_booth_pin_tests()
     testTheAddresssBucket();
     testOneStreamsPinBuysNoTriesAtAnother();
     testIdleBucketsAreForgotten();
+    testHeldBackBeforeAnythingIsLookedAt();
+    testEndedStreamsLoseTheirPins();
 }

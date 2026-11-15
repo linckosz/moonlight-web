@@ -350,6 +350,7 @@ add_executable(mw-server
     src/server/HostAppLauncher.cpp
     src/server/LauncherDetect.cpp
     src/server/routes/ShareRoutes.cpp
+    src/server/routes/BoothRoutes.cpp
     src/server/routes/SystemRoutes.cpp
     src/server/routes/LogRoutes.cpp
     src/server/routes/ErrorRoutes.cpp
@@ -816,6 +817,7 @@ if(MW_BUILD_TESTS)
         tests/test_api_csrf.cpp
         tests/test_share_manager.cpp
         tests/test_booth_pin.cpp
+        tests/test_booth_routes.cpp
         # The guard on the ViGEmBus install notice: header-only pure logic, so
         # it verifies here without a driver, a network or the native module.
         tests/test_gamepad_driver.cpp
@@ -847,6 +849,11 @@ if(MW_BUILD_TESTS)
         # A booth's stream PINs: when one changes, and the buckets every try is
         # held to (issue #68). Pure Qt Core, like the share links.
         src/server/BoothPin.cpp
+        # And the routes around them, driven through the router as the server
+        # registers them.
+        src/server/routes/BoothRoutes.cpp
+        src/server/RestRouter.cpp
+        src/server/StreamOwner.cpp
         # MW-BIND-v1: the fingerprint binding that keeps a relaying introduction
         # server out of the middle of a stream. Pulls OpenSSL in (ECDSA P-256),
         # unlike the units above — worth it: this is the check that decides

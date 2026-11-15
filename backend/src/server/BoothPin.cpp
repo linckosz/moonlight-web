@@ -107,6 +107,22 @@ QString BoothPin::rotate(const QString& key, Reason why)
     return it->pin;
 }
 
+void BoothPin::retainOnly(const QSet<QString>& live)
+{
+    for (auto it = m_Pins.begin(); it != m_Pins.end();) {
+        if (live.contains(it.key()))
+            ++it;
+        else
+            it = m_Pins.erase(it);
+    }
+}
+
+int BoothPin::heldFor(const QString& sessionKey, const QString& addressKey)
+{
+    purge();
+    return qMax(lockout(sessionBucket(sessionKey)), lockout(addressBucket(addressKey)));
+}
+
 quint64 BoothPin::generation(const QString& key) const
 {
     return m_Pins.value(key).generation;
