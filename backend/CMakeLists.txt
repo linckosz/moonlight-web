@@ -337,6 +337,7 @@ add_executable(mw-server
     src/server/ShareManager.cpp
     src/server/GuestProfile.cpp
     src/server/BoothPin.cpp
+    src/server/BoothGate.cpp
     src/server/OwnerProof.cpp
     src/server/SessionPool.cpp
     src/server/StreamOwner.cpp
@@ -818,6 +819,7 @@ if(MW_BUILD_TESTS)
         tests/test_share_manager.cpp
         tests/test_booth_pin.cpp
         tests/test_booth_routes.cpp
+        tests/test_booth_gate.cpp
         # The guard on the ViGEmBus install notice: header-only pure logic, so
         # it verifies here without a driver, a network or the native module.
         tests/test_gamepad_driver.cpp
@@ -852,6 +854,8 @@ if(MW_BUILD_TESTS)
         # And the routes around them, driven through the router as the server
         # registers them.
         src/server/routes/BoothRoutes.cpp
+        # Who may end, replace or join someone else's stream there.
+        src/server/BoothGate.cpp
         src/server/RestRouter.cpp
         src/server/StreamOwner.cpp
         # MW-BIND-v1: the fingerprint binding that keeps a relaying introduction
