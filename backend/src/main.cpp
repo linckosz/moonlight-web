@@ -93,6 +93,7 @@
 #include "server/NetClassify.h"
 #include "server/RequestGuard.h"
 #include "server/BoothGate.h"
+#include "streaming/TakeoverNotice.h"
 #include "server/BoothPin.h"
 #include "server/OwnerProof.h"
 #include "server/ShareManager.h"
@@ -3064,8 +3065,11 @@ int main(int argc, char* argv[])
     // down. Suppresses the slot's normal ended-cleanup (no Sunshine /cancel:
     // take-over and standby-restart both want the Sunshine session kept alive
     // for the /resume that follows). The host object self-deletes on exit.
+    // @p takeoverDetail: what a take-over notice says beyond itself, in a booth
+    // whose streams have PINs (TakeoverNotice); empty everywhere else.
     auto detachWorkerSlot = [&g_Pool, &authManager, &g_StreamEnds, &historyEnd, &boothPins,
-                             liveBoothKeys](int i, bool takenOver, bool sessionEnded = false) {
+                             liveBoothKeys](int i, bool takenOver, bool sessionEnded = false,
+                                            const QJsonObject& takeoverDetail = QJsonObject()) {
         SessionPool::Slot& sl = g_Pool.at(i);
         StreamWorkerHost* old = g_Pool.workerAs<StreamWorkerHost>(i);
         const QString token = sl.sessionToken;
@@ -3108,7 +3112,7 @@ int main(int argc, char* argv[])
         if (sessionEnded)
             old->notifySessionEnded();
         else if (takenOver)
-            old->notifyTakenOver();
+            old->notifyTakenOver(takeoverDetail);
         else
             old->requestQuit();
         return old;
@@ -4039,6 +4043,18 @@ int main(int argc, char* argv[])
                                   call.decision.status(action));
     };
 
+    // What the owner of a stream the gate let go is told beyond "taken over":
+    // with its PIN, or after the idle time, and by which machine. Nothing when
+    // it was not someone else's, or this machine took it.
+    const auto boothNoticeFor = [&appSettings, boothOwnerName](const BoothCall& call) {
+        const QString by = boothOwnerName(call.requester);
+        if (call.decision.verdict == BoothGate::Verdict::NeedPin)
+            return TakeoverNotice::withPin(by);
+        if (call.decision.verdict == BoothGate::Verdict::AllowIdle)
+            return TakeoverNotice::afterIdle(by, appSettings.boothTakeoverIdleMinutes());
+        return QJsonObject();
+    };
+
     // Phase 5: Start streaming — launch app + RTSP handshake
     const auto startHost = [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay,
                             &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveRelayRoot,
@@ -4049,7 +4065,8 @@ int main(int argc, char* argv[])
                             &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &slotSignalingPort,
                             &slotWsPath, &anyOtherSlotLive, &reapCoopSession, &server, &appSettings,
                             &authManager, &sessionMetrics, &routerPorts, stunServer, &historyBegin,
-                            &historyEnd, &boothGate, &boothRefusal, &boothPendingStarts,
+                            &historyEnd, &boothGate, &boothRefusal, &boothNoticeFor,
+                            &boothPendingStarts,
                             &boothPendingSeq](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
@@ -4274,6 +4291,8 @@ int main(int argc, char* argv[])
         // end, replace or share it needs its PIN, unless the gate says
         // otherwise (BoothGate). Asked before anything is counted, claimed or
         // torn down; the start then holds its place until it answers.
+        QJsonObject boothNotice; // what the owners of the streams let go are told
+        StreamOwner boothRequester;
         if (req.boothPin) {
             const BoothGate::Action action =
                 standby                                            ? BoothGate::Action::Standby
@@ -4295,6 +4314,8 @@ int main(int argc, char* argv[])
                 respond(*refused);
                 return;
             }
+            boothNotice = boothNoticeFor(call);
+            boothRequester = call.requester;
             // In reach of the next start from here until this one answers.
             const quint64 pendingId = ++boothPendingSeq;
             boothPendingStarts.insert(pendingId, {uuid, reqAppId, device, call.requester,
@@ -4469,14 +4490,20 @@ int main(int argc, char* argv[])
                 // Reclaiming it would end a stream the user is still watching in
                 // another tab, which is exactly what the take-over must not do.
                 if (slotStreamsAnotherApp(i)) continue;
-                StreamWorkerHost* w = detachWorkerSlot(i, true);
+                // Its owner told why, when the booth's gate let it go.
+                const QJsonObject detail =
+                    g_Pool.at(i).owner.sameAs(boothRequester) ? QJsonObject() : boothNotice;
+                StreamWorkerHost* w = detachWorkerSlot(i, true, false, detail);
                 // Serialize the new worker behind whichever child still holds
                 // the ports for the slot we are about to use.
                 if (i == reqSlot) previousWorker = w;
             }
             // Slot claimed above kOwnerSlots (a second host): only its own
             // remnant is in the way.
-            if (reqSlot >= kOwnerSlots) previousWorker = detachWorkerSlot(reqSlot, true);
+            if (reqSlot >= kOwnerSlots)
+                previousWorker = detachWorkerSlot(
+                    reqSlot, true, false,
+                    g_Pool.at(reqSlot).owner.sameAs(boothRequester) ? QJsonObject() : boothNotice);
         }
         if (!standby && g_ActiveRelay) {
             DataChannelRelay* old = g_ActiveRelay;
@@ -6673,8 +6700,8 @@ int main(int argc, char* argv[])
     server.router()->postAsync(
         "/api/hosts/:id/stop-session",
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &detachWorkerSlot, &endPlayerSessions,
-         &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &boothGate,
-         &boothRefusal](const HttpRequest& req, const ResponseCallback& respond) {
+         &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &boothGate, &boothRefusal,
+         &boothNoticeFor](const HttpRequest& req, const ResponseCallback& respond) {
             NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
             if (!host) {
                 respond(HttpResponse::error(404, "Host not found"));
@@ -6685,6 +6712,8 @@ int main(int argc, char* argv[])
             // host end with their PIN, from this machine, or once nobody used
             // them for the idle time (BoothGate). Where each device has a seat
             // of its own, the asking device's seat only.
+            QJsonObject boothNotice;
+            StreamOwner boothRequester;
             if (req.boothPin) {
                 const QJsonObject body = QJsonDocument::fromJson(req.body).object();
                 const QString seat =
@@ -6700,7 +6729,16 @@ int main(int argc, char* argv[])
                     respond(*refused);
                     return;
                 }
+                boothNotice = boothNoticeFor(call);
+                boothRequester = call.requester;
             }
+            // A stream of someone else's the gate let go: its owner is told why.
+            const auto endSlot = [&](int i) {
+                if (!boothNotice.isEmpty() && !g_Pool.at(i).owner.sameAs(boothRequester))
+                    detachWorkerSlot(i, true, false, boothNotice);
+                else
+                    detachWorkerSlot(i, false);
+            };
 
             // A host where each device has its own seat: "Quit" is the asking
             // device's, on its seat. Its streams end, its seat's app is quit
@@ -6718,7 +6756,7 @@ int main(int argc, char* argv[])
                 for (int i = 0; i < g_Pool.size(); ++i) {
                     const SessionPool::Slot& sl = g_Pool.at(i);
                     if (sl.worker && sl.hostUuid == host->uuid && sl.clientUniqueId == uid)
-                        detachWorkerSlot(i, false);
+                        endSlot(i);
                 }
                 g_LiveSunshineUids.remove(uid);
                 const QString hostUuid = host->uuid;
@@ -6744,7 +6782,7 @@ int main(int argc, char* argv[])
             // This host's guests: the cancels below end their app too.
             endPlayerSessions(host->uuid, ShareManager::EndReason::OwnerStop);
             for (int i : g_Pool.slotsOnHost(host->uuid, kOwnerSlots))
-                detachWorkerSlot(i, false);
+                endSlot(i);
 
             // Sunshine's /cancel is keyed by the uniqueid that launched the
             // session, so every live one has to be named. The set is emptied

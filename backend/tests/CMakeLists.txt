@@ -166,6 +166,7 @@ add_executable(run_tests
     test_connection_history.cpp
     test_lan_http_routes.cpp
     test_input_policy.cpp
+    test_takeover_notice.cpp
     # In-scope production units (+ their real deps)
     # The router-port allocation policy, behind its gateway seam: the rules
     # that keep two MoonlightWeb hosts on one LAN out of each other's holes.

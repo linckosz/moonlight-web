@@ -3088,9 +3088,9 @@ void DataChannelRelay::logHostUplink(const mw::hostuplink::Notice::Event& ev)
 
 // --- Stop ---
 
-void DataChannelRelay::notifyClientTakenOver()
+void DataChannelRelay::notifyClientTakenOver(const QJsonObject& detail)
 {
-    sendExitNotice("takeover");
+    sendExitNotice("takeover", detail);
 }
 
 void DataChannelRelay::notifyClientRevoked()
@@ -3103,7 +3103,7 @@ void DataChannelRelay::notifyClientSessionEnded()
     sendExitNotice("session-ended");
 }
 
-void DataChannelRelay::sendExitNotice(const char* type)
+void DataChannelRelay::sendExitNotice(const char* type, const QJsonObject& detail)
 {
     // Control message on the input DC, sent before stop() closes it, so the
     // browser can show a graceful exit instead of a generic disconnect. The
@@ -3111,7 +3111,9 @@ void DataChannelRelay::sendExitNotice(const char* type)
     // queues into SCTP, and the close() that follows may discard it — hence the
     // synchronous flush (see ExitNotice.h).
     if (!m_InputDc || m_Stopping.load()) return;
-    QByteArray json = QJsonDocument(QJsonObject{{"type", type}}).toJson(QJsonDocument::Compact);
+    QJsonObject notice = detail;
+    notice.insert(QStringLiteral("type"), QString::fromLatin1(type));
+    QByteArray json = QJsonDocument(notice).toJson(QJsonDocument::Compact);
     if (!exitnotice::sendAndFlush(m_InputDc, std::string(json.constData(), json.size()))) {
         qWarning() << "[DataChannelRelay] Exit notice" << type << "not flushed before teardown";
     }

@@ -108,7 +108,12 @@ public:
     /// so it can show a graceful "session interrupted" exit before the channels
     /// close. Sent on the control channel just before stop(); implementations
     /// flush it synchronously, since the caller tears down immediately after.
-    virtual void notifyClientTakenOver() {}
+    /// @p detail: how it was let go and by whom, in a booth whose streams have
+    /// PINs (TakeoverNotice), added to the notice as it is; empty otherwise.
+    virtual void notifyClientTakenOver(const QJsonObject& detail = QJsonObject())
+    {
+        Q_UNUSED(detail);
+    }
 
     /// Notify the browser that its device access was revoked by the admin,
     /// so it can show a graceful "access revoked" exit before the channels

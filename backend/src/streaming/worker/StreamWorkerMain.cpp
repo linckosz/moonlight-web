@@ -22,6 +22,7 @@
 #include "../IceMuxClient.h"
 #include "../InputActivity.h"
 #include "../InputMessageCodec.h"
+#include "../TakeoverNotice.h"
 #include "../../server/AppSettings.h"
 #include "mw/native/FeedArbiter.h"
 #include "mw/native/NativeHost.h"
@@ -202,7 +203,9 @@ void relayMouseKeys(IMediaEngine* engine)
 /// Mirror of the /quit teardown in main.cpp: stop the shim FIRST (so moonlight
 /// stops calling back into a relay about to be destroyed), then stop + delete
 /// the relay. Exits the process once done (short grace for the relay thread).
-void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded*/)
+/// @p takeoverDetail: what a take-over notice says beyond itself (TakeoverNotice).
+void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded*/,
+                     const QJsonObject& takeoverDetail = QJsonObject())
 {
     if (!g_State || g_State->exiting) return;
     g_State->exiting = true;
@@ -212,7 +215,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
     if (g_State->relay) {
         DataChannelRelay* r = g_State->relay;
         g_State->relay = nullptr;
-        if (notify == 1 && r->isConnected()) r->notifyClientTakenOver();
+        if (notify == 1 && r->isConnected()) r->notifyClientTakenOver(takeoverDetail);
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &DataChannelRelay::sessionEnded, nullptr, nullptr);
@@ -226,7 +229,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
     if (g_State->mediaRelay) {
         MediaTrackRelay* r = g_State->mediaRelay;
         g_State->mediaRelay = nullptr;
-        if (notify == 1 && r->isConnected()) r->notifyClientTakenOver();
+        if (notify == 1 && r->isConnected()) r->notifyClientTakenOver(takeoverDetail);
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &MediaTrackRelay::sessionEnded, nullptr, nullptr);
@@ -240,7 +243,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
     if (g_State->streamRelay) {
         StreamRelay* r = g_State->streamRelay;
         g_State->streamRelay = nullptr;
-        if (notify == 1 && r->isClientConnected()) r->notifyClientTakenOver();
+        if (notify == 1 && r->isClientConnected()) r->notifyClientTakenOver(takeoverDetail);
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &StreamRelay::sessionEnded, nullptr, nullptr);
@@ -956,7 +959,11 @@ int runStreamWorker(QCoreApplication& app)
             if (cmd == QLatin1String("quit")) {
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(0); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("takenOver")) {
-                QMetaObject::invokeMethod(qApp, []() { teardownAndExit(1); }, Qt::QueuedConnection);
+                // How it was let go, in a booth whose streams have PINs: only
+                // what a notice may carry reaches the page.
+                const QJsonObject detail = TakeoverNotice::clean(msg);
+                QMetaObject::invokeMethod(
+                    qApp, [detail]() { teardownAndExit(1, detail); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("revoked")) {
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("sessionEnded")) {

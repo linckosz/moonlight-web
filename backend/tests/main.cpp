@@ -137,6 +137,7 @@ void run_lan_http_pairing_tests();
 void run_connection_history_tests();
 void run_lan_http_routes_tests();
 void run_input_policy_tests();
+void run_takeover_notice_tests();
 
 int main(int argc, char** argv)
 {
@@ -295,6 +296,7 @@ int main(int argc, char** argv)
     run_connection_history_tests();
     run_lan_http_routes_tests();
     run_input_policy_tests();
+    run_takeover_notice_tests();
     // Last, both: they repoint the Logger singleton at their own temp files.
     run_privileged_place_tests();
     run_logger_rotation_tests();

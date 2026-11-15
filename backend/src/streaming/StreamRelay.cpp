@@ -213,9 +213,9 @@ bool StreamRelay::start()
     return true;
 }
 
-void StreamRelay::notifyClientTakenOver()
+void StreamRelay::notifyClientTakenOver(const QJsonObject& detail)
 {
-    sendExitNotice("takeover");
+    sendExitNotice("takeover", detail);
 }
 
 void StreamRelay::notifyClientRevoked()
@@ -228,7 +228,7 @@ void StreamRelay::notifyClientSessionEnded()
     sendExitNotice("session-ended");
 }
 
-void StreamRelay::sendExitNotice(const char* type)
+void StreamRelay::sendExitNotice(const char* type, const QJsonObject& detail)
 {
     // Exit notice over the WS before stop() closes it, so the browser can show
     // a graceful exit instead of a generic disconnect. sendTextMessage() only
@@ -237,7 +237,8 @@ void StreamRelay::sendExitNotice(const char* type)
     // TCP close. (The DataChannel relays need a stronger guarantee; see
     // ExitNotice.h.)
     if (!m_WsClient || m_Stopping) return;
-    QJsonObject obj{{"type", type}};
+    QJsonObject obj = detail;
+    obj.insert(QStringLiteral("type"), QString::fromLatin1(type));
     m_WsClient->sendTextMessage(
         QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
     m_WsClient->flush();

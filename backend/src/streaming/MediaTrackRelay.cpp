@@ -1129,9 +1129,9 @@ void MediaTrackRelay::onIceCheckTimeout()
 
 // ── Stop ────────────────────────────────────────────────────────────────────────
 
-void MediaTrackRelay::notifyClientTakenOver()
+void MediaTrackRelay::notifyClientTakenOver(const QJsonObject& detail)
 {
-    sendExitNotice("takeover");
+    sendExitNotice("takeover", detail);
 }
 
 void MediaTrackRelay::notifyClientRevoked()
@@ -1144,14 +1144,16 @@ void MediaTrackRelay::notifyClientSessionEnded()
     sendExitNotice("session-ended");
 }
 
-void MediaTrackRelay::sendExitNotice(const char* type)
+void MediaTrackRelay::sendExitNotice(const char* type, const QJsonObject& detail)
 {
     // Exit notice on the input DC before stop() closes it, so the browser can
     // show a graceful exit instead of a generic disconnect. Flushed
     // synchronously: stop() follows immediately and its close() would otherwise
     // be free to discard the still-queued message (see ExitNotice.h).
     if (!m_InputDc || m_Stopping.load()) return;
-    QByteArray json = QJsonDocument(QJsonObject{{"type", type}}).toJson(QJsonDocument::Compact);
+    QJsonObject notice = detail;
+    notice.insert(QStringLiteral("type"), QString::fromLatin1(type));
+    QByteArray json = QJsonDocument(notice).toJson(QJsonDocument::Compact);
     if (!exitnotice::sendAndFlush(m_InputDc, std::string(json.constData(), json.size()))) {
         qWarning() << "[MediaTrackRelay] Exit notice" << type << "not flushed before teardown";
     }

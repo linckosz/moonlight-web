@@ -22,6 +22,7 @@
 #include "IceMuxHandles.h"
 #include "NativeBench.h"
 #include "StreamEnds.h"
+#include "TakeoverNotice.h"
 #include "WorkerService.h"
 #include "common/Edition.h"
 #include "common/LaunchLock.h"
@@ -619,10 +620,12 @@ void StreamWorkerHost::requestQuit()
     });
 }
 
-void StreamWorkerHost::notifyTakenOver()
+void StreamWorkerHost::notifyTakenOver(const QJsonObject& detail)
 {
     m_StopAsked = true;
-    sendCommand("takenOver");
+    QJsonObject command = TakeoverNotice::clean(detail);
+    command.insert(QStringLiteral("cmd"), QStringLiteral("takenOver"));
+    sendJson(command);
     QTimer::singleShot(5000, this, [this]() {
         if (isRunning()) killChild();
     });

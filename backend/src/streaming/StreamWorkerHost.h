@@ -172,7 +172,9 @@ public:
     /// Graceful local teardown ({"cmd":"quit"}), hard-kill after 5s.
     void requestQuit();
     /// Notify the browser it was taken over, then teardown (worker side).
-    void notifyTakenOver();
+    /// @p detail: how and by whom, in a booth whose streams have PINs
+    /// (TakeoverNotice); only what a notice may carry is sent.
+    void notifyTakenOver(const QJsonObject& detail = QJsonObject());
     /// Notify the browser its device was revoked, then teardown (worker side).
     void notifyRevoked();
     /// Notify an invited player that the owner ended the shared session, then

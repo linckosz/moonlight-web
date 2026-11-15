@@ -122,7 +122,7 @@ public:
         RelayBase::setInputPolicy(policy);
     }
 
-    void notifyClientTakenOver() override;
+    void notifyClientTakenOver(const QJsonObject& detail = QJsonObject()) override;
 
     void notifyClientRevoked() override;
     void notifyClientSessionEnded() override;
@@ -223,8 +223,9 @@ private:
     void handleVideoFrame(const QByteArray& data, bool isKeyframe, int frameNumber,
                           qint64 presentationTimeUs, const mwsrzoneblock::Zones* zones = nullptr);
 
-    // Best-effort exit notice ({"type": ...}) on the input DC before stop().
-    void sendExitNotice(const char* type);
+    // Best-effort exit notice ({"type": ...}, with @p detail's fields) on the
+    // input DC before stop().
+    void sendExitNotice(const char* type, const QJsonObject& detail = QJsonObject());
 
     // hidcaps on the input DC, when it is open: whether this host recreates
     // WebHID devices for this player, and why not.

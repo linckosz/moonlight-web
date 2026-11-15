@@ -19,6 +19,7 @@
 
 #include "InputPolicy.h"
 
+#include <QJsonObject>
 #include <QObject>
 #include <QWebSocketServer>
 #include <QWebSocket>
@@ -45,8 +46,9 @@ public:
 
     /// Notify the browser (over the WS) that its session was taken over by
     /// another device, just before stop() closes the socket. Flushed before
-    /// returning, so the close that follows cannot drop it.
-    void notifyClientTakenOver();
+    /// returning, so the close that follows cannot drop it. @p detail: as
+    /// RelayBase's.
+    void notifyClientTakenOver(const QJsonObject& detail = QJsonObject());
 
     /// Notify the browser (over the WS) that its device access was revoked,
     /// just before stop() closes the socket. Flushed before returning.
@@ -111,7 +113,7 @@ private slots:
 private:
     /// Send an exit notice ("takeover" / "revoked") over the WS and flush it,
     /// so it reaches the browser ahead of the close that follows.
-    void sendExitNotice(const char* type);
+    void sendExitNotice(const char* type, const QJsonObject& detail = QJsonObject());
 
     /// Enable/disable WSS video fragmentation (same format as DataChannelRelay).
     /// When true, video frames are split into chunks with a 17-byte header
