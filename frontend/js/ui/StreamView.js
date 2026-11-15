@@ -9573,6 +9573,8 @@ export class StreamView {
         // hides it over the picture (the host cursor tracks the position and is
         // rendered in the video, so showing the local cursor too looks double).
         this.inputEl.style.cursor = 'default';
+        // Back in gaming mode after a final refusal (iOS): still a look mode.
+        this._syncLookFreeCursor();
 
         // Unified mousemove: absolute tracking when visible (pre-focus),
         // relative movement via pointer lock deltas when focused.
@@ -10697,6 +10699,20 @@ export class StreamView {
             );
     }
 
+    /**
+     * Lock-free look moves the host's pointer by the mouse's motion only, so
+     * the viewer's own pointer (iPadOS's round one) drifts away from it and
+     * points at nothing (IPADCURSOR, 15/11/2026): hide it over the picture
+     * while that look is on, and give it back the moment it is not.
+     */
+    _syncLookFreeCursor() {
+        if (!this.inputEl) return;
+        const on = this._gamingMode && this._pointerLockRefused && this._lockFreeLook === true;
+        if (on) this.inputEl.style.cursor = 'none';
+        else if (this._lookFreeCursorHidden) this.inputEl.style.cursor = 'default';
+        this._lookFreeCursorHidden = on;
+    }
+
     /** How long a click waits for the lock before the browser is taken at its silence. */
     static LOCK_WATCH_MS = 500;
 
@@ -10717,6 +10733,7 @@ export class StreamView {
         );
         // "Click to capture" would ask for something this browser won't give.
         if (this.hintEl) this.hintEl.style.display = 'none';
+        this._syncLookFreeCursor();
         if (!StreamView._lockRefusedToastShown) {
             StreamView._lockRefusedToastShown = true;
             const text = this._lockFreeLook
@@ -13168,6 +13185,8 @@ export class StreamView {
             this._setupNormalMouse();
             // Hide hint — no pointer lock in desktop mode
             if (this.hintEl) this.hintEl.style.display = 'none';
+            // The viewer's pointer is theirs again in desktop mode.
+            this._syncLookFreeCursor();
         }
         // The Mac's key field is the desktop's only (see _focusKeyField).
         if (this._gamingMode) this._keyField?.blur();
