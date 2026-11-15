@@ -1074,8 +1074,13 @@ uint64_t KmsCapture::fingerprintHeld()
     // the mapping holds — so its buffer is read by the buffer's own rows.
     const int rows =
         m_LastFrame.orientation.upright() ? m_LastFrame.height : m_LastFrame.importHeight();
-    const size_t count = (static_cast<size_t>(m_LastFrame.pitches[0]) * static_cast<size_t>(rows)) /
-                         sizeof(uint64_t);
+    // Never past the mapping, whatever the rows say: the bound is the mapping's
+    // own length, so a later change to either cannot read beyond it.
+    const size_t mapped = m_HeldMapLength > m_LastFrame.offsets[0]
+                              ? m_HeldMapLength - static_cast<size_t>(m_LastFrame.offsets[0])
+                              : 0;
+    const size_t wanted = static_cast<size_t>(m_LastFrame.pitches[0]) * static_cast<size_t>(rows);
+    const size_t count = (wanted < mapped ? wanted : mapped) / sizeof(uint64_t);
     uint64_t acc = 0x9E3779B97F4A7C15ULL;
     for (size_t i = 0; i < count; ++i)
         acc = (acc ^ words[i]) * 0x100000001B3ULL;
