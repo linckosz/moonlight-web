@@ -2,8 +2,12 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin. GPLv3.
  */
 #include "test_framework.h"
+#include "network/RouterPortPools.h"
 #include "server/SessionPool.h"
+#include "server/ShareManager.h"
+#include "server/SlotPortPlan.h"
 
+#include <QList>
 #include <QObject>
 
 void run_session_pool_tests()
@@ -379,5 +383,51 @@ void run_session_pool_tests()
         CHECK(owners.at(extra).owner.kind == K::Unknown);
         owners.release(0);
         CHECK(owners.at(0).owner.kind == K::Unknown);
+    }
+
+    // The slots the server reserves (the owner's two, a guest's four) as the
+    // plan places them, for production and --dev: every port they use stays
+    // off the TURN/STUN range (3478-3481), off the streaming servers' blocks,
+    // below 49152 where Windows hands out ephemeral ports and Hyper-V, WSL and
+    // Docker reserve whole blocks at boot, and each slot's media port inside
+    // the block the packages open.
+    {
+        SECTION("SessionPool — the reserved slots' ports, as the server plans them");
+        const int reserved = 2 + ShareManager::kSlotCount;
+        CHECK_EQ(reserved, 6);
+        const int ceiling = mw::routerports::kMediaPortCount;
+        const quint16 media = mw::routerports::kMediaBasePort;
+        for (const quint16 base : {quint16(48001), quint16(48501)}) {
+            const SlotPortPlan plan = planSlotPorts(base, media, ceiling);
+            CHECK(plan.maxSlots >= reserved);
+            SessionPool planned(base, plan.extraBase, reserved, plan.maxSlots);
+            // Slot 0 keeps its historical ports (signaling, relay, control),
+            // which sit inside Sunshine's stock range on purpose: the plan
+            // moves the other slots past the foreign blocks, not this one.
+            const QList<int> slot0{base, base + 1, base + 2};
+            QList<int> planned_ports;
+            for (int i = 1; i < reserved; ++i) {
+                planned_ports << planned.signalingPort(i) << planned.signalingPort(i) + 1;
+            }
+            for (int i = 0; i < reserved; ++i)
+                planned_ports << media + i;
+            for (const int p : slot0 + planned_ports) {
+                CHECK(p < 3478 || p > 3481);
+                CHECK(p < 49152);
+            }
+            for (const int p : planned_ports) {
+                CHECK(p < 47984 || p > 48010);
+                CHECK(p < 48095 || p > 48399);
+            }
+            // The signaling ports never land in the media block.
+            for (int i = 1; i < reserved; ++i) {
+                const int s = planned.signalingPort(i);
+                CHECK(s + 1 < media || s > media + ceiling - 1);
+            }
+            // Each slot's media port is the block's, one each.
+            CHECK(media + reserved - 1 <= media + ceiling - 1);
+        }
+        // Production as the plan's comment says it lands.
+        CHECK_EQ(planSlotPorts(48001, media, ceiling).extraBase, quint16(48011));
     }
 }

@@ -27,7 +27,7 @@
 class QTimer;
 
 /**
- * Session sharing — the owner invites up to three Players into a stream, each
+ * Session sharing — the owner invites up to four Players into a stream, each
  * as viewer, gamepad-only, desktop or full control.
  *
  * Every share is an *activation*: opening a Player row mints a fresh link token
@@ -65,9 +65,9 @@ public:
     static constexpr bool kSessionSharingEnabled = true;
 
     /// Player slots map 1:1 onto stream worker slots: 0 and 1 belong to the
-    /// owner (primary + standby), 2..4 to the players.
+    /// owner (primary + standby), 2..5 to the players.
     static constexpr int kFirstSlot = 2;
-    static constexpr int kSlotCount = 3;
+    static constexpr int kSlotCount = 4;
     static constexpr int kLastSlot = kFirstSlot + kSlotCount - 1;
 
     /// Default lifetime of an activation, and the choices the board offers.

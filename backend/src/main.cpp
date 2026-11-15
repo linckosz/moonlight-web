@@ -97,6 +97,7 @@
 #include "server/ShareManager.h"
 #include "server/SessionPool.h"
 #include "server/SingleSessionHosts.h"
+#include "server/SlotPortPlan.h"
 #include "server/StreamActivity.h"
 #include "server/routes/AuthRoutes.h"
 #include "server/routes/BoothRoutes.h"
@@ -1780,53 +1781,8 @@ static constexpr int kHostCancelGraceMs = 10000;
 // seconds later, then asks why and starts the stream again (StreamEnds).
 static constexpr int kCrashGraceMs = 20000;
 
-// Where a slot's two signaling ports live, and how many slots fit.
-//
-// Slot 0 keeps the historical base; slots 1.. take two consecutive ports from a
-// second base, just above slot 0's own ports (base, +1 relay, +2 control) and
-// pushed past every block it would land on: the media block, and the ports the
-// streaming servers sharing the machine listen on. It used to start right
-// after the media block, which production and --dev share: once the block
-// moved above the --dev base, both instances would have started their slots at
-// the same port.
-//
-// The foreign blocks: Sunshine and Apollo's stock ports (47984-48010, RTSP on
-// 48010), and MultiSeat's seats (48100 - 5 onwards, thirty ports a seat, eight
-// seats) with Wolf's video and audio pings (48100, 48200) among them.
-// Production lands at 48011-48058, --dev (48501) past the media block, at
-// 48574-48621.
-struct SlotPortPlan
-{
-    quint16 extraBase = 0;
-    int maxSlots = 0;
-};
-
-static SlotPortPlan planSlotPorts(quint16 signalingBase, quint16 mediaBase, int ceiling)
-{
-    struct Block
-    {
-        int first, last;
-    };
-    const Block kTaken[] = {
-        {47984, 48010},
-        {48095, 48399},
-        {mediaBase, mediaBase + ceiling - 1},
-    };
-    int extra = signalingBase + 4;
-    for (bool moved = true; moved;) {
-        moved = false;
-        const int top = extra + 2 * (ceiling - 1) + 1;
-        for (const Block& b : kTaken)
-            if (extra <= b.last && top >= b.first) {
-                extra = b.last + 1;
-                moved = true;
-            }
-    }
-    // Only a signaling base picked by hand near the top of the port space can
-    // run out of room; it gets what fits there.
-    const int n = qBound(1, (65535 - extra + 1) / 2, ceiling);
-    return SlotPortPlan{static_cast<quint16>(extra), n};
-}
+// Where a slot's two signaling ports live, and how many slots fit:
+// planSlotPorts() in server/SlotPortPlan.h.
 
 // How many sessions one host may serve at once, by the software it runs.
 //
@@ -1839,7 +1795,7 @@ static int concurrentSessionCap(const QString& backendType)
 {
     if (backendType == QLatin1String("wolf")) return 10;
     if (backendType == QLatin1String("multiseat")) return 10;
-    return 4; // gamestream (Sunshine / Apollo), and anything not yet known
+    return 5; // gamestream (Sunshine / Apollo), and anything not yet known
 }
 
 /// Which sound a stream carries (Settings → Stream audio from), in its one form.
@@ -2771,15 +2727,15 @@ int main(int argc, char* argv[])
     // `--stream-worker` child process, which is what allows concurrent
     // sessions (moonlight-common-c is process-global). Slot 0 is the owner's
     // primary stream (/ws, 48001/48002); slot 1 the standby used by the
-    // frontend's seamless quality switching (/ws1, 48011/48012); slots 2..4
-    // belong to invited players (/ws2../ws4, 48013.. onwards), one each.
+    // frontend's seamless quality switching (/ws1, 48011/48012); slots 2..5
+    // belong to invited players (/ws2../ws5, from the second base onwards), one each.
     //
     // Slot 0 keeps the historical pair; every other slot takes two consecutive
     // ports from a second base, signaling then relay (see planSlotPorts).
     static constexpr int kOwnerSlots = 2; // 0 = primary, 1 = standby
     static constexpr int kTotalSlots = kOwnerSlots + ShareManager::kSlotCount;
     // Slots up to kTotalSlots are addressed directly by index: 0/1 by the owner
-    // paths, 2..4 by ShareManager when a player joins. Above that, acquire()
+    // paths, 2..5 by ShareManager when a player joins. Above that, acquire()
     // hands out slots to devices streaming a DIFFERENT host, which is what lets
     // independent sessions coexist instead of evicting each other.
     //
@@ -2911,7 +2867,7 @@ int main(int argc, char* argv[])
         }
         return false;
     });
-    // Slots 2..4 are the invited players'; every other one is a signed-in device.
+    // Slots 2..5 are the invited players'; every other one is a signed-in device.
     const auto streamsVirtualDisplay = [&g_Pool](bool guests) {
         for (int i = 0; i < g_Pool.size(); ++i) {
             const SessionPool::Slot& sl = g_Pool.at(i);
@@ -4297,7 +4253,7 @@ int main(int argc, char* argv[])
         // newcomer /resumes). A STANDBY launch tears down only its own slot's
         // remnant and leaves the live stream untouched.
         //
-        // Player slots (2..4) are never touched here: an owner relaunch — a
+        // Player slots (2..5) are never touched here: an owner relaunch — a
         // quality switch, a transport fallback — must leave invited players
         // streaming. Only an explicit Stop ends their session.
         StreamWorkerHost* previousWorker = nullptr;
@@ -5268,7 +5224,7 @@ int main(int argc, char* argv[])
             cfg["serverHost"] = serverHost;
             cfg["serverHttpsPort"] = static_cast<int>(server.activeHttpsPort());
             // Every slot owns a port pair so all children can listen at once
-            // (HttpServer proxies /ws1../ws4 to them).
+            // (HttpServer proxies /ws1../ws5 to them).
             cfg["signalingPort"] = static_cast<int>(slotSignalingPort(reqSlot));
             cfg["loopbackKey"] = QString::fromLatin1(mw::loopback::key());
             cfg["streamRelayPort"] = static_cast<int>(slotSignalingPort(reqSlot) + 1);
@@ -7623,7 +7579,7 @@ int main(int argc, char* argv[])
             HttpServer::cookieFromRequest(req, ShareManager::kPlayerCookie));
     });
 
-    // /ws2../ws4 carry a player's video and input. Only the mw_player cookie
+    // /ws2../ws5 carry a player's video and input. Only the mw_player cookie
     // that matches THAT slot's live activation opens them — the session-cookie
     // check the owner's slots go through would reject every player.
     server.setPlayerSlotAuthorizer([&shareManager](const HttpRequest& req, int slot) {

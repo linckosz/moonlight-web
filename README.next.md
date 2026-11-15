@@ -170,7 +170,7 @@ Using MoonlightWeb only as a front end? Set `"native_host_enabled": false` in [`
 
 ## Session sharing
 
-The **sharing board** invites up to three people into your session, each with their own stream, resolution and bitrate. Open it from the **Share** button of a running stream, or from a host's ⋯ menu before anything is streaming (the first guest's PIN then starts the app).
+The **sharing board** invites up to four people into your session, each with their own stream, resolution and bitrate. Open it from the **Share** button of a running stream, or from a host's ⋯ menu before anything is streaming (the first guest's PIN then starts the app).
 
 ![The sharing board — who is invited, and what they may do](docs/screenshots/share.png)
 
