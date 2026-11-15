@@ -92,6 +92,7 @@
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
 #include "server/RequestGuard.h"
+#include "server/BoothGate.h"
 #include "server/BoothPin.h"
 #include "server/OwnerProof.h"
 #include "server/ShareManager.h"
@@ -1780,6 +1781,10 @@ static constexpr int kHostCancelGraceMs = 10000;
 // healthy stream: the page learns it only when its link times out, a few
 // seconds later, then asks why and starts the stream again (StreamEnds).
 static constexpr int kCrashGraceMs = 20000;
+// How long a start a booth's gate let through stays in reach of the next one
+// before its worker is in its slot (BoothPendingStart): a launch that never
+// answers in that time is not held against anyone.
+static constexpr qint64 kBoothPendingMs = 2 * 60 * 1000;
 
 // Where a slot's two signaling ports live, and how many slots fit:
 // planSlotPorts() in server/SlotPortPlan.h.
@@ -2801,6 +2806,24 @@ int main(int argc, char* argv[])
                 keys.insert(boothStreamKey(g_Pool.at(i)));
         return keys;
     };
+    // Starts the gate let through whose worker is not in its slot yet (a launch
+    // takes seconds): the next start finds them in reach as if they were up,
+    // until they answer, or for kBoothPendingMs at most.
+    struct BoothPendingStart
+    {
+        QString hostUuid;
+        int appId = 0;
+        QString clientUniqueId;
+        StreamOwner owner;
+        qint64 sinceMs = 0;
+    };
+    QHash<quint64, BoothPendingStart> boothPendingStarts;
+    quint64 boothPendingSeq = 0;
+    // The PIN check of a start or a stop that would take someone else's stream
+    // over (boothTakeoverRefusal), set below once what it needs exists.
+    std::function<std::optional<HttpResponse>(const HttpRequest&, const QJsonObject&,
+                                              const BoothTakeover&)>
+        boothTakeover;
 
     // Thin names kept over the pool: they read better at the call sites and
     // leave the slot arithmetic in one place.
@@ -3897,6 +3920,125 @@ int main(int argc, char* argv[])
                             : StreamEnds::name(StreamEnds::State::Unknown)}});
     });
 
+    // ── A booth's take-over gate (booth_stream_pin, issue #68) ───────────────
+    // The machine a stream's owner streams from, as a prompt or a notice names
+    // it. Never the session's token.
+    const auto boothOwnerName = [&authManager](const StreamOwner& owner) -> QString {
+        switch (owner.kind) {
+        case StreamOwner::Kind::Session: return authManager.sessionMachineName(owner.token);
+        case StreamOwner::Kind::ThisMachine: return QSysInfo::machineHostName();
+        case StreamOwner::Kind::Unknown: break;
+        }
+        return QString();
+    };
+    // When somebody last used the streams of @p keys on @p hostUuid: their own
+    // input, or their start until there is some, and the input of the guests
+    // on that host, which only counts once their level let it through (their
+    // arrival does not). 0 when none of them is there.
+    const auto boothLastActivity =
+        [&g_Pool, isOwnerSlot, boothStreamKey](const QString& hostUuid, const QSet<QString>& keys) {
+            qint64 last = 0;
+            for (int i = 0; i < g_Pool.size(); ++i) {
+                const SessionPool::Slot& sl = g_Pool.at(i);
+                if (!g_Pool.live(i) || sl.hostUuid != hostUuid) continue;
+                const auto* w = g_Pool.workerAs<StreamWorkerHost>(i);
+                if (!w) continue;
+                if (!isOwnerSlot(i))
+                    last = qMax(last, w->lastInputMs());
+                else if (keys.contains(boothStreamKey(sl)))
+                    last = qMax(last, qMax(w->createdMs(), w->lastInputMs()));
+            }
+            return last;
+        };
+    // What the gate says of a request on @p hostUuid, and whose stream is in
+    // the way when it is someone else's.
+    struct BoothCall
+    {
+        BoothGate::Decision decision;
+        StreamOwner requester;
+        BoothTakeover target; ///< the first stream of someone else's in reach
+    };
+    // The streams of @p hostUuid a request reaches are every owner stream up
+    // there, a start let through a moment ago that is not up yet, and the
+    // stream this process runs itself when streams do not run in workers;
+    // @p reaches leaves out one the request cannot touch (a slot as a start
+    // would leave it, an index of -1 for the two not in a slot).
+    const auto boothGate =
+        [&g_Pool, &appSettings, &boothPendingStarts, &g_ActiveRelay, &g_ActiveMediaTrackRelay,
+         &g_ActiveStreamRelay, &g_ActiveHostUuid, &g_ActiveSessionToken, &g_ActiveClientUniqueId,
+         isOwnerSlot, boothStreamKey, boothOwnerName, boothLastActivity](
+            const HttpRequest& req, const QString& hostUuid, BoothGate::Action action,
+            const std::function<bool(const SessionPool::Slot&, int)>& reaches) {
+            BoothCall call;
+            call.requester =
+                StreamOwner::of(req.isThisMachine, HttpServer::streamTokenFromRequest(req));
+            BoothGate::Input in;
+            in.keyOn = req.boothPin;
+            in.requester = call.requester;
+            in.action = action;
+            in.nowMs = QDateTime::currentMSecsSinceEpoch();
+            in.idleMinutes = appSettings.boothTakeoverIdleMinutes();
+            QList<int> apps;
+            const auto add = [&in, &apps, &boothStreamKey](const SessionPool::Slot& sl) {
+                in.inReach.append({sl.owner, boothStreamKey(sl)});
+                apps.append(sl.appId);
+            };
+            for (int i = 0; in.keyOn && i < g_Pool.size(); ++i) {
+                const SessionPool::Slot& sl = g_Pool.at(i);
+                if (isOwnerSlot(i) && g_Pool.live(i) && sl.hostUuid == hostUuid && reaches(sl, i))
+                    add(sl);
+            }
+            for (const BoothPendingStart& p : boothPendingStarts) {
+                if (!in.keyOn || p.hostUuid != hostUuid || in.nowMs - p.sinceMs > kBoothPendingMs)
+                    continue;
+                SessionPool::Slot pending;
+                pending.hostUuid = p.hostUuid;
+                pending.appId = p.appId;
+                pending.clientUniqueId = p.clientUniqueId;
+                pending.owner = p.owner;
+                if (reaches(pending, -1)) add(pending);
+            }
+            if (in.keyOn && g_ActiveHostUuid == hostUuid &&
+                (g_ActiveRelay || g_ActiveMediaTrackRelay || g_ActiveStreamRelay)) {
+                // Who started it was never kept: its session, or nobody known.
+                SessionPool::Slot inProcess;
+                inProcess.hostUuid = hostUuid;
+                inProcess.clientUniqueId = g_ActiveClientUniqueId;
+                inProcess.sessionToken = g_ActiveSessionToken;
+                inProcess.owner = StreamOwner::of(false, g_ActiveSessionToken);
+                if (reaches(inProcess, -1)) add(inProcess);
+            }
+
+            QSet<QString> others;
+            for (int k = 0; k < in.inReach.size(); ++k) {
+                if (in.inReach.at(k).owner.sameAs(call.requester)) continue;
+                if (others.isEmpty()) {
+                    call.target.hostUuid = hostUuid;
+                    call.target.streamKey = in.inReach.at(k).key;
+                    call.target.ownerName = boothOwnerName(in.inReach.at(k).owner);
+                    call.target.appId = apps.at(k);
+                }
+                others.insert(in.inReach.at(k).key);
+            }
+            in.lastActivityMs = boothLastActivity(hostUuid, others);
+            call.decision = BoothGate::decide(in);
+            if (!others.isEmpty())
+                qInfo() << "[Booth] A request on host" << hostUuid
+                        << "reaching another's stream:" << BoothGate::whyName(call.decision.why);
+            return call;
+        };
+    // The answer to give when the gate does not let a request through as it
+    // is: nullopt when it goes on, the PIN it needed having held (and moved).
+    const auto boothRefusal =
+        [&boothTakeover](const HttpRequest& req, const QJsonObject& body, const BoothCall& call,
+                         BoothGate::Action action) -> std::optional<HttpResponse> {
+        if (call.decision.allowed()) return std::nullopt;
+        if (call.decision.verdict == BoothGate::Verdict::NeedPin && boothTakeover)
+            return boothTakeover(req, body, call.target);
+        return HttpResponse::json(QJsonObject{{QStringLiteral("error"), call.decision.code()}},
+                                  call.decision.status(action));
+    };
+
     // Phase 5: Start streaming — launch app + RTSP handshake
     const auto startHost = [&computerManager, signalingPort, &g_ActiveRelay, &g_ActiveStreamRelay,
                             &g_ActiveMediaTrackRelay, &g_ActiveSession, &g_ActiveRelayRoot,
@@ -3907,7 +4049,8 @@ int main(int argc, char* argv[])
                             &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &slotSignalingPort,
                             &slotWsPath, &anyOtherSlotLive, &reapCoopSession, &server, &appSettings,
                             &authManager, &sessionMetrics, &routerPorts, stunServer, &historyBegin,
-                            &historyEnd](const HttpRequest& req, ResponseCallback respond) {
+                            &historyEnd, &boothGate, &boothRefusal, &boothPendingStarts,
+                            &boothPendingSeq](const HttpRequest& req, ResponseCallback respond) {
         QString uuid = req.pathParams.value("id");
         if (uuid.isEmpty()) {
             respond(HttpResponse::error(400, "Missing host ID"));
@@ -4125,6 +4268,42 @@ int main(int argc, char* argv[])
             return backendConcurrentApps && g_Pool.live(i) && g_Pool.at(i).hostUuid == uuid &&
                    g_Pool.at(i).appId != 0 && g_Pool.at(i).appId != reqAppId;
         };
+
+        // ── A booth's stream PINs (booth_stream_pin, issue #68) ────────────────
+        // Someone else's stream on this host stays theirs: a start that would
+        // end, replace or share it needs its PIN, unless the gate says
+        // otherwise (BoothGate). Asked before anything is counted, claimed or
+        // torn down; the start then holds its place until it answers.
+        if (req.boothPin) {
+            const BoothGate::Action action =
+                standby                                            ? BoothGate::Action::Standby
+                : !body.value("reconnect_of").toString().isEmpty() ? BoothGate::Action::Reconnect
+                : body.value("transport_index").toInt(0) > 0       ? BoothGate::Action::Fallback
+                                                                   : BoothGate::Action::Fresh;
+            // Every owner stream of this host, but one this start leaves beside
+            // it: another device's own session upstream, or another app where
+            // apps run side by side.
+            const QString device = sanitizeClientUniqueId(reqDevice);
+            const BoothCall call =
+                boothGate(req, uuid, action, [&](const SessionPool::Slot& sl, int) {
+                    if (backendIsMultiUser && !sl.clientUniqueId.isEmpty() &&
+                        sl.clientUniqueId != device)
+                        return false;
+                    return !(backendConcurrentApps && sl.appId != 0 && sl.appId != reqAppId);
+                });
+            if (auto refused = boothRefusal(req, body, call, action)) {
+                respond(*refused);
+                return;
+            }
+            // In reach of the next start from here until this one answers.
+            const quint64 pendingId = ++boothPendingSeq;
+            boothPendingStarts.insert(pendingId, {uuid, reqAppId, device, call.requester,
+                                                  QDateTime::currentMSecsSinceEpoch()});
+            respond = [respond, pendingId, &boothPendingStarts](HttpResponse r) {
+                boothPendingStarts.remove(pendingId);
+                respond(std::move(r));
+            };
+        }
 
         // How many devices this host already carries, counted by device rather
         // than by slot: the owner's standby slot is the same viewer as its
@@ -6102,8 +6281,8 @@ int main(int argc, char* argv[])
          &g_ActiveSession, &g_ActiveClientUniqueId, &g_ActiveSessionToken, &g_ActiveHostUuid,
          &g_Pool, &g_LiveSunshineUids, &g_DualSupport, &g_SingleSessionHosts,
          &dropPendingHostCancel, &detachWorkerSlot, &appOutlivesStream, &anyOtherSlotLive,
-         &endPlayerSessions, &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle,
-         &reapCoopSession](const HttpRequest& req, const ResponseCallback& respond) {
+         &endPlayerSessions, &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &reapCoopSession,
+         &boothGate, &boothRefusal](const HttpRequest& req, const ResponseCallback& respond) {
             QString uuid = req.pathParams.value("id");
             qInfo() << "[quit] ENTER — uuid=" << uuid << "relay=" << g_ActiveRelay.data()
                     << "relay valid=" << (!g_ActiveRelay.isNull());
@@ -6164,6 +6343,25 @@ int main(int argc, char* argv[])
             // The authenticated device asking to quit, read the same way /start
             // records it. Empty for localhost.
             const QString quitSessionToken = HttpServer::streamTokenFromRequest(req);
+
+            // A booth whose streams have PINs: a Stop ends the caller's own
+            // streams only, unless it comes from this machine (BoothGate). The
+            // browser's id is the page's word, so it never names a stream to
+            // end on its own: one it reaches that is someone else's refuses
+            // the whole Stop, its /cancel included.
+            if (req.boothPin) {
+                const BoothCall call = boothGate(req, host->uuid, BoothGate::Action::Quit,
+                                                 [&quitUniqueId](const SessionPool::Slot& sl, int) {
+                                                     return sl.clientUniqueId.isEmpty() ||
+                                                            quitUniqueId.isEmpty() ||
+                                                            quitUniqueId == sl.clientUniqueId;
+                                                 });
+                if (auto refused = boothRefusal(req, qbody, call, BoothGate::Action::Quit)) {
+                    qInfo() << "[quit] Refused: it reaches another's stream in a booth";
+                    respond(*refused);
+                    return;
+                }
+            }
 
             // Anything that is not a retire ends with a Sunshine /cancel, which
             // kills the app for everyone — so the players invited to this host
@@ -6475,12 +6673,33 @@ int main(int argc, char* argv[])
     server.router()->postAsync(
         "/api/hosts/:id/stop-session",
         [&computerManager, &g_Pool, &g_LiveSunshineUids, &detachWorkerSlot, &endPlayerSessions,
-         &quitsPerDevice, &quitDeviceApp,
-         &releaseSeatIfIdle](const HttpRequest& req, const ResponseCallback& respond) {
+         &quitsPerDevice, &quitDeviceApp, &releaseSeatIfIdle, &boothGate,
+         &boothRefusal](const HttpRequest& req, const ResponseCallback& respond) {
             NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
             if (!host) {
                 respond(HttpResponse::error(404, "Host not found"));
                 return;
+            }
+
+            // A booth whose streams have PINs: someone else's streams on this
+            // host end with their PIN, from this machine, or once nobody used
+            // them for the idle time (BoothGate). Where each device has a seat
+            // of its own, the asking device's seat only.
+            if (req.boothPin) {
+                const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+                const QString seat =
+                    quitsPerDevice(host->uuid)
+                        ? sanitizeClientUniqueId(body["client_uniqueid"].toString())
+                        : QString();
+                const BoothCall call =
+                    boothGate(req, host->uuid, BoothGate::Action::StopSession,
+                              [&seat](const SessionPool::Slot& sl, int) {
+                                  return seat.isEmpty() || sl.clientUniqueId == seat;
+                              });
+                if (auto refused = boothRefusal(req, body, call, BoothGate::Action::StopSession)) {
+                    respond(*refused);
+                    return;
+                }
             }
 
             // A host where each device has its own seat: "Quit" is the asking
@@ -7580,6 +7799,11 @@ int main(int argc, char* argv[])
     boothDeps.joinLevel = [&appSettings]() { return appSettings.boothJoinLevel(); };
     boothDeps.nowMs = []() { return QDateTime::currentMSecsSinceEpoch(); };
     registerBoothRoutes(*server.router(), shareManager, boothPins, *ownerProofs, boothDeps);
+    boothTakeover = [&boothPins, ownerProofs, boothDeps](const HttpRequest& req,
+                                                         const QJsonObject& body,
+                                                         const BoothTakeover& target) {
+        return boothTakeoverRefusal(boothPins, *ownerProofs, boothDeps, req, body, target);
+    };
 
     // Diagnostics: the browsers' console (debug mode) and the "Download logs"
     // archive. Static: its thread must be joined after the event loop, and

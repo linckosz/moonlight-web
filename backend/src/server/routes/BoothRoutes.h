@@ -22,10 +22,12 @@
 #include "server/StreamOwner.h"
 
 #include <QByteArray>
+#include <QJsonObject>
 #include <QSet>
 #include <QString>
 
 #include <functional>
+#include <optional>
 
 class BoothPin;
 class OwnerProof;
@@ -77,6 +79,28 @@ ShareManager::Permissions boothPermissionsFor(const QString& level);
 
 /// The opaque digest a booth seat's holder goes by: never the session's token.
 QString boothHolderOf(const QString& sessionToken);
+
+/// Someone else's booth stream a start or a stop would take over, as the PIN
+/// check below needs it (BoothGate said NeedPin).
+struct BoothTakeover
+{
+    QString hostUuid;
+    QString streamKey; ///< the stream's PIN key (BoothGate::Decision::streamKey)
+    QString ownerName; ///< the machine its owner streams from, for the prompt
+    int appId = -1;    ///< what it streams, for the prompt
+};
+
+/// Whether a start or a stop (@p body) may take over @p target with its PIN.
+/// nullopt: it may, and the PIN has moved on (it was used). Otherwise the
+/// answer to give, and nothing of anybody's stream was touched:
+///  - no "booth_pin" in the body: 409 booth_pin_required, with whose stream it
+///    is and what it streams, so the page can ask for the PIN; nothing counted;
+///  - then, as a join, nothing further once one says no: a session, its
+///    buckets, its proof for "booth_takeover" on that host, the PIN.
+std::optional<HttpResponse> boothTakeoverRefusal(BoothPin& pins, OwnerProof& proofs,
+                                                 const BoothRoutesDeps& deps,
+                                                 const HttpRequest& req, const QJsonObject& body,
+                                                 const BoothTakeover& target);
 
 /// POST /api/booth/join and POST /api/booth/pin (issue #68). Both answer only
 /// when the server runs as a booth with booth_stream_pin on (HttpRequest::boothPin),

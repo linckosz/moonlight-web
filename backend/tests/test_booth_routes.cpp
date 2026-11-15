@@ -3,8 +3,9 @@
  *
  * A booth's stream PIN routes (issue #68), driven with requests built by hand
  * around the real ShareManager, BoothPin and OwnerProof: who may join, in which
- * order a join is refused, one seat per session, who may read the PIN, and the
- * doors the PIN never leaves by (a URL, a log, an error body).
+ * order a join is refused, one seat per session, who may read the PIN, a
+ * take-over held to the same steps as a join, and the doors the PIN never
+ * leaves by (a URL, a log, an error body).
  */
 #include "test_framework.h"
 
@@ -56,6 +57,7 @@ struct Booth
     QHash<QString, QByteArray> keys; ///< session token → its pairing key
     QStringList reported;            ///< addresses fed to ConnectionGuard
     QString level = QStringLiteral("viewer");
+    BoothRoutesDeps deps;
 
     Booth()
     {
@@ -67,7 +69,6 @@ struct Booth
         stream.appId = 7;
         stream.owner = StreamOwner::of(false, QStringLiteral("owner-token"));
 
-        BoothRoutesDeps deps;
         deps.sessionToken = [](const HttpRequest& req) {
             return req.headers.value(QStringLiteral("x-session"));
         };
@@ -136,6 +137,32 @@ struct Booth
     {
         if (!pins.has(stream.key)) pins.mint(stream.key);
         return pins.read(stream.key);
+    }
+
+    /// A start (or a stop) that would take this stream over, as the server
+    /// asks it once the gate said its PIN is needed.
+    std::optional<HttpResponse> takeOver(const QJsonObject& body, const QString& token,
+                                         const QString& address = QStringLiteral("192.168.1.20"))
+    {
+        HttpRequest req;
+        req.method = QStringLiteral("POST");
+        req.path = QStringLiteral("/api/hosts/") + kHost + QStringLiteral("/start");
+        req.body = QJsonDocument(body).toJson(QJsonDocument::Compact);
+        req.clientAddress = address;
+        req.boothPin = true;
+        req.adminLocked = true;
+        if (!token.isEmpty()) req.headers.insert(QStringLiteral("x-session"), token);
+        const BoothTakeover target{kHost, stream.key, QStringLiteral("PC-owner"), stream.appId};
+        return boothTakeoverRefusal(pins, proofs, deps, req, body, target);
+    }
+
+    QJsonObject takeOverBody(const Browser& b, const QString& token, const QString& pin,
+                             const QString& action = QStringLiteral("booth_takeover"),
+                             const QString& host = kHost)
+    {
+        return {{QStringLiteral("appId"), 9},
+                {QStringLiteral("booth_pin"), pin},
+                {QStringLiteral("owner_proof"), proof(b, token, action, host)}};
     }
 };
 
@@ -389,6 +416,95 @@ void testWhoReadsThePin()
           QStringLiteral("booth_owner_only"));
 }
 
+void testATakeOverWithThePin()
+{
+    SECTION("booth routes: a take-over asks for the PIN, then takes the join's steps");
+    Booth b;
+    const Browser sam = newBrowser();
+    b.keys.insert(QStringLiteral("sam"), sam.spki);
+    const QString pin = b.pinNow();
+    const quint64 g0 = b.pins.generation(b.stream.key);
+    const QString wrong =
+        QStringLiteral("000000") == pin ? QStringLiteral("000001") : QStringLiteral("000000");
+
+    // Asked first: whose stream it is and what it streams, nothing counted,
+    // no proof spent. A PIN under the join's name is no take-over's PIN.
+    for (const QJsonObject& body :
+         {QJsonObject{{"appId", 9}}, QJsonObject{{"appId", 9}, {"pin", pin}}}) {
+        const std::optional<HttpResponse> asked = b.takeOver(body, QStringLiteral("sam"));
+        CHECK(asked.has_value());
+        if (!asked) continue;
+        CHECK_EQ(asked->statusCode, 409);
+        const QJsonObject obj = QJsonDocument::fromJson(asked->body).object();
+        CHECK(obj.value("error").toString() == QStringLiteral("booth_pin_required"));
+        CHECK(obj.value("owner").toString() == QStringLiteral("PC-owner"));
+        CHECK_EQ(obj.value("app_id").toInt(), 7);
+        CHECK(!asked->body.contains(pin.toUtf8()));
+    }
+    CHECK_EQ(b.pins.generation(b.stream.key), g0);
+    CHECK_EQ(b.proofs.pendingCount(), 0);
+
+    // No session to hold the tries by.
+    std::optional<HttpResponse> r = b.takeOver({{"booth_pin", pin}}, QString());
+    CHECK(r && r->statusCode == 403 && errorOf(*r) == QStringLiteral("booth_session_required"));
+    // A proof for a join, or for another host, opens no take-over; nor does
+    // none. None of it touches the PIN.
+    r = b.takeOver(b.takeOverBody(sam, QStringLiteral("sam"), pin, QStringLiteral("booth_join")),
+                   QStringLiteral("sam"));
+    CHECK(r && errorOf(*r) == QStringLiteral("owner_proof_refused"));
+    r = b.takeOver(b.takeOverBody(sam, QStringLiteral("sam"), pin, QStringLiteral("booth_takeover"),
+                                  QStringLiteral("host-uuid-B")),
+                   QStringLiteral("sam"));
+    CHECK(r && errorOf(*r) == QStringLiteral("owner_proof_refused"));
+    r = b.takeOver({{"booth_pin", pin}}, QStringLiteral("sam"));
+    CHECK(r && errorOf(*r) == QStringLiteral("owner_proof_required"));
+    CHECK_EQ(b.pins.generation(b.stream.key), g0);
+    CHECK(b.pins.read(b.stream.key) == pin);
+
+    // A wrong PIN: the tries left, and the PIN where it was.
+    r = b.takeOver(b.takeOverBody(sam, QStringLiteral("sam"), wrong), QStringLiteral("sam"));
+    CHECK(r && r->statusCode == 401);
+    if (r) {
+        const QJsonObject obj = QJsonDocument::fromJson(r->body).object();
+        CHECK(obj.value("error").toString() == QStringLiteral("booth_pin_invalid"));
+        // Three tries before the first wait, one of them spent.
+        CHECK_EQ(obj.value("remaining").toInt(), 2);
+        CHECK(!r->body.contains(pin.toUtf8()));
+    }
+    CHECK(b.pins.read(b.stream.key) == pin);
+
+    // The right one: let through, and the PIN it used is spent.
+    r = b.takeOver(b.takeOverBody(sam, QStringLiteral("sam"), pin), QStringLiteral("sam"),
+                   QStringLiteral("192.168.1.21"));
+    CHECK(!r.has_value());
+    CHECK(b.pins.read(b.stream.key) != pin);
+    CHECK_EQ(b.pins.generation(b.stream.key), g0 + 1);
+    CHECK(b.pins.lastReason(b.stream.key) == BoothPin::Reason::Used);
+    r = b.takeOver(b.takeOverBody(sam, QStringLiteral("sam"), pin), QStringLiteral("sam"),
+                   QStringLiteral("192.168.1.22"));
+    CHECK(r && errorOf(*r) == QStringLiteral("booth_pin_invalid"));
+}
+
+void testATakeOverHeldBackFirst()
+{
+    SECTION("booth routes: a take-over held back is refused before its proof is spent");
+    Booth b;
+    const Browser sam = newBrowser();
+    b.keys.insert(QStringLiteral("sam"), sam.spki);
+    const QString pin = b.pinNow();
+    // Three wrong joins from this session shut its bucket: a take-over from it
+    // is held back too, its proof left unspent and its PIN unread.
+    int status = 0;
+    for (int i = 0; i < 3; ++i)
+        b.join(sam, QStringLiteral("sam"), QStringLiteral("x"), &status,
+               QStringLiteral("10.4.0.%1").arg(i));
+    const std::optional<HttpResponse> held =
+        b.takeOver(b.takeOverBody(sam, QStringLiteral("sam"), pin), QStringLiteral("sam"));
+    CHECK(held && held->statusCode == 429);
+    CHECK_EQ(b.proofs.pendingCount(), 1);
+    CHECK(b.pins.read(b.stream.key) == pin);
+}
+
 void testThePinNeverLeavesByTheWrongDoor()
 {
     SECTION("booth routes: no PIN, token or cookie in a log line or an error body");
@@ -416,6 +532,15 @@ void testThePinNeverLeavesByTheWrongDoor()
     const QString cookie =
         raw.headers.value(QStringLiteral("Set-Cookie")).mid(10).section(QLatin1Char(';'), 0, 0);
     const QString link = ok.value("url").toString().mid(3);
+    // A take-over asked, refused, then let through.
+    for (const QString& tried : {QString(), QStringLiteral("000000"), pin}) {
+        const QJsonObject body = tried.isEmpty()
+                                     ? QJsonObject{{"appId", 9}}
+                                     : b.takeOverBody(sam, QStringLiteral("sam"), tried);
+        if (const std::optional<HttpResponse> r =
+                b.takeOver(body, QStringLiteral("sam"), QStringLiteral("10.3.0.4")))
+            bodies.append(QString::fromUtf8(r->body));
+    }
     const HttpResponse fresh =
         b.post("/api/booth/pin",
                {{"host_uuid", kHost},
@@ -451,5 +576,7 @@ void run_booth_routes_tests()
     testAJoinAndItsSeat();
     testHeldBackBeforeTheProof();
     testWhoReadsThePin();
+    testATakeOverWithThePin();
+    testATakeOverHeldBackFirst();
     testThePinNeverLeavesByTheWrongDoor();
 }

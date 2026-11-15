@@ -68,6 +68,43 @@ std::optional<HttpResponse> proofRefusal(OwnerProof& proofs, const BoothRoutesDe
     return refusal(QStringLiteral("owner_proof_refused"), 403);
 }
 
+/// The steps every PIN a caller enters goes through, in this order, nothing
+/// further once one says no: the caller's buckets, its proof for @p action on
+/// @p hostUuid, then the PIN of @p streamKey. A refusal before the PIN never
+/// touches the PIN nor its count. nullopt: the PIN was the right one.
+std::optional<HttpResponse> pinRefusal(BoothPin& pins, OwnerProof& proofs,
+                                       const BoothRoutesDeps& deps, const HttpRequest& req,
+                                       const QJsonObject& body, const QString& token,
+                                       const QString& action, const QString& hostUuid,
+                                       const QString& streamKey)
+{
+    const QString address = deps.addressKey ? deps.addressKey(req) : req.clientAddress;
+    if (const int held = pins.heldFor(token, address); held > 0) {
+        QJsonObject obj{{QStringLiteral("error"), QStringLiteral("rate_limited")},
+                        {QStringLiteral("lockout_seconds"), held}};
+        return answer(obj, 429);
+    }
+    if (auto refused = proofRefusal(proofs, deps, req, token, action, hostUuid, body))
+        return refused;
+
+    pins.retainOnly(deps.liveStreamKeys ? deps.liveStreamKeys() : QSet<QString>{streamKey});
+    if (!pins.has(streamKey)) pins.mint(streamKey);
+    const BoothPin::Outcome outcome =
+        pins.check(streamKey, body.value(QStringLiteral("pin")).toString(), token, address);
+    if (outcome.result == BoothPin::Result::RateLimited) {
+        QJsonObject obj{{QStringLiteral("error"), QStringLiteral("rate_limited")},
+                        {QStringLiteral("lockout_seconds"), outcome.lockoutSeconds}};
+        return answer(obj, 429);
+    }
+    if (outcome.result != BoothPin::Result::Ok) {
+        QJsonObject obj{{QStringLiteral("error"), QStringLiteral("booth_pin_invalid")},
+                        {QStringLiteral("remaining"), outcome.remainingAttempts},
+                        {QStringLiteral("lockout_seconds"), outcome.lockoutSeconds}};
+        return answer(obj, 401);
+    }
+    return std::nullopt;
+}
+
 /// The stream a request names, or the refusal to answer with: the booth must
 /// have its PINs on, a host be named, and an owner stream be up on it.
 std::optional<HttpResponse> streamRefusal(const BoothRoutesDeps& deps, const HttpRequest& req,
@@ -88,6 +125,35 @@ std::optional<HttpResponse> streamRefusal(const BoothRoutesDeps& deps, const Htt
 }
 
 } // namespace
+
+std::optional<HttpResponse> boothTakeoverRefusal(BoothPin& pins, OwnerProof& proofs,
+                                                 const BoothRoutesDeps& deps,
+                                                 const HttpRequest& req, const QJsonObject& body,
+                                                 const BoothTakeover& target)
+{
+    // Asked first, and nothing counted: the page learns whose stream is in the
+    // way and what it streams, and asks its user for the PIN.
+    if (!body.contains(QStringLiteral("booth_pin"))) {
+        QJsonObject obj{{QStringLiteral("error"), QStringLiteral("booth_pin_required")},
+                        {QStringLiteral("owner"), target.ownerName},
+                        {QStringLiteral("app_id"), target.appId}};
+        return answer(obj, 409);
+    }
+    const QString token = deps.sessionToken ? deps.sessionToken(req) : QString();
+    if (token.isEmpty()) return refusal(QStringLiteral("booth_session_required"), 403);
+    // The PIN under the name the join route reads it by.
+    QJsonObject entered = body;
+    entered[QStringLiteral("pin")] = body.value(QStringLiteral("booth_pin")).toString();
+    if (auto refused =
+            pinRefusal(pins, proofs, deps, req, entered, token, QStringLiteral("booth_takeover"),
+                       target.hostUuid, target.streamKey))
+        return refused;
+    // Used: whoever read it before cannot use it again.
+    pins.rotate(target.streamKey, BoothPin::Reason::Used);
+    Logger::info(QStringLiteral("[Booth] The stream on host %1 taken over with its PIN")
+                     .arg(target.hostUuid));
+    return std::nullopt;
+}
 
 ShareManager::Permissions boothPermissionsFor(const QString& level)
 {
@@ -120,86 +186,64 @@ void registerBoothRoutes(RestRouter& router, ShareManager& share, BoothPin& pins
     // In this order, and nothing further once one says no: whose stream it is,
     // the caller's buckets, its proof, then the PIN. A refusal before the PIN
     // never touches the PIN nor its count.
-    router.post(QStringLiteral("/api/booth/join"), [&share, &pins, &proofs,
-                                                    deps](const HttpRequest& req) {
-        const QJsonObject body = QJsonDocument::fromJson(req.body).object();
-        QString hostUuid;
-        BoothRoutesDeps::Stream stream;
-        if (auto refused = streamRefusal(deps, req, body, hostUuid, stream)) return *refused;
+    router.post(
+        QStringLiteral("/api/booth/join"), [&share, &pins, &proofs, deps](const HttpRequest& req) {
+            const QJsonObject body = QJsonDocument::fromJson(req.body).object();
+            QString hostUuid;
+            BoothRoutesDeps::Stream stream;
+            if (auto refused = streamRefusal(deps, req, body, hostUuid, stream)) return *refused;
 
-        const QString token = deps.sessionToken ? deps.sessionToken(req) : QString();
-        // A guest seat is held by a session: this machine without one, or a
-        // caller with none, has nothing to hold it by.
-        if (token.isEmpty()) return refusal(QStringLiteral("booth_session_required"), 403);
-        const StreamOwner caller = StreamOwner::of(req.isThisMachine, token);
-        if (stream.owner.sameAs(caller)) return refusal(QStringLiteral("own_stream"), 409);
+            const QString token = deps.sessionToken ? deps.sessionToken(req) : QString();
+            // A guest seat is held by a session: this machine without one, or a
+            // caller with none, has nothing to hold it by.
+            if (token.isEmpty()) return refusal(QStringLiteral("booth_session_required"), 403);
+            const StreamOwner caller = StreamOwner::of(req.isThisMachine, token);
+            if (stream.owner.sameAs(caller)) return refusal(QStringLiteral("own_stream"), 409);
 
-        const QString address = deps.addressKey ? deps.addressKey(req) : req.clientAddress;
-        if (const int held = pins.heldFor(token, address); held > 0) {
-            QJsonObject obj{{QStringLiteral("error"), QStringLiteral("rate_limited")},
-                            {QStringLiteral("lockout_seconds"), held}};
-            return answer(obj, 429);
-        }
-        if (auto refused = proofRefusal(proofs, deps, req, token, QStringLiteral("booth_join"),
-                                        hostUuid, body))
-            return *refused;
+            if (auto refused = pinRefusal(pins, proofs, deps, req, body, token,
+                                          QStringLiteral("booth_join"), hostUuid, stream.key))
+                return *refused;
 
-        pins.retainOnly(deps.liveStreamKeys ? deps.liveStreamKeys() : QSet<QString>{stream.key});
-        if (!pins.has(stream.key)) pins.mint(stream.key);
-        const BoothPin::Outcome outcome =
-            pins.check(stream.key, body.value(QStringLiteral("pin")).toString(), token, address);
-        if (outcome.result == BoothPin::Result::RateLimited) {
-            QJsonObject obj{{QStringLiteral("error"), QStringLiteral("rate_limited")},
-                            {QStringLiteral("lockout_seconds"), outcome.lockoutSeconds}};
-            return answer(obj, 429);
-        }
-        if (outcome.result != BoothPin::Result::Ok) {
-            QJsonObject obj{{QStringLiteral("error"), QStringLiteral("booth_pin_invalid")},
-                            {QStringLiteral("remaining"), outcome.remainingAttempts},
-                            {QStringLiteral("lockout_seconds"), outcome.lockoutSeconds}};
-            return answer(obj, 401);
-        }
+            // One seat per session on a stream: the same one again, never a second.
+            const QString holder = boothHolderOf(token);
+            QString link;
+            QString cookie;
+            int slot = share.boothSeatOf(hostUuid, holder);
+            if (slot >= 0) {
+                if (!share.reissueBound(slot, link, cookie))
+                    return refusal(QStringLiteral("room_full"), 503);
+                Logger::info(QStringLiteral("[Booth] Slot %1 handed back to its holder on host %2")
+                                 .arg(slot)
+                                 .arg(hostUuid));
+            } else {
+                slot = share.freeSlot();
+                // Room full: the PIN was right but not used, so it stays.
+                if (slot < 0) return refusal(QStringLiteral("room_full"), 503);
+                const QString level = deps.joinLevel ? deps.joinLevel() : QStringLiteral("viewer");
+                QString label = deps.machineName ? deps.machineName(token) : QString();
+                if (label.trimmed().isEmpty()) label = QStringLiteral("Guest %1").arg(slot - 1);
+                if (!share.activateBound(slot, hostUuid, stream.appId, boothPermissionsFor(level),
+                                         label, req.headers.value(QStringLiteral("user-agent")),
+                                         link, cookie))
+                    return refusal(QStringLiteral("room_full"), 503);
+                share.markHolder(slot, holder);
+                // Somebody new came in: the PIN they used is spent. A holder taking
+                // their own seat back is nobody new, and leaves it as it was.
+                pins.rotate(stream.key, BoothPin::Reason::Used);
+            }
 
-        // One seat per session on a stream: the same one again, never a second.
-        const QString holder = boothHolderOf(token);
-        QString link;
-        QString cookie;
-        int slot = share.boothSeatOf(hostUuid, holder);
-        if (slot >= 0) {
-            if (!share.reissueBound(slot, link, cookie))
-                return refusal(QStringLiteral("room_full"), 503);
-            Logger::info(QStringLiteral("[Booth] Slot %1 handed back to its holder on host %2")
-                             .arg(slot)
-                             .arg(hostUuid));
-        } else {
-            slot = share.freeSlot();
-            // Room full: the PIN was right but not used, so it stays.
-            if (slot < 0) return refusal(QStringLiteral("room_full"), 503);
-            const QString level = deps.joinLevel ? deps.joinLevel() : QStringLiteral("viewer");
-            QString label = deps.machineName ? deps.machineName(token) : QString();
-            if (label.trimmed().isEmpty()) label = QStringLiteral("Guest %1").arg(slot - 1);
-            if (!share.activateBound(slot, hostUuid, stream.appId, boothPermissionsFor(level),
-                                     label, req.headers.value(QStringLiteral("user-agent")), link,
-                                     cookie))
-                return refusal(QStringLiteral("room_full"), 503);
-            share.markHolder(slot, holder);
-            // Somebody new came in: the PIN they used is spent. A holder taking
-            // their own seat back is nobody new, and leaves it as it was.
-            pins.rotate(stream.key, BoothPin::Reason::Used);
-        }
-
-        QJsonObject obj;
-        obj[QStringLiteral("status")] = QStringLiteral("ok");
-        obj[QStringLiteral("slot")] = slot;
-        obj[QStringLiteral("url")] = QStringLiteral("/p/") + link;
-        HttpResponse resp = answer(obj);
-        // As a guest's link sets it (ShareRoutes), for as long as this browser
-        // runs: the seat itself ends with the stream.
-        resp.headers[QStringLiteral("Set-Cookie")] =
-            QStringLiteral("%1=%2; HttpOnly; Secure; Path=/; SameSite=Strict")
-                .arg(QLatin1String(ShareManager::kPlayerCookie), cookie);
-        return resp;
-    });
+            QJsonObject obj;
+            obj[QStringLiteral("status")] = QStringLiteral("ok");
+            obj[QStringLiteral("slot")] = slot;
+            obj[QStringLiteral("url")] = QStringLiteral("/p/") + link;
+            HttpResponse resp = answer(obj);
+            // As a guest's link sets it (ShareRoutes), for as long as this browser
+            // runs: the seat itself ends with the stream.
+            resp.headers[QStringLiteral("Set-Cookie")] =
+                QStringLiteral("%1=%2; HttpOnly; Secure; Path=/; SameSite=Strict")
+                    .arg(QLatin1String(ShareManager::kPlayerCookie), cookie);
+            return resp;
+        });
 
     // POST /api/booth/pin — {host_uuid, app_id?, action: "read" | "new",
     // owner_proof}: the PIN of the stream the caller is watching, or a new one.
