@@ -434,7 +434,7 @@ install_macos() {
     say "${bold}Installing to /Applications${reset} ${dim}(administrator password required)${reset}"
     need_root
     $SUDO installer -pkg "$TMP/$PKG" -target / \
-        || die "installer failed. Details: /tmp/moonlightweb-postinstall.log"
+        || die "installer failed. Details: /Library/Logs/MoonlightWeb/postinstall.log"
 
     # No symlink on PATH here: the .pkg installs an app bundle and nothing else.
     MW_CLI="/Applications/MoonlightWeb.app/Contents/MacOS/MoonlightWeb"

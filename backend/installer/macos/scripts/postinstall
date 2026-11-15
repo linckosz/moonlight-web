@@ -33,8 +33,32 @@ AGENT_LABEL="@MW_AGENT_LABEL@"
 APP="/Applications/$APP_NAME.app"
 EXE="$APP/Contents/MacOS/$APP_NAME"
 HANDOFF="/tmp/moonlightweb-provisioning" # `defaults` appends .plist
-LOG="/tmp/moonlightweb-postinstall.log"
-exec >>"$LOG" 2>&1
+
+# This script's own log: /Library/Logs/MoonlightWeb/postinstall.log, in a
+# directory root makes and only root writes to (0755, root:wheel), the file
+# 0644. It is written only when the directory and the file are what root made:
+# neither a link, both root's. Otherwise this run keeps no log.
+LOG_DIR="/Library/Logs/MoonlightWeb"
+LOG="$LOG_DIR/postinstall.log"
+owned_by_root() { [ "$(/usr/bin/stat -f %u "$1" 2>/dev/null)" = "0" ]; }
+LOG_OK=true
+[ -L "$LOG_DIR" ] && LOG_OK=false
+[ "$LOG_OK" = true ] && [ ! -e "$LOG_DIR" ] && /bin/mkdir -m 0755 "$LOG_DIR" 2>/dev/null
+if [ "$LOG_OK" = true ] && [ -d "$LOG_DIR" ] && [ ! -L "$LOG_DIR" ] && owned_by_root "$LOG_DIR"; then
+    /usr/sbin/chown root:wheel "$LOG_DIR" 2>/dev/null
+    /bin/chmod 0755 "$LOG_DIR" 2>/dev/null
+else
+    LOG_OK=false
+fi
+if [ "$LOG_OK" = true ] && { [ -e "$LOG" ] || [ -L "$LOG" ]; }; then
+    { [ -f "$LOG" ] && [ ! -L "$LOG" ] && owned_by_root "$LOG"; } || LOG_OK=false
+fi
+if [ "$LOG_OK" = true ]; then
+    exec >>"$LOG" 2>&1
+    /bin/chmod 0644 "$LOG" 2>/dev/null
+else
+    exec >/dev/null 2>&1
+fi
 echo "== postinstall $(date) =="
 
 # ── Console (GUI) user: scripts run as root, but the LaunchAgent, app-data dir
@@ -50,7 +74,31 @@ CONSOLE_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>
 echo "console user=$CONSOLE_USER uid=$CONSOLE_UID home=$CONSOLE_HOME"
 
 # ── Read the plugin hand-off (best-effort defaults; no jq/python on stock macOS).
-read_val() { /usr/bin/defaults read "$HANDOFF" "$1" 2>/dev/null; }
+#    The pane writes it in the console user's session, in /tmp. It is read only
+#    when it is that user's own ordinary file — not a link, not another kind of
+#    file, theirs, and writable by nobody else. Anything else is left unread:
+#    the defaults below apply (LAN only), and the log says so.
+HANDOFF_OK=false
+HANDOFF_FILE="$HANDOFF.plist"
+if [ -f "$HANDOFF_FILE" ] && [ ! -L "$HANDOFF_FILE" ]; then
+    HANDOFF_UID="$(/usr/bin/stat -f %u "$HANDOFF_FILE" 2>/dev/null)"
+    HANDOFF_MODE="$(/usr/bin/stat -f %Lp "$HANDOFF_FILE" 2>/dev/null)"
+    case "$HANDOFF_MODE" in
+        ''|*[!0-7]*) HANDOFF_MODE=777 ;;
+    esac
+    if [ "$CONSOLE_UID" != "0" ] && [ "$HANDOFF_UID" = "$CONSOLE_UID" ] \
+        && [ $(( 8#$HANDOFF_MODE & 8#022 )) -eq 0 ]; then
+        HANDOFF_OK=true
+    else
+        echo "handoff: $HANDOFF_FILE is not the console user's own file (uid=$HANDOFF_UID mode=$HANDOFF_MODE) — not read, defaults apply"
+    fi
+elif [ -e "$HANDOFF_FILE" ] || [ -L "$HANDOFF_FILE" ]; then
+    echo "handoff: $HANDOFF_FILE is not an ordinary file — not read, defaults apply"
+fi
+read_val() {
+    [ "$HANDOFF_OK" = true ] || return 0
+    /usr/bin/defaults read "$HANDOFF" "$1" 2>/dev/null
+}
 # Absent key → the default, so a plain `installer` CLI run (no plugin pane, no
 # hand-off) behaves as if the pane had been left alone: LAN only.
 read_flag() { # <key> <default:true|false>
@@ -62,6 +110,7 @@ read_flag() { # <key> <default:true|false>
 }
 INTERNET="$(read_flag internet false)"
 CONSENT="$(read_val consent)" # exact agreement text shown in the installer pane
+CONSENT="${CONSENT:0:4096}"    # the pane's text is a few lines: no more is kept
 # Start at login: on unless the pane's box was unticked. Absent key (CLI
 # install, older plugin) → on, which is what every install did before the box.
 AUTOSTART="$(read_flag autostart true)"
@@ -70,39 +119,62 @@ echo "handoff: internet=$INTERNET autostart=$AUTOSTART"
 # ── 1) provisioning.json, consumed and removed by the server on first run
 #    (Provisioning::applyOnce). Written into the console user's Qt
 #    AppDataLocation (~/Library/Application Support/MoonlightWeb/$APP_NAME),
-#    owned by them.
+#    by them.
 #
 #    No "sunshine" object any more: this installer installs no streaming server
 #    and pairs no local host, so there is nothing to auto-pair. applyOnce reads a
 #    missing object as auto_pair=false and marks the step skipped, so an older
 #    server given this file behaves exactly as if Skip had been clicked — and no
 #    plaintext credential is ever written to disk.
-json_escape() { printf '%s' "$1" | /usr/bin/sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+# A string as JSON takes it: control characters dropped, backslash and quote
+# escaped, a tab written \t and a line break \n.
+json_escape() {
+    printf '%s' "$1" \
+        | /usr/bin/tr -d '\000-\010\013-\037\177' \
+        | /usr/bin/sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+        | /usr/bin/awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { gsub(/\t/, "\\t"); print }'
+}
 APPDATA="$CONSOLE_HOME/Library/Application Support/MoonlightWeb/$APP_NAME"
-/bin/mkdir -p "$APPDATA"
-cat > "$APPDATA/provisioning.json" <<JSON
+AGENTS="$CONSOLE_HOME/Library/LaunchAgents"
+LOGDIR="$APPDATA/logs"
+
+# Everything under the user's home is made by that user (sudo -u), not by this
+# script, which runs as root: the directories, the two files, and the removal
+# of a LaunchAgent the box no longer asks for. They then belong to the user
+# from the start, so the app, which runs in their session, can write its
+# settings and its logs there. With nobody logged in there is no home to
+# prepare: nothing is written, and the app's own first-run page asks instead.
+as_user() { /usr/bin/sudo -u "$CONSOLE_USER" "$@"; }
+
+if [ "$CONSOLE_UID" = "0" ]; then
+    echo "no console user — no provisioning.json and no LaunchAgent written"
+else
+    as_user /bin/mkdir -p "$APPDATA" "$AGENTS" "$LOGDIR" \
+        || echo "WARN: could not create the app-data or LaunchAgents directory"
+
+    if as_user /usr/bin/tee "$APPDATA/provisioning.json" >/dev/null <<JSON
 {
   "internet_access_authorized": $INTERNET,
   "consent_message": "$(json_escape "$CONSENT")"
 }
 JSON
-/usr/sbin/chown -R "$CONSOLE_USER" "$CONSOLE_HOME/Library/Application Support/MoonlightWeb"
-echo "wrote $APPDATA/provisioning.json (internet=$INTERNET)"
+    then
+        echo "wrote $APPDATA/provisioning.json (internet=$INTERNET)"
+    else
+        echo "WARN: could not write $APPDATA/provisioning.json"
+    fi
 
-# ── 2) LaunchAgent: auto-start at login (mirrors Autostart::installLoginItem).
-#    RunAtLoad + KeepAlive/SuccessfulExit=false → relaunch on crash only, never
-#    after a clean quit. NOT bootstrapped here (we launch once below instead);
-#    launchd loads it at the next login. The same file the app's own switch
-#    (tray menu, admin page) writes and removes afterwards — so an unticked box
-#    also removes what a previous install left, rather than merely not writing.
-AGENTS="$CONSOLE_HOME/Library/LaunchAgents"
-LOGDIR="$APPDATA/logs"
-/bin/mkdir -p "$AGENTS" "$LOGDIR"
-if [ "$AUTOSTART" != "true" ]; then
-    /bin/rm -f "$AGENTS/$AGENT_LABEL.plist"
-    echo "start at login declined — no LaunchAgent"
-else
-cat > "$AGENTS/$AGENT_LABEL.plist" <<PLIST
+    # ── 2) LaunchAgent: auto-start at login (mirrors Autostart::installLoginItem).
+    #    RunAtLoad + KeepAlive/SuccessfulExit=false → relaunch on crash only,
+    #    never after a clean quit. NOT bootstrapped here (we launch once below
+    #    instead); launchd loads it at the next login. The same file the app's
+    #    own switch (tray menu, admin page) writes and removes afterwards — so
+    #    an unticked box also removes what a previous install left, rather than
+    #    merely not writing.
+    if [ "$AUTOSTART" != "true" ]; then
+        as_user /bin/rm -f "$AGENTS/$AGENT_LABEL.plist"
+        echo "start at login declined — no LaunchAgent"
+    elif as_user /usr/bin/tee "$AGENTS/$AGENT_LABEL.plist" >/dev/null <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -120,17 +192,12 @@ cat > "$AGENTS/$AGENT_LABEL.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-/usr/sbin/chown "$CONSOLE_USER" "$AGENTS/$AGENT_LABEL.plist"
-echo "wrote LaunchAgent"
+    then
+        echo "wrote LaunchAgent"
+    else
+        echo "WARN: could not write the LaunchAgent"
+    fi
 fi
-
-# ── 2a) Hand the app-data tree to the user. This script runs as root, so every
-#    dir/file created above (provisioning.json, logs/) is root-owned; the app
-#    runs in the user session and would silently fail to write settings.json,
-#    sessions.json and logs/moonlightweb.log (QFile::open reports nothing).
-/usr/sbin/chown -R "$CONSOLE_USER" "$CONSOLE_HOME/Library/Application Support/MoonlightWeb" \
-    || echo "WARN: chown app-data failed"
-echo "chowned app-data to $CONSOLE_USER"
 
 # ── 2a bis) Hand the app bundle to the user too, the way Chrome and Firefox own
 #    theirs in /Applications. The app runs as them, and owning its bundle is
@@ -167,7 +234,8 @@ if [ "$CONSOLE_UID" != "0" ] && [ -d "$OLD_APP" ] && [ ! "$OLD_APP" -ef "$APP" ]
                     /usr/bin/pkill -KILL -u "$CONSOLE_UID" -f "$OLD_PATTERN" 2>/dev/null
                     echo "stopped the old copy running from $OLD_APP"
                 fi
-                /bin/rm -rf "$OLD_APP" && echo "removed the old copy $OLD_APP ($OLD_ID)" \
+                # Under the user's home: removed by the user, like the rest there.
+                as_user /bin/rm -rf "$OLD_APP" && echo "removed the old copy $OLD_APP ($OLD_ID)" \
                     || echo "WARN: could not remove $OLD_APP"
             else
                 echo "left $OLD_APP alone: no $APP_NAME executable inside"
