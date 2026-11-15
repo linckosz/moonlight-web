@@ -251,6 +251,8 @@ add_executable(run_tests
     ${_src}/src/server/ConnectionHistory.cpp
     ${_src}/src/server/routes/LanHttpRoutes.cpp
     ${_src}/src/server/SessionPool.cpp
+    # Who started a stream, as the server knows it (issue #68).
+    ${_src}/src/server/StreamOwner.cpp
     # The single-tab control channel: the port it lands on when its own is taken.
     ${_src}/src/server/ControlChannel.cpp
     # The channel to the other programs of this install: its wire, and both of

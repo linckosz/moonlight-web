@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "server/StreamOwner.h"
+
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -60,6 +62,10 @@ public:
         // Empty for localhost, which has no session row — and every scoping
         // rule treats empty as "unknown, keep legacy behaviour".
         QString sessionToken;
+        // Who started this stream, read from the request at the start: this
+        // machine, a session, or Unknown — never inferred from an empty
+        // sessionToken above. What decides whether another device may end it.
+        StreamOwner owner;
         int appId = 0; ///< app this slot streams — players resume into it
 
         // Multi-backend routing. Unused by the GameStream path; filled once

@@ -618,6 +618,72 @@ void run_request_guard_tests()
     CHECK(lockedByNoAdmin("POST", "/api/update/start", true));
     CHECK(lockedByNoAdmin("POST", "/api/system/restart", true));
 
+    // booth_stream_pin (issue #68): the stream PIN's routes, shut whatever the
+    // verb unless the booth asked for them, share_in_booth_mode or not.
+    for (const bool share : {false, true}) {
+        CHECK(lockedByNoAdmin("POST", "/api/booth/join", share, false));
+        CHECK(lockedByNoAdmin("POST", "/api/booth/pin", share, false));
+        CHECK(lockedByNoAdmin("GET", "/api/booth/pin", share, false));
+        CHECK(lockedByNoAdmin("HEAD", "/api/booth/anything", share, false));
+        CHECK(lockedByNoAdmin("POST", "/api/booth", share, false));
+        CHECK(!lockedByNoAdmin("POST", "/api/booth/join", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/booth/pin", share, true));
+        // A whole segment, not a prefix: /api/boothx is another area.
+        CHECK(!lockedByNoAdmin("GET", "/api/boothx/pin", share, false));
+    }
+    // With it on, the PIN replaces the links: no row is opened or read again,
+    // no guest's PIN is asked, and a lifetime means nothing. What the one
+    // streaming does to a guest who joined by the PIN goes on.
+    for (const bool share : {false, true}) {
+        CHECK(lockedByNoAdmin("POST", "/api/share/slots/2/activate", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/share/slots/2/credentials", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/share/slots/2/ttl", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/share/slots/2/some-future-route", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/share/slots", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/share/player/pin", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/share/slots/2/permissions", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/share/slots/2/name", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/share/slots/2/deactivate", share, true));
+        // The proof's challenge, the guest's own routes and the owner's reads.
+        CHECK(!lockedByNoAdmin("POST", "/api/share/owner-proof", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/share/player/join", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/share/player/leave", share, true));
+        CHECK(!lockedByNoAdmin("GET", "/api/share/status", share, true));
+        // Nothing else of the booth opens with it.
+        CHECK(lockedByNoAdmin("POST", "/api/auth/validate", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/auth/pin/start", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/hosts/manual", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/hosts/uuid-1/pair", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/server/stream-disconnect", share, true));
+        CHECK(lockedByNoAdmin("POST", "/api/system/restart", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/hosts/uuid-1/start", share, true));
+        CHECK(!lockedByNoAdmin("POST", "/api/hosts/uuid-1/stop-session", share, true));
+    }
+
+    SECTION("RequestGuard — this machine, not a host session over the public domain");
+
+    {
+        // A host-key session reaching us over the public domain, through a
+        // tunnel that forwards from loopback, is "the host machine" (it may
+        // stream the booth without a PIN), but it is a browser elsewhere:
+        // localPrivilege, which HttpRequest::isThisMachine carries, stays false.
+        Request r;
+        r.method = "POST";
+        r.path = "/api/hosts/uuid-1/start";
+        r.headers = hdr({{"sec-fetch-site", "same-origin"},
+                         {"host", "mw-abc123.example.com"},
+                         {"content-type", "application/json"}});
+        r.bodySize = 12;
+        Context c;
+        c.peerLocal = true;
+        c.hostSession = true;
+        c.publicDomain = "mw-abc123.example.com";
+        const Decision d = evaluate(r, c);
+        CHECK(d.outcome == Outcome::Allow);
+        CHECK(d.hostMachine);
+        CHECK(!d.localPrivilege);
+    }
+
     SECTION("RequestGuard — the local channel is the host machine by its door, not by a name");
 
     {

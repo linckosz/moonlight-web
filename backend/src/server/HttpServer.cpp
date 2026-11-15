@@ -1336,7 +1336,8 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         });
     }
 
-    if (m_AdminLocked && RequestGuard::lockedByNoAdmin(req.method, req.path, m_BoothShare)) {
+    if (m_AdminLocked &&
+        RequestGuard::lockedByNoAdmin(req.method, req.path, m_BoothShare, m_BoothPin)) {
         QJsonObject obj;
         obj["error"] = "admin_locked";
         respond(HttpResponse::json(obj, 403));
@@ -1349,8 +1350,12 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
         noteAnsweredByAddress(req.method, req.path, isAuthenticated(req));
     req.adminLocked = m_AdminLocked;
     req.boothShare = m_AdminLocked && m_BoothShare;
+    req.boothPin = m_AdminLocked && m_BoothPin;
     req.isLocal = decision.adminPrivilege;
     req.isHostMachine = decision.hostMachine;
+    // This machine and nothing else: hostMachine also counts a host-key
+    // session over the public domain, which is a browser elsewhere.
+    req.isThisMachine = decision.localPrivilege;
     req.hostTrusted = decision.hostTrusted;
 
     // The frontend fetches the admin key here. Handled inline rather than as a
@@ -2050,11 +2055,15 @@ void HttpServer::serveLanHttp(HttpRequest req, ResponseCallback respond)
     if (!gate.cookieHeader.isEmpty()) req.headers["cookie"] = gate.cookieHeader;
     req.isLocal = false;
     req.isHostMachine = false;
+    req.isThisMachine = false;
     req.hostTrusted = false;
     req.viaTunnel = false;
     req.tunnelKey.clear();
     req.adminLocked = m_AdminLocked;
     req.boothShare = false;
+    // A stream PIN is proved with a browser's pairing key, which a device on
+    // plain HTTP has none of: the booth's PIN routes stay shut to it.
+    req.boothPin = false;
 
     if (m_AdminLocked && RequestGuard::lockedByNoAdmin(req.method, req.path, false)) {
         QJsonObject obj;

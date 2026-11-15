@@ -269,6 +269,9 @@ public:
     /// share_in_booth_mode: under --noadmin, the share slots and a guest's PIN
     /// are let through (issue #40).
     void setBoothShare(bool allowed) { m_BoothShare = allowed; }
+    /// booth_stream_pin: under --noadmin, a stream is joined or taken over with
+    /// its own PIN, and the booth's PIN routes (/api/booth/*) are let through.
+    void setBoothPin(bool on) { m_BoothPin = on; }
     AuthManager* authManager() const { return m_AuthManager; }
 
     /// Check whether the request carries a valid session cookie.
@@ -439,6 +442,7 @@ private:
     AuthManager* m_AuthManager = nullptr;
     bool m_AdminLocked = false;
     bool m_BoothShare = false;
+    bool m_BoothPin = false;
 
     /// Per-run secret required on admin writes (see adminKeyMatches). Generated
     /// in the constructor, never written to disk.

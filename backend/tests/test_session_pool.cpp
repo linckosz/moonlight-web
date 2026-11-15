@@ -322,4 +322,62 @@ void run_session_pool_tests()
         pool.at(second).worker = nullptr;
         CHECK(!pool.quitReachesAppSlot(second, host, derived, b, second));
     }
+
+    // Who started a stream (issue #68): read from the request, kept on the slot.
+    {
+        SECTION("StreamOwner");
+        using K = StreamOwner::Kind;
+        const StreamOwner machine = StreamOwner::of(true, QString());
+        const StreamOwner alice = StreamOwner::of(false, QStringLiteral("token-alice"));
+        const StreamOwner alice2 = StreamOwner::of(false, QStringLiteral("token-alice"));
+        const StreamOwner bob = StreamOwner::of(false, QStringLiteral("token-bob"));
+        const StreamOwner unknown = StreamOwner::of(false, QString());
+        CHECK(machine.kind == K::ThisMachine);
+        CHECK(machine.token.isEmpty());
+        CHECK(alice.kind == K::Session);
+        // No session and not this machine: Unknown, never "this machine".
+        CHECK(unknown.kind == K::Unknown);
+        // This machine wins over a cookie it may carry: on this machine the
+        // session gate is skipped, so that cookie was never checked.
+        const StreamOwner machineWithCookie = StreamOwner::of(true, QStringLiteral("token-bob"));
+        CHECK(machineWithCookie.kind == K::ThisMachine);
+        CHECK(machineWithCookie.token.isEmpty());
+        CHECK(!machineWithCookie.sameAs(bob));
+
+        // The table: who is the same owner as whom.
+        CHECK(machine.sameAs(machine));
+        CHECK(machine.sameAs(machineWithCookie));
+        CHECK(alice.sameAs(alice2));
+        CHECK(!alice.sameAs(bob));
+        CHECK(!alice.sameAs(machine));
+        CHECK(!machine.sameAs(alice));
+        // Unknown is nobody's equal, its own included.
+        CHECK(!unknown.sameAs(unknown));
+        CHECK(!unknown.sameAs(machine));
+        CHECK(!machine.sameAs(unknown));
+        CHECK(!alice.sameAs(unknown));
+        // A token that is a prefix of another is not the same.
+        CHECK(!alice.sameAs(StreamOwner::of(false, QStringLiteral("token-alic"))));
+        // A Session kind with no token (built by hand) matches nobody.
+        StreamOwner hollow;
+        hollow.kind = K::Session;
+        CHECK(!hollow.sameAs(hollow));
+
+        CHECK(QString::fromLatin1(StreamOwner::kindName(K::Unknown)) == QStringLiteral("unknown"));
+        CHECK(QString::fromLatin1(StreamOwner::kindName(K::ThisMachine)) ==
+              QStringLiteral("this-machine"));
+        CHECK(QString::fromLatin1(StreamOwner::kindName(K::Session)) == QStringLiteral("session"));
+
+        // A slot starts Unknown, keeps what it is given, and forgets it when freed.
+        SessionPool owners(48001, 48024, 2, 5);
+        CHECK(owners.at(0).owner.kind == K::Unknown);
+        owners.at(0).owner = alice;
+        CHECK(owners.at(0).owner.sameAs(alice2));
+        const int extra = owners.acquire();
+        owners.at(extra).owner = machine;
+        owners.release(extra);
+        CHECK(owners.at(extra).owner.kind == K::Unknown);
+        owners.release(0);
+        CHECK(owners.at(0).owner.kind == K::Unknown);
+    }
 }

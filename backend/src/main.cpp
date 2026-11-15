@@ -2697,6 +2697,16 @@ int main(int argc, char* argv[])
     server.setBoothShare(boothShare);
     if (boothShare)
         Logger::info("[Auth] Booth mode: sharing during a stream stays on (share_in_booth_mode)");
+    const bool boothPin = adminLocked && appSettings.boothStreamPin();
+    server.setBoothPin(boothPin);
+    if (boothPin)
+        Logger::info(
+            QStringLiteral("[Auth] Booth mode: a stream is joined or taken over with its "
+                           "own PIN (booth_stream_pin; joiners as %1, idle escape %2)")
+                .arg(appSettings.boothJoinLevel(),
+                     appSettings.boothTakeoverIdleMinutes() > 0
+                         ? QStringLiteral("%1 min").arg(appSettings.boothTakeoverIdleMinutes())
+                         : QStringLiteral("off")));
     // The machine's name for a signed-in session only: the entry link alone
     // does not say whose machine is behind it (HomeScreenShell.h).
     server.setHomeScreenIdentity([&appSettings, &authManager, &server](const HttpRequest& req) {
@@ -3045,6 +3055,7 @@ int main(int argc, char* argv[])
         sl.clientUniqueId.clear();
         sl.hostUuid.clear();
         sl.sessionToken.clear();
+        sl.owner = StreamOwner{};
         sl.appId = 0;
         if (onVirtualDisplay) VirtualDisplayJob::instance().releaseSoon();
         if (!old) return static_cast<StreamWorkerHost*>(nullptr);
@@ -4329,6 +4340,9 @@ int main(int argc, char* argv[])
         // A TV on plain HTTP: its own key, never a mw_session (HttpServer kept
         // nothing else on its request).
         const QString sessionToken = HttpServer::streamTokenFromRequest(req);
+        // And who that is, for the slot to keep: this machine, that session, or
+        // Unknown — never "this machine" read off an empty token.
+        const StreamOwner streamOwner = StreamOwner::of(req.isThisMachine, sessionToken);
 
         // ── Per-request streaming settings ─────────────────────────────────────
         // The browser sends its per-browser preferences (from localStorage)
@@ -5427,6 +5441,7 @@ int main(int argc, char* argv[])
                             sl.clientUniqueId.clear();
                             sl.hostUuid.clear();
                             sl.sessionToken.clear();
+                            sl.owner = StreamOwner{};
                         }
                         respond(HttpResponse::json(r, 200));
                         return;
@@ -5609,6 +5624,7 @@ int main(int argc, char* argv[])
                         sl.clientUniqueId.clear();
                         sl.hostUuid.clear();
                         sl.sessionToken.clear();
+                        sl.owner = StreamOwner{};
                         sl.coopSessionId.clear();
                         sl.appId = 0;
                     }
@@ -5627,7 +5643,7 @@ int main(int argc, char* argv[])
             const bool virtualStream = host->backendType == NativeHostBackend::typeName() &&
                                        NativeHostBackend::usesVirtualDisplay(appId);
             auto startWorker = [worker, respond, standby, reqSlot, appId, &g_Pool,
-                                &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken,
+                                &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken, streamOwner,
                                 virtualStream, signInReservationId](QJsonObject cfg) {
                 // On our virtual display: the display it took the primary role
                 // from, which turning it on (below) has just recorded in this
@@ -5674,6 +5690,7 @@ int main(int argc, char* argv[])
                 sl.clientUniqueId = uid;
                 sl.hostUuid = hostUuidCopy;
                 sl.sessionToken = sessionToken;
+                sl.owner = streamOwner;
                 sl.appId = appId;
                 // Outlives the slot — see the declaration.
                 g_LastOwnerHostUuid = hostUuidCopy;
@@ -7329,6 +7346,7 @@ int main(int argc, char* argv[])
                     sl.clientUniqueId.clear();
                     sl.hostUuid.clear();
                     sl.sessionToken.clear();
+                    sl.owner = StreamOwner{};
                     sl.coopSessionId.clear();
                     sl.appId = 0;
                     // Off the shared feed — this slot's, not a newer join's

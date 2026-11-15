@@ -635,6 +635,65 @@ void run_app_settings_tests()
         s.seedDocumentedDefaults();
     }
 
+    // A booth's stream PIN (issue #68): off unless a real true, joiners as
+    // viewers unless one of the four levels is named, and the idle escape at
+    // 15 minutes unless a whole number from 0 to 240 is.
+    {
+        QJsonObject obj = s.readAll();
+        CHECK(obj.contains("booth_stream_pin"));
+        CHECK(obj.contains("booth_join_level"));
+        CHECK(obj.contains("booth_takeover_idle_minutes"));
+        CHECK(!s.boothStreamPin());
+        CHECK(s.boothJoinLevel() == QStringLiteral("viewer"));
+        CHECK_EQ(s.boothTakeoverIdleMinutes(), 15);
+
+        obj["booth_stream_pin"] = true;
+        s.writeAll(obj);
+        CHECK(s.boothStreamPin());
+        s.seedDocumentedDefaults(); // a seed never undoes the owner's word
+        CHECK(s.boothStreamPin());
+        obj["booth_stream_pin"] = "true";
+        s.writeAll(obj);
+        CHECK(!s.boothStreamPin());
+        obj["booth_stream_pin"] = 1;
+        s.writeAll(obj);
+        CHECK(!s.boothStreamPin());
+
+        for (const char* level : {"viewer", "gamer", "desktop", "full"}) {
+            obj["booth_join_level"] = QString::fromLatin1(level);
+            s.writeAll(obj);
+            CHECK(s.boothJoinLevel() == QString::fromLatin1(level));
+        }
+        for (const QJsonValue bad :
+             {QJsonValue(QStringLiteral("Full")), QJsonValue(QStringLiteral("admin")),
+              QJsonValue(QString()), QJsonValue(3), QJsonValue(true)}) {
+            obj["booth_join_level"] = bad;
+            s.writeAll(obj);
+            CHECK(s.boothJoinLevel() == QStringLiteral("viewer"));
+        }
+
+        for (const int m : {0, 1, 15, 240}) {
+            obj["booth_takeover_idle_minutes"] = m;
+            s.writeAll(obj);
+            CHECK_EQ(s.boothTakeoverIdleMinutes(), m);
+        }
+        for (const QJsonValue bad : {QJsonValue(-1), QJsonValue(241), QJsonValue(2.5),
+                                     QJsonValue(QStringLiteral("0")), QJsonValue(false)}) {
+            obj["booth_takeover_idle_minutes"] = bad;
+            s.writeAll(obj);
+            CHECK_EQ(s.boothTakeoverIdleMinutes(), 15);
+        }
+
+        obj.remove("booth_stream_pin");
+        obj.remove("booth_join_level");
+        obj.remove("booth_takeover_idle_minutes");
+        s.writeAll(obj);
+        CHECK(!s.boothStreamPin());
+        CHECK(s.boothJoinLevel() == QStringLiteral("viewer"));
+        CHECK_EQ(s.boothTakeoverIdleMinutes(), 15);
+        s.seedDocumentedDefaults();
+    }
+
     // The native host is offered unless someone says otherwise — and an absent
     // key says nothing, which is the state every install before this setting is
     // in. Only an explicit false hides the card.

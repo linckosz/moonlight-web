@@ -338,6 +338,7 @@ add_executable(mw-server
     src/server/GuestProfile.cpp
     src/server/OwnerProof.cpp
     src/server/SessionPool.cpp
+    src/server/StreamOwner.cpp
     src/server/routes/AuthRoutes.cpp
     src/server/routes/AuthStatusRoute.cpp
     src/server/routes/HostKeyRoute.cpp

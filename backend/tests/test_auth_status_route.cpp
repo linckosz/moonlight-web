@@ -214,6 +214,32 @@ void testASessionIsReadAsBefore()
     CHECK_EQ(s.located, QStringList{QStringLiteral("203.0.113.5")});
 }
 
+void testABoothSaysWhatItOffers()
+{
+    SECTION("auth status: a booth says whether it shares, and whether by a stream PIN");
+    Server s;
+    // Not a booth: neither word, whatever the request carries.
+    HttpRequest open = direct(QStringLiteral("192.168.1.174"));
+    open.boothShare = true;
+    open.boothPin = true;
+    const QJsonObject notBooth = s.status(open);
+    CHECK(!notBooth.value("admin_locked").toBool(true));
+    CHECK(!notBooth.contains("booth_share"));
+    CHECK(!notBooth.contains("booth_pin"));
+
+    // A booth: both said, as the server set them (issue #40, issue #68).
+    for (const bool pin : {false, true}) {
+        HttpRequest booth = direct(QStringLiteral("192.168.1.174"));
+        booth.adminLocked = true;
+        booth.boothPin = pin;
+        const QJsonObject answer = s.status(booth);
+        CHECK(answer.value("admin_locked").toBool());
+        CHECK(answer.contains("booth_share"));
+        CHECK(answer.contains("booth_pin"));
+        CHECK_EQ(answer.value("booth_pin").toBool(!pin), pin);
+    }
+}
+
 } // namespace
 
 void run_auth_status_route_tests()
@@ -221,4 +247,5 @@ void run_auth_status_route_tests()
     testNamedOnThisLan();
     testTheSameAnswerForEveryoneElse();
     testASessionIsReadAsBefore();
+    testABoothSaysWhatItOffers();
 }

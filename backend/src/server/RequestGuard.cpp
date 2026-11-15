@@ -388,11 +388,17 @@ AdminTokenReply adminTokenReply(const Decision& decision, const Context& ctx, bo
     return AdminTokenReply::Deny;
 }
 
-bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllowed)
+bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllowed,
+                     bool boothPinAllowed)
 {
+    const QStringList seg = path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    // The stream PIN's doors, read or write alike: a GET there would still be
+    // a PIN route, and a booth that did not ask for them has none.
+    if (seg.size() >= 2 && seg[0] == QLatin1String("api") && seg[1] == QLatin1String("booth"))
+        return !boothPinAllowed;
+
     if (method == QLatin1String("GET") || method == QLatin1String("HEAD")) return false;
 
-    const QStringList seg = path.split(QLatin1Char('/'), Qt::SkipEmptyParts);
     if (seg.size() < 2 || seg[0] != QLatin1String("api")) return false;
     const QString& area = seg[1];
 
@@ -414,6 +420,19 @@ bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllow
         return seg.size() == 3 && doors.contains(seg[2]);
     }
     if (area == QLatin1String("share")) {
+        if (boothPinAllowed) {
+            // The stream PIN replaces the links, share_in_booth_mode or not:
+            // a row is never opened or its link read again, and no guest's PIN
+            // is asked. Level, name and removal of a guest who joined by the
+            // PIN go on; those routes check that the one streaming asks.
+            static const QStringList owners = {QStringLiteral("permissions"),
+                                               QStringLiteral("name"),
+                                               QStringLiteral("deactivate")};
+            if (seg.size() >= 3 && seg[2] == QLatin1String("slots"))
+                return seg.size() != 5 || !owners.contains(seg[4]);
+            return seg.size() == 4 && seg[2] == QLatin1String("player") &&
+                   seg[3] == QLatin1String("pin");
+        }
         if (shareAllowed) return false;
         if (seg.size() >= 3 && seg[2] == QLatin1String("slots")) return true;
         return seg.size() == 4 && seg[2] == QLatin1String("player") &&

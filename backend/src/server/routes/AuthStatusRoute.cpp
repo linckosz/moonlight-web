@@ -42,6 +42,8 @@ void registerAuthStatusRoute(RestRouter& router, AuthManager& authManager, AuthS
         obj["admin_locked"] = req.adminLocked;
         // share_in_booth_mode: the booth still offers Share during a stream.
         if (req.adminLocked) obj["booth_share"] = req.boothShare;
+        // booth_stream_pin: a stream carries its own PIN in place of Share.
+        if (req.adminLocked) obj["booth_pin"] = req.boothPin;
         // Signed in by where it is, never asked a PIN: an admin, or the booth's
         // own machine. Not to be confused with req.hostTrusted, whether the Host
         // header names this machine.

@@ -214,6 +214,30 @@ public:
 
     bool shareInBoothMode() const;
 
+    // ── A booth's stream PIN (issue #68) ─────────────────────────────────────
+    //
+    // Under --noadmin, each stream gets a PIN of its own, shown to whoever is
+    // watching it. A device this booth already knows enters it to join that
+    // stream as a guest, or to start another one in its place. Replaces the
+    // share links while it is on (share_in_booth_mode or not).
+    //
+    // File-only settings (no UI, no write route), seeded so they can be found,
+    // read once at startup:
+    //   "booth_stream_pin"             bool, DEFAULT false — only a real true;
+    //   "booth_join_level"             "viewer" | "gamer" | "desktop" | "full",
+    //                                  DEFAULT "viewer" — anything else reads as
+    //                                  "viewer";
+    //   "booth_takeover_idle_minutes"  0..240, DEFAULT 15 — how long a stream may
+    //                                  go without any input before another device
+    //                                  may start in its place without its PIN; 0
+    //                                  never. Anything else reads as 15.
+
+    bool boothStreamPin() const;
+    QString boothJoinLevel() const;
+    int boothTakeoverIdleMinutes() const;
+    static constexpr int kBoothTakeoverIdleMinutes = 15;
+    static constexpr int kBoothTakeoverIdleMaxMinutes = 240;
+
     // ── How long a remembered device stays signed in (issue #60) ─────────────
     //
     // Days of inactivity after which a session opened with "Remember me" ends

@@ -184,7 +184,15 @@ AdminTokenReply adminTokenReply(const Decision& decision, const Context& ctx, bo
 /// share slots, a guest's PIN), the admin unlock and the system actions. shareAllowed
 /// (share_in_booth_mode, issue #40) lets the share slots and a guest's PIN
 /// through, and nothing else.
-bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllowed = false);
+///
+/// boothPinAllowed (booth_stream_pin) opens the stream PIN's routes,
+/// /api/booth/*, which are shut otherwise whatever the verb. It replaces the
+/// share links rather than adding to them: no link is minted or read again and
+/// no guest's PIN is asked, while what the one streaming does to a guest who
+/// joined by the PIN (level, name, removal) goes on — each of those routes
+/// checks who asks.
+bool lockedByNoAdmin(const QString& method, const QString& path, bool shareAllowed = false,
+                     bool boothPinAllowed = false);
 
 /// Whether a session arrives over a tunnel whose browser key is not the one it
 /// was paired with (HttpServer::tunnelKeyRefused): @p boundKey is the session's

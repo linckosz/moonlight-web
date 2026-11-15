@@ -47,6 +47,12 @@ struct HttpRequest
                                 // stream (isHostMachine) without administering.
     bool boothShare = false;    // Under --noadmin, share_in_booth_mode lets the
                                 // one streaming invite guests (issue #40).
+    bool boothPin = false;      // Under --noadmin, booth_stream_pin: a stream is
+                                // joined, or taken over, with its own PIN.
+    bool isThisMachine = false; // Asked from this machine itself: loopback under
+                                // a local name with no proxy, or the local
+                                // channel. Unlike isHostMachine, never a host-key
+                                // session reaching us over the public domain.
     bool hostTrusted = false;   // The Host header names this machine (loopback,
                                 // a LAN address, an mDNS name, or our domain) —
                                 // false means we were reached under someone

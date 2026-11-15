@@ -493,6 +493,18 @@ void AppSettings::seedDocumentedDefaults()
         obj["share_in_booth_mode"] = false;
         changed = true;
     }
+    if (!obj.contains("booth_stream_pin")) {
+        obj["booth_stream_pin"] = false;
+        changed = true;
+    }
+    if (!obj.contains("booth_join_level")) {
+        obj["booth_join_level"] = QStringLiteral("viewer");
+        changed = true;
+    }
+    if (!obj.contains("booth_takeover_idle_minutes")) {
+        obj["booth_takeover_idle_minutes"] = kBoothTakeoverIdleMinutes;
+        changed = true;
+    }
     if (!obj.contains("stream_worker_enabled")) {
         obj["stream_worker_enabled"] = true;
         changed = true;
@@ -1048,6 +1060,34 @@ bool AppSettings::shareInBoothMode() const
 {
     // Only a real true, as above: letting guests into a booth is a decision.
     return readAll().value("share_in_booth_mode").toBool(false);
+}
+
+bool AppSettings::boothStreamPin() const
+{
+    // Only a real true: letting another device end someone's stream is a decision.
+    return readAll().value("booth_stream_pin").toBool(false);
+}
+
+QString AppSettings::boothJoinLevel() const
+{
+    // Whatever is not one of the four reads as the least a guest can do.
+    static const QStringList levels = {QStringLiteral("viewer"), QStringLiteral("gamer"),
+                                       QStringLiteral("desktop"), QStringLiteral("full")};
+    const QString level = readAll().value("booth_join_level").toString();
+    return levels.contains(level) ? level : QStringLiteral("viewer");
+}
+
+int AppSettings::boothTakeoverIdleMinutes() const
+{
+    // A whole number from 0 to the cap. 0 is a decision (never); anything the
+    // file holds that is not a whole number in range reads as the default, so
+    // a typo never turns the escape off nor sets it to a few seconds.
+    const QJsonValue v = readAll().value("booth_takeover_idle_minutes");
+    if (!v.isDouble()) return kBoothTakeoverIdleMinutes;
+    const double d = v.toDouble();
+    if (!(d >= 0.0 && d <= kBoothTakeoverIdleMaxMinutes) || d != std::floor(d))
+        return kBoothTakeoverIdleMinutes;
+    return static_cast<int>(d);
 }
 
 namespace {
