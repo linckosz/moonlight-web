@@ -20,6 +20,7 @@ void run_request_guard_tests();
 void run_lan_http_tests();
 void run_api_csrf_tests();
 void run_share_manager_tests();
+void run_booth_pin_tests();
 void run_pairing_binding_tests();
 void run_owner_proof_tests();
 void run_pin_binding_tests();
@@ -41,6 +42,7 @@ int main(int argc, char** argv)
     run_lan_http_tests();
     run_api_csrf_tests();
     run_share_manager_tests();
+    run_booth_pin_tests();
     run_pairing_binding_tests();
     run_owner_proof_tests();
     run_pin_binding_tests();

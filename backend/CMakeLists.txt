@@ -336,6 +336,7 @@ add_executable(mw-server
     src/server/RestRouter.cpp
     src/server/ShareManager.cpp
     src/server/GuestProfile.cpp
+    src/server/BoothPin.cpp
     src/server/OwnerProof.cpp
     src/server/SessionPool.cpp
     src/server/StreamOwner.cpp
@@ -814,6 +815,7 @@ if(MW_BUILD_TESTS)
         tests/test_lan_http.cpp
         tests/test_api_csrf.cpp
         tests/test_share_manager.cpp
+        tests/test_booth_pin.cpp
         # The guard on the ViGEmBus install notice: header-only pure logic, so
         # it verifies here without a driver, a network or the native module.
         tests/test_gamepad_driver.cpp
@@ -842,6 +844,9 @@ if(MW_BUILD_TESTS)
         # purpose, so the credentials guarding a shareable link are verified on
         # every platform like the rest of the security units.
         src/server/ShareManager.cpp
+        # A booth's stream PINs: when one changes, and the buckets every try is
+        # held to (issue #68). Pure Qt Core, like the share links.
+        src/server/BoothPin.cpp
         # MW-BIND-v1: the fingerprint binding that keeps a relaying introduction
         # server out of the middle of a stream. Pulls OpenSSL in (ECDSA P-256),
         # unlike the units above — worth it: this is the check that decides
