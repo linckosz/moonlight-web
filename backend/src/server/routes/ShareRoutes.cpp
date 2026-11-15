@@ -21,6 +21,7 @@
 #include "network/LinkAddresses.h"
 #include "network/UPNPClient.h"
 #include "server/AuthManager.h"
+#include "server/QuitRefusal.h"
 #include "server/GuestProfile.h"
 #include "server/HttpServer.h"
 #include "server/NetClassify.h"
@@ -649,6 +650,11 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     router->postAsync(
         QStringLiteral("/api/share/player/join"),
         [&share, &deps, &server](const HttpRequest& req, ResponseCallback respond) {
+            // Quitting: no stream starts, nothing is touched (QuitRefusal.h).
+            if (mw::quitting()) {
+                respond(mw::quittingRefusal());
+                return;
+            }
             const QJsonObject body = QJsonDocument::fromJson(req.body).object();
             const QString token = body.value(QStringLiteral("token")).toString();
 

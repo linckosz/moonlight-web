@@ -89,6 +89,8 @@
 #include "server/LocalRequest.h"
 #include "server/OwnerLinkWait.h"
 #include "server/QuitServer.h"
+#include "common/QuitSignals.h"
+#include "server/QuitRefusal.h"
 #include "server/RestRouter.h"
 #include "server/AuthManager.h"
 #include "server/NetClassify.h"
@@ -5858,6 +5860,8 @@ int main(int argc, char* argv[])
             auto startWorker = [worker, respond, standby, reqSlot, appId, &g_Pool,
                                 &g_LastStandbyStartMs, hostUuidCopy, uid, sessionToken, streamOwner,
                                 virtualStream, signInReservationId](QJsonObject cfg) {
+                // Quitting: no new worker (common/QuitSignals.h).
+                if (mw::quitting()) return;
                 // On our virtual display: the display it took the primary role
                 // from, which turning it on (below) has just recorded in this
                 // settings file — a SYSTEM worker does not read it.
@@ -6225,6 +6229,11 @@ int main(int argc, char* argv[])
     server.router()->postAsync("/api/hosts/:id/start", [&computerManager,
                                                         startHost](const HttpRequest& req,
                                                                    ResponseCallback respond) {
+        // Quitting: no stream starts, nothing is touched on the host (QuitRefusal.h).
+        if (mw::quitting()) {
+            respond(mw::quittingRefusal());
+            return;
+        }
         NvComputer* host = computerManager.getHost(req.pathParams.value("id"));
         const QJsonObject body = QJsonDocument::fromJson(req.body).object();
         const bool native = host && host->backendType == NativeHostBackend::typeName();
@@ -7708,6 +7717,8 @@ int main(int argc, char* argv[])
                                    NativeHostBackend::usesVirtualDisplay(appId);
         auto startWorker = [worker, respond, slot, appId, &g_Pool, hostUuidCopy, uid, onFeed,
                             feedTicket, &sharedFeed, virtualStream](QJsonObject withHole) {
+            // Quitting: no new worker (common/QuitSignals.h).
+            if (mw::quitting()) return;
             // On our virtual display: the display it took the primary role
             // from, as the owner path.
             if (virtualStream) withHole["previousPrimary"] = NativeHostBackend::previousPrimary();
@@ -8710,7 +8721,36 @@ int main(int argc, char* argv[])
             Logger::error(QStringLiteral("[LocalChannel] not open: %1").arg(why));
     }
 
+#ifndef Q_OS_WIN
+    // A stop by signal (systemctl stop, the package's pkill, a shutdown, the
+    // end of a session) quits as the quit route does, so that what is held on
+    // the router is taken off below. No new stream worker after it: a signal
+    // to the service reaches its workers too, and their browsers ask again.
+    {
+        QString why;
+        const bool caught = mw::quitsignals::install(
+            &app,
+            [](int signal) {
+                Logger::info(QStringLiteral("[System] Quit asked by %1")
+                                 .arg(mw::quitsignals::nameOf(signal)));
+                mw::beginQuit();
+                mw::quitsignals::restoreDefaults();
+                QCoreApplication::exit(0);
+            },
+            &why);
+        if (!caught)
+            Logger::warning(
+                QStringLiteral("[System] Signals keep their default action: %1").arg(why));
+    }
+#endif
+
     const int exitCode = app.exec();
+    mw::beginQuit();
+#ifndef Q_OS_WIN
+    // Whatever ended the loop: a signal from here on ends the process at once,
+    // rather than being written to a pipe nobody reads any more.
+    mw::quitsignals::restoreDefaults();
+#endif
     MicUplink::setHostStateElsewhere(nullptr);
     // The router first, before anything else is torn down: what this host
     // holds there is taken off within a budget, so that an uninstall or an

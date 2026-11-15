@@ -434,14 +434,21 @@ if command -v systemctl >/dev/null 2>&1 &&
 fi
 
 # Stop a running instance so the package files are not held open. Under the
-# service, go through systemctl rather than pkill: a signal counts as a failure
-# for Restart=on-failure, so pkill would have systemd bring the old binary
-# straight back up in the middle of the file copy. `systemctl stop` is an
-# operator-initiated stop and is never restarted.
+# service, go through systemctl rather than pkill: it is the unit's own stop,
+# it waits for the server to be gone, and systemd never starts it again.
+# Either way the server is asked to quit (SIGTERM), and it takes its port
+# forwards off the router first, in a few seconds.
 if [ -n "$service_active" ]; then
     systemctl stop moonlightweb.service >/dev/null 2>&1 || true
 else
     pkill -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1 || true
+    # pkill does not wait: the server is given 8 s to be gone, in steps of
+    # half a second, and nothing harder is sent after them.
+    waited=0
+    while [ "$waited" -lt 16 ] && pgrep -f /opt/moonlightweb/bin/MoonlightWeb >/dev/null 2>&1; do
+        sleep 0.5
+        waited=$((waited + 1))
+    done
 fi
 
 # Remove the firewall ports opened at install (best-effort; skip on upgrade).

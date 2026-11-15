@@ -374,6 +374,8 @@ add_executable(mw-server
     src/common/LinuxCapabilities.cpp
     src/common/RendezvousId.cpp
     src/common/InheritedEnvironment.cpp
+    # A stop by signal quits as the quit route does (Unix), and no worker starts after it.
+    src/common/QuitSignals.cpp
     src/network/RendezvousClient.cpp
     src/network/AddressRace.cpp
     src/network/UPNPClient.cpp
@@ -855,6 +857,8 @@ if(MW_BUILD_TESTS)
         # And the routes around them, driven through the router as the server
         # registers them.
         src/server/routes/BoothRoutes.cpp
+        # The quitting state its join refuses on (common/QuitSignals.h).
+        src/common/QuitSignals.cpp
         # Who may end, replace or join someone else's stream there.
         src/server/BoothGate.cpp
         src/server/RestRouter.cpp

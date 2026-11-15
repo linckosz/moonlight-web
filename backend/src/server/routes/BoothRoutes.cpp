@@ -20,6 +20,7 @@
 #include "common/Logger.h"
 #include "server/BoothPin.h"
 #include "server/OwnerProof.h"
+#include "server/QuitRefusal.h"
 #include "server/RestRouter.h"
 
 #include <QCryptographicHash>
@@ -196,6 +197,8 @@ void registerBoothRoutes(RestRouter& router, ShareManager& share, BoothPin& pins
     // never touches the PIN nor its count.
     router.post(
         QStringLiteral("/api/booth/join"), [&share, &pins, &proofs, deps](const HttpRequest& req) {
+            // Quitting: no stream starts, nothing is touched (QuitRefusal.h).
+            if (mw::quitting()) return mw::quittingRefusal();
             const QJsonObject body = QJsonDocument::fromJson(req.body).object();
             QString hostUuid;
             BoothRoutesDeps::Stream stream;

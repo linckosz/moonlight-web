@@ -11,6 +11,7 @@
 
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
+#include "common/QuitSignals.h"
 #include "server/BoothPin.h"
 #include "server/OwnerProof.h"
 #include "server/RestRouter.h"
@@ -587,6 +588,30 @@ void testThePinNeverLeavesByTheWrongDoor()
     }
 }
 
+void testNothingStartsWhileQuitting()
+{
+    SECTION("booth routes: once the server quits, a join is refused and nothing is touched");
+    Booth b;
+    b.level = QStringLiteral("gamer");
+    const Browser sam = newBrowser();
+    b.keys.insert(QStringLiteral("sam"), sam.spki);
+    const QString pin = b.pinNow();
+    mw::beginQuit();
+    int status = 0;
+    HttpResponse raw;
+    b.join(sam, QStringLiteral("sam"), pin, &status, QStringLiteral("192.168.1.20"), &raw);
+    mw::resetQuitForTests();
+    CHECK_EQ(status, 503);
+    CHECK(QJsonDocument::fromJson(raw.body).object().value(QStringLiteral("error")).toString() ==
+          QStringLiteral("server_quitting"));
+    // No seat was given, no failure counted, and the PIN is the same one.
+    CHECK(b.reported.isEmpty());
+    CHECK(b.pinNow() == pin);
+    int again = 0;
+    b.join(sam, QStringLiteral("sam"), pin, &again);
+    CHECK_EQ(again, 200);
+}
+
 } // namespace
 
 void run_booth_routes_tests()
@@ -600,4 +625,5 @@ void run_booth_routes_tests()
     testATakeOverOfAStreamNotUpYet();
     testATakeOverHeldBackFirst();
     testThePinNeverLeavesByTheWrongDoor();
+    testNothingStartsWhileQuitting();
 }

@@ -161,6 +161,7 @@ add_executable(run_tests
     test_owner_link_wait.cpp
     test_local_request.cpp
     test_quit_server.cpp
+    test_quit_signals.cpp
     test_router_quit.cpp
     test_lan_http.cpp
     test_lan_http_pairing.cpp
@@ -262,6 +263,8 @@ add_executable(run_tests
     ${_src}/src/server/LocalChannel.cpp
     # What a script of this machine may ask through it, and what it is shown.
     ${_src}/src/server/LocalRequest.cpp
+    # A stop by signal quits as the quit route does (Unix).
+    ${_src}/src/common/QuitSignals.cpp
     ${_src}/src/common/LoopbackKey.cpp
     ${_src}/src/common/RendezvousId.cpp
     # The host's line to the introduction server, against a local stand-in:

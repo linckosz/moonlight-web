@@ -131,6 +131,8 @@ void run_owner_link_wait_tests();
 void run_local_request_tests();
 void run_quit_server_tests();
 void run_router_quit_tests();
+void run_quit_signals_tests();
+int run_quit_signals_child(int argc, char** argv);
 int run_quit_server_child(int argc, char** argv);
 int run_owned_child_sleep(int argc, char** argv);
 void run_lan_http_tests();
@@ -172,6 +174,9 @@ int main(int argc, char** argv)
         return run_quit_server_child(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "--owned-child-sleep") == 0)
         return run_owned_child_sleep(argc, argv);
+    // The signals' test (test_quit_signals.cpp): the handler as the server installs it.
+    if (argc > 1 && std::strcmp(argv[1], "--signal-child") == 0)
+        return run_quit_signals_child(argc, argv);
 
     QCoreApplication app(argc, argv);
     // Keep app data hermetic-ish for any path the units resolve internally.
@@ -293,6 +298,7 @@ int main(int argc, char** argv)
     run_local_request_tests();
     run_quit_server_tests();
     run_router_quit_tests();
+    run_quit_signals_tests();
     run_lan_http_tests();
     run_lan_http_pairing_tests();
     run_connection_history_tests();
