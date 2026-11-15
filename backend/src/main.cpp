@@ -3983,14 +3983,14 @@ int main(int argc, char* argv[])
             in.nowMs = QDateTime::currentMSecsSinceEpoch();
             in.idleMinutes = appSettings.boothTakeoverIdleMinutes();
             QList<int> apps;
-            const auto add = [&in, &apps, &boothStreamKey](const SessionPool::Slot& sl) {
-                in.inReach.append({sl.owner, boothStreamKey(sl)});
+            const auto add = [&in, &apps, &boothStreamKey](const SessionPool::Slot& sl, int slot) {
+                in.inReach.append({sl.owner, boothStreamKey(sl), slot});
                 apps.append(sl.appId);
             };
             for (int i = 0; in.keyOn && i < g_Pool.size(); ++i) {
                 const SessionPool::Slot& sl = g_Pool.at(i);
                 if (isOwnerSlot(i) && g_Pool.live(i) && sl.hostUuid == hostUuid && reaches(sl, i))
-                    add(sl);
+                    add(sl, i);
             }
             for (const BoothPendingStart& p : boothPendingStarts) {
                 if (!in.keyOn || p.hostUuid != hostUuid || in.nowMs - p.sinceMs > kBoothPendingMs)
@@ -4000,7 +4000,7 @@ int main(int argc, char* argv[])
                 pending.appId = p.appId;
                 pending.clientUniqueId = p.clientUniqueId;
                 pending.owner = p.owner;
-                if (reaches(pending, -1)) add(pending);
+                if (reaches(pending, -1)) add(pending, -1);
             }
             if (in.keyOn && g_ActiveHostUuid == hostUuid &&
                 (g_ActiveRelay || g_ActiveMediaTrackRelay || g_ActiveStreamRelay)) {
@@ -4010,7 +4010,7 @@ int main(int argc, char* argv[])
                 inProcess.clientUniqueId = g_ActiveClientUniqueId;
                 inProcess.sessionToken = g_ActiveSessionToken;
                 inProcess.owner = StreamOwner::of(false, g_ActiveSessionToken);
-                if (reaches(inProcess, -1)) add(inProcess);
+                if (reaches(inProcess, -1)) add(inProcess, -1);
             }
 
             QSet<QString> others;
@@ -4293,6 +4293,7 @@ int main(int argc, char* argv[])
         // torn down; the start then holds its place until it answers.
         QJsonObject boothNotice; // what the owners of the streams let go are told
         StreamOwner boothRequester;
+        QList<int> boothTakes; // their slots the gate counted, all ended below
         if (req.boothPin) {
             const BoothGate::Action action =
                 standby                                            ? BoothGate::Action::Standby
@@ -4316,6 +4317,7 @@ int main(int argc, char* argv[])
             }
             boothNotice = boothNoticeFor(call);
             boothRequester = call.requester;
+            boothTakes = call.decision.othersSlots;
             // In reach of the next start from here until this one answers.
             const quint64 pendingId = ++boothPendingSeq;
             boothPendingStarts.insert(pendingId, {uuid, reqAppId, device, call.requester,
@@ -4504,6 +4506,13 @@ int main(int argc, char* argv[])
                 previousWorker = detachWorkerSlot(
                     reqSlot, true, false,
                     g_Pool.at(reqSlot).owner.sameAs(boothRequester) ? QJsonObject() : boothNotice);
+            // A booth: whatever of someone else's the gate let this start
+            // through on ends with it, a stream of theirs beside slots 0 and 1
+            // too, its owner told why. What was protected is what is taken.
+            for (const int i : boothTakes) {
+                if (!g_Pool.live(i) || g_Pool.at(i).hostUuid != uuid) continue;
+                detachWorkerSlot(i, true, false, boothNotice);
+            }
         }
         if (!standby && g_ActiveRelay) {
             DataChannelRelay* old = g_ActiveRelay;
@@ -6335,16 +6344,6 @@ int main(int argc, char* argv[])
             const QString quitUniqueId =
                 sanitizeClientUniqueId(qbody["client_uniqueid"].toString());
 
-            // The page retiring a standby that was answered as streaming and
-            // never showed a picture (issue #36): this host is kept to one
-            // session from now on, across restarts.
-            if (qbody["dual_failed"].toBool(false)) {
-                g_DualSupport[host->uuid] = false;
-                if (g_SingleSessionHosts.add(host->uuid))
-                    qWarning() << "[quit] Standby never showed a picture — host" << host->name
-                               << "kept to one session from now on";
-            }
-
             // ── Worker-mode sessions ───────────────────────────────────────
             // session_slot present → tear down ONLY that slot's child (the
             // frontend's seamless switcher retires one leg of the dual stream
@@ -6375,19 +6374,33 @@ int main(int argc, char* argv[])
             // streams only, unless it comes from this machine (BoothGate). The
             // browser's id is the page's word, so it never names a stream to
             // end on its own: one it reaches that is someone else's refuses
-            // the whole Stop, its /cancel included.
+            // the whole Stop, its /cancel included. And a Stop that ends the
+            // host's app for everyone (the host-wide /cancel below) reaches
+            // every stream there, whatever id it names. Asked before anything
+            // of the host is touched or remembered.
             if (req.boothPin) {
-                const BoothCall call = boothGate(req, host->uuid, BoothGate::Action::Quit,
-                                                 [&quitUniqueId](const SessionPool::Slot& sl, int) {
-                                                     return sl.clientUniqueId.isEmpty() ||
-                                                            quitUniqueId.isEmpty() ||
-                                                            quitUniqueId == sl.clientUniqueId;
-                                                 });
+                const bool endsTheApp =
+                    !keepHostSession && host->takesHostCancel() && !quitsPerDevice(host->uuid);
+                const BoothCall call = boothGate(
+                    req, host->uuid, BoothGate::Action::Quit,
+                    [endsTheApp, &quitUniqueId](const SessionPool::Slot& sl, int) {
+                        return BoothGate::quitReaches(endsTheApp, quitUniqueId, sl.clientUniqueId);
+                    });
                 if (auto refused = boothRefusal(req, qbody, call, BoothGate::Action::Quit)) {
                     qInfo() << "[quit] Refused: it reaches another's stream in a booth";
                     respond(*refused);
                     return;
                 }
+            }
+
+            // The page retiring a standby that was answered as streaming and
+            // never showed a picture (issue #36): this host is kept to one
+            // session from now on, across restarts.
+            if (qbody["dual_failed"].toBool(false)) {
+                g_DualSupport[host->uuid] = false;
+                if (g_SingleSessionHosts.add(host->uuid))
+                    qWarning() << "[quit] Standby never showed a picture — host" << host->name
+                               << "kept to one session from now on";
             }
 
             // Anything that is not a retire ends with a Sunshine /cancel, which
@@ -6714,6 +6727,7 @@ int main(int argc, char* argv[])
             // of its own, the asking device's seat only.
             QJsonObject boothNotice;
             StreamOwner boothRequester;
+            QList<int> boothTakes;
             if (req.boothPin) {
                 const QJsonObject body = QJsonDocument::fromJson(req.body).object();
                 const QString seat =
@@ -6731,6 +6745,7 @@ int main(int argc, char* argv[])
                 }
                 boothNotice = boothNoticeFor(call);
                 boothRequester = call.requester;
+                boothTakes = call.decision.othersSlots;
             }
             // A stream of someone else's the gate let go: its owner is told why.
             const auto endSlot = [&](int i) {
@@ -6783,6 +6798,10 @@ int main(int argc, char* argv[])
             endPlayerSessions(host->uuid, ShareManager::EndReason::OwnerStop);
             for (int i : g_Pool.slotsOnHost(host->uuid, kOwnerSlots))
                 endSlot(i);
+            // And every other slot of someone else's the gate counted: a stream
+            // of theirs beside slots 0 and 1 ends here too, told why.
+            for (const int i : boothTakes)
+                if (g_Pool.live(i) && g_Pool.at(i).hostUuid == host->uuid) endSlot(i);
 
             // Sunshine's /cancel is keyed by the uniqueid that launched the
             // session, so every live one has to be named. The set is emptied

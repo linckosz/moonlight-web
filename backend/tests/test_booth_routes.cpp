@@ -485,6 +485,26 @@ void testATakeOverWithThePin()
     CHECK(r && errorOf(*r) == QStringLiteral("booth_pin_invalid"));
 }
 
+void testATakeOverOfAStreamNotUpYet()
+{
+    SECTION("booth routes: a stream not up yet has no PIN to try, and nothing is counted");
+    Booth b;
+    const Browser sam = newBrowser();
+    b.keys.insert(QStringLiteral("sam"), sam.spki);
+    b.stream.live = false;
+    // One proof, sent again and again: never looked at, so never spent.
+    const QJsonObject body = b.takeOverBody(sam, QStringLiteral("sam"), QStringLiteral("000000"));
+    for (int i = 0; i < 6; ++i) {
+        const std::optional<HttpResponse> r = b.takeOver(body, QStringLiteral("sam"));
+        CHECK(r && r->statusCode == 409 && errorOf(*r) == QStringLiteral("booth_pin_required"));
+    }
+    // No bucket moved, no PIN made for it, the proof still unspent.
+    CHECK_EQ(b.pins.heldFor(QStringLiteral("sam"), QStringLiteral("192.168.1.20")), 0);
+    CHECK(!b.pins.has(b.stream.key));
+    CHECK_EQ(b.proofs.pendingCount(), 1);
+    CHECK(b.reported.isEmpty());
+}
+
 void testATakeOverHeldBackFirst()
 {
     SECTION("booth routes: a take-over held back is refused before its proof is spent");
@@ -577,6 +597,7 @@ void run_booth_routes_tests()
     testHeldBackBeforeTheProof();
     testWhoReadsThePin();
     testATakeOverWithThePin();
+    testATakeOverOfAStreamNotUpYet();
     testATakeOverHeldBackFirst();
     testThePinNeverLeavesByTheWrongDoor();
 }

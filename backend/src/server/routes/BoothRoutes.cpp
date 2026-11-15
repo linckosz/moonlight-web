@@ -133,12 +133,20 @@ std::optional<HttpResponse> boothTakeoverRefusal(BoothPin& pins, OwnerProof& pro
 {
     // Asked first, and nothing counted: the page learns whose stream is in the
     // way and what it streams, and asks its user for the PIN.
-    if (!body.contains(QStringLiteral("booth_pin"))) {
+    const auto required = [&target]() {
         QJsonObject obj{{QStringLiteral("error"), QStringLiteral("booth_pin_required")},
                         {QStringLiteral("owner"), target.ownerName},
                         {QStringLiteral("app_id"), target.appId}};
         return answer(obj, 409);
-    }
+    };
+    if (!body.contains(QStringLiteral("booth_pin"))) return required();
+    // A stream that is not up (a start on its way, the stream this process
+    // runs itself) has no PIN anybody can read: nothing to try, and nothing
+    // counted against the caller. Asked again, it is the PIN of the stream
+    // once it is up.
+    const QSet<QString> live =
+        deps.liveStreamKeys ? deps.liveStreamKeys() : QSet<QString>{target.streamKey};
+    if (!live.contains(target.streamKey)) return required();
     const QString token = deps.sessionToken ? deps.sessionToken(req) : QString();
     if (token.isEmpty()) return refusal(QStringLiteral("booth_session_required"), 403);
     // The PIN under the name the join route reads it by.
