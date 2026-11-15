@@ -288,10 +288,15 @@ def main():
         # patch has to land before the reload, not after. mw-lang is pinned so
         # the overlay's labels — which `stats` scrapes — read the same on every
         # machine of the fleet, and mw_perf_diag so the once-a-second [perf]
-        # line exists to be collected.
+        # line exists to be collected. mw_codec_auto marks the front's one move
+        # of a stored HEVC to Auto as done: a fresh bench profile stores its
+        # first settings here, and without it the reload below turned the
+        # "hevc" just written into "auto" (CodecAuto.js), so the pass would
+        # not have measured the codec it asked for.
         print(c.eval(f"""(() => {{
             const s = JSON.parse(localStorage.getItem('mw-streaming-settings') || '{{}}');
             Object.assign(s, {args[0]});
+            localStorage.setItem('mw_codec_auto', '1');
             localStorage.setItem('mw-streaming-settings', JSON.stringify(s));
             localStorage.setItem('mw-lang', 'en');
             localStorage.setItem('mw_perf_diag', '1');
