@@ -21,6 +21,7 @@
 #include "backend/streambackend/NativeProbeService.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
+#include "common/PrivilegedPlace.h"
 #include "common/WinSystemPath.h"
 #include "mw/native/Capabilities.h"
 #include "mw/native/VirtualDisplay.h"
@@ -51,7 +52,10 @@ QString stagingDir()
     // Per-user and under the edition's own name, like SelfUpdater and
     // GamepadDriver: an elevated task registered for this user runs a fixed
     // command, and a DEV install must never stage into production's.
-    const QString base = qEnvironmentVariable("LOCALAPPDATA");
+    // Asked of the system for this process's own account, not read from the
+    // environment: the server and the elevated helper each work it out, and
+    // come to the same directory.
+    const QString base = mw::place::userLocalDataDir();
     if (!base.isEmpty() && !mw::win::isUnderSystem32(base))
         return base + QLatin1Char('/') + mw::edition::productName() + QStringLiteral("/vdisplay");
     // A service has SYSTEM's profile, under System32. The install directory is

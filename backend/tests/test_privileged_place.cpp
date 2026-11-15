@@ -13,7 +13,10 @@
  * file with a single name, in one of those directories; the logger says so and
  * comes back when the file can be had. A delete never goes through a junction.
  * The archive of logs reads this process's directory and, for a process with
- * its user's rights, that account's own directory under host-data.
+ * its user's rights, that account's own directory under host-data. In a
+ * directory shared with the user, a file is reached by its name in that
+ * directory and as itself: a link, a second name for another file or a
+ * directory in its place is refused, and what it stood for is left as it was.
  *
  * The TNR runs without the rights the real directories need, so the tests name
  * this process's own account as the one that owns and may write them
@@ -117,6 +120,15 @@ bool makeJunction(const QString& link, const QString& target)
                              {QStringLiteral("/c"), QStringLiteral("mklink"), QStringLiteral("/J"),
                               QDir::toNativeSeparators(link), QDir::toNativeSeparators(target)}) ==
            0;
+}
+
+/// A symbolic link to a file. Needs a right this account may not hold: false
+/// then, and the caller skips what it wanted it for.
+bool makeSymlink(const QString& link, const QString& target)
+{
+    return CreateSymbolicLinkW(QDir::toNativeSeparators(link).toStdWString().c_str(),
+                               QDir::toNativeSeparators(target).toStdWString().c_str(),
+                               0x2 /* SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE */) != 0;
 }
 
 bool makeHardLink(const QString& link, const QString& existing)
@@ -550,6 +562,182 @@ void run_windows(const QString& tmp, const QString& me)
         CHECK(samePath(logDir(), logs)); // made again for what follows
     }
 
+    // ── A directory shared with the user ────────────────────────────────────
+    {
+        // Made the plain way: whoever may write to the directory above may
+        // write to this one.
+        const QString shared = tmp + QStringLiteral("/shared");
+        CHECK(QDir().mkpath(shared));
+        const QString witness = tmp + QStringLiteral("/witness.txt");
+        const QByteArray kept("witness-content\n");
+        CHECK(writeFile(witness, kept));
+        QString why;
+        bool missing = false;
+        {
+            const SharedDir dir(shared);
+            CHECK(dir.isOpen());
+            CHECK(dir.error().isEmpty());
+
+            // Made, written, emptied by the next write, read back.
+            CHECK(dir.write("settings.xml", "the first version, the longer one\n", &why));
+            CHECK_EQ(readFile(shared + QStringLiteral("/settings.xml")),
+                     QByteArray("the first version, the longer one\n"));
+            CHECK(dir.write("settings.xml", "second\n"));
+            CHECK_EQ(dir.read("settings.xml", 1024).value_or(QByteArray()), QByteArray("second\n"));
+            CHECK(!dir.read("absent.xml", 1024, &why, &missing).has_value());
+            CHECK(missing);
+            // In text mode, as QFile writes it.
+            QFile text;
+            CHECK(dir.open(text, "text.txt", QIODevice::WriteOnly | QIODevice::Text));
+            CHECK(text.write("a\nb\n") == 4);
+            text.close();
+            CHECK_EQ(readFile(shared + QStringLiteral("/text.txt")), QByteArray("a\r\nb\r\n"));
+
+            // A file larger than the caller reads.
+            CHECK(dir.write("big.xml", QByteArray(4096, 'x')));
+            missing = true;
+            CHECK(!dir.read("big.xml", 4095, &why, &missing).has_value());
+            CHECK(!missing);
+            CHECK(why.contains(QStringLiteral("more than")));
+            CHECK(dir.read("big.xml", 4096).has_value());
+
+            // A second name for a file somewhere else: neither written nor
+            // read, and that file keeps its content and its size. Deleted, it
+            // is the name that goes.
+            CHECK(makeHardLink(shared + QStringLiteral("/linked.xml"), witness));
+            CHECK(!dir.write("linked.xml", "overwritten\n", &why));
+            CHECK(why.contains(QStringLiteral("more than one link")));
+            CHECK(!dir.read("linked.xml", 1024, &why, &missing).has_value());
+            CHECK(!missing);
+            CHECK_EQ(readFile(witness), kept);
+            CHECK_EQ(QFileInfo(witness).size(), qint64(kept.size()));
+            CHECK(dir.remove("linked.xml"));
+            CHECK(!QFileInfo::exists(shared + QStringLiteral("/linked.xml")));
+            CHECK_EQ(readFile(witness), kept);
+
+            // A symbolic link to it: the same.
+            if (makeSymlink(shared + QStringLiteral("/symlinked.xml"), witness)) {
+                CHECK(!dir.write("symlinked.xml", "overwritten\n", &why));
+                CHECK(why.contains(QStringLiteral("reparse point")));
+                CHECK(!dir.read("symlinked.xml", 1024).has_value());
+                CHECK_EQ(readFile(witness), kept);
+                CHECK_EQ(QFileInfo(witness).size(), qint64(kept.size()));
+                CHECK(dir.remove("symlinked.xml"));
+                CHECK(!QFileInfo(shared + QStringLiteral("/symlinked.xml")).isSymLink());
+                CHECK_EQ(readFile(witness), kept);
+            } else {
+                std::fprintf(stderr, "  (no right to make a symbolic link here: that check is "
+                                     "skipped)\n");
+            }
+
+            // A directory, or a junction, where the file should be.
+            CHECK(QDir().mkdir(shared + QStringLiteral("/dir.xml")));
+            CHECK(!dir.write("dir.xml", "x", &why));
+            CHECK(!dir.read("dir.xml", 1024).has_value());
+            CHECK(!dir.remove("dir.xml"));
+            CHECK(QFileInfo(shared + QStringLiteral("/dir.xml")).isDir());
+            CHECK(makeJunction(shared + QStringLiteral("/junction.xml"), elsewhere));
+            CHECK(!dir.write("junction.xml", "x", &why));
+            CHECK(!dir.remove("junction.xml"));
+            CHECK(fileHas(elsewhere + QStringLiteral("/keep.txt"), "kept"));
+
+            // Only a name of this directory.
+            for (const char* name :
+                 {"", ".", "..", "sub/file.txt", "..\\escape.txt", "settings.xml:stream", "C:"}) {
+                CHECK(!dir.write(QLatin1String(name), "x"));
+                CHECK(!dir.remove(QLatin1String(name)));
+            }
+            CHECK(!QFileInfo::exists(tmp + QStringLiteral("/escape.txt")));
+            CHECK_EQ(dir.read("settings.xml", 1024).value_or(QByteArray()), QByteArray("second\n"));
+
+            // Held: the directory stays where it is for as long as it is used.
+            CHECK(!QDir().rename(shared, tmp + QStringLiteral("/shared-moved")));
+        }
+        CHECK(QDir().rename(shared, tmp + QStringLiteral("/shared-moved")));
+        CHECK(QDir().rename(tmp + QStringLiteral("/shared-moved"), shared));
+
+        // A junction for the directory, and a directory reached through one.
+        const QString link = tmp + QStringLiteral("/shared-link");
+        CHECK(makeJunction(link, shared));
+        CHECK(QDir().mkdir(shared + QStringLiteral("/sub")));
+        {
+            const SharedDir junction(link);
+            CHECK(!junction.isOpen());
+            CHECK(!junction.error().isEmpty());
+            CHECK(!junction.write("through.txt", "x", &why));
+            CHECK(!junction.read("settings.xml", 1024).has_value());
+            CHECK(!junction.remove("settings.xml"));
+            const SharedDir below(link + QStringLiteral("/sub"));
+            CHECK(!below.isOpen());
+        }
+        CHECK(!QFileInfo::exists(shared + QStringLiteral("/through.txt")));
+        CHECK(QFileInfo::exists(shared + QStringLiteral("/settings.xml")));
+
+        // Not there: refused, or made when asked.
+        {
+            const SharedDir absent(tmp + QStringLiteral("/shared-absent"));
+            CHECK(!absent.isOpen());
+            CHECK(!QFileInfo::exists(tmp + QStringLiteral("/shared-absent")));
+            const SharedDir made(tmp + QStringLiteral("/shared-made"), SharedDir::Owner::Any,
+                                 /*make=*/true);
+            CHECK(made.isOpen());
+            CHECK(made.write("a.txt", "a"));
+        }
+        CHECK(QFileInfo::exists(tmp + QStringLiteral("/shared-made/a.txt")));
+
+        // A directory that has to belong to the system's accounts: this
+        // account's is refused, and nothing is written in it.
+        const QString owned = tmp + QStringLiteral("/shared-owned");
+        CHECK(makeDir(owned, QStringLiteral("O:%1D:(A;OICI;FA;;;%1)").arg(me)));
+        {
+            const SharedDir trustedOwner(owned, SharedDir::Owner::System);
+            CHECK(trustedOwner.isOpen()); // this account stands in for them here
+        }
+        setForTests(app, {QStringLiteral("S-1-5-18")});
+        {
+            const SharedDir userOwned(owned, SharedDir::Owner::System);
+            CHECK(!userOwned.isOpen());
+            CHECK(userOwned.error().contains(QStringLiteral("does not belong")));
+            CHECK(!userOwned.write("owner.txt", "x"));
+            const SharedDir anyOwner(owned); // asked of no one in particular: fine
+            CHECK(anyOwner.isOpen());
+        }
+        CHECK(!QFileInfo::exists(owned + QStringLiteral("/owner.txt")));
+        setForTests(app, trusted);
+
+        // One file, for a caller that touches a single one.
+        QFile one(shared + QStringLiteral("/one.txt"));
+        CHECK(openShared(one, QIODevice::WriteOnly, &why));
+        CHECK(one.write("1") == 1);
+        one.close();
+        QFile back(shared + QStringLiteral("/one.txt"));
+        CHECK(openShared(back, QIODevice::ReadOnly));
+        CHECK_EQ(back.readAll(), QByteArray("1"));
+        back.close();
+        CHECK(removeShared(shared + QStringLiteral("/one.txt")));
+        CHECK(removeShared(shared + QStringLiteral("/one.txt"))); // not there: done
+        QFile through(link + QStringLiteral("/one.txt"));
+        CHECK(!openShared(through, QIODevice::WriteOnly, &why));
+        CHECK(!removeShared(link + QStringLiteral("/settings.xml")));
+        CHECK(QFileInfo::exists(shared + QStringLiteral("/settings.xml")));
+        CHECK(!QFileInfo::exists(shared + QStringLiteral("/one.txt")));
+
+        // A process with its user's rights: what QFile and QDir do.
+        setForTests(app, trusted, /*privileged=*/false);
+        {
+            const SharedDir user(link);
+            CHECK(user.isOpen());
+            CHECK(user.write("user.txt", "u"));
+            CHECK_EQ(user.read("user.txt", 16).value_or(QByteArray()), QByteArray("u"));
+            CHECK(user.remove("user.txt"));
+            CHECK(user.remove("user.txt"));
+        }
+        setForTests(app, trusted);
+        CHECK(removeNoFollow(link));
+        CHECK(removeNoFollow(shared + QStringLiteral("/junction.xml")));
+        CHECK(fileHas(elsewhere + QStringLiteral("/keep.txt"), "kept"));
+    }
+
     // ── The uninstaller's verb ──────────────────────────────────────────────
     {
         CHECK(writeFile(crashes + QStringLiteral("/crash-1.dmp"), "x"));
@@ -661,6 +849,41 @@ void run_posix(const QString& tmp)
     CHECK(crashDir().isEmpty());
     CHECK(QDir(elsewhere).isEmpty());
     CHECK(QFile::remove(base + QStringLiteral("/crashes")));
+
+    // A directory shared with the user: a file by its name in it, as itself.
+    {
+        const QString shared = tmp + QStringLiteral("/shared");
+        CHECK(QDir().mkpath(shared));
+        {
+            const SharedDir dir(shared);
+            CHECK(dir.isOpen());
+            CHECK(dir.write("a.txt", "the first, longer\n"));
+            CHECK(dir.write("a.txt", "one\n"));
+            CHECK_EQ(dir.read("a.txt", 64).value_or(QByteArray()), QByteArray("one\n"));
+            CHECK(!dir.read("a.txt", 3).has_value());
+            CHECK(QFile::link(outside, shared + QStringLiteral("/sym.txt")));
+            CHECK(!dir.write("sym.txt", "x"));
+            CHECK(!dir.read("sym.txt", 64).has_value());
+            CHECK(link(QFile::encodeName(outside).constData(),
+                       QFile::encodeName(shared + QStringLiteral("/hard.txt")).constData()) == 0);
+            CHECK(!dir.write("hard.txt", "x"));
+            CHECK_EQ(readFile(outside), QByteArray("untouched\n"));
+            CHECK(dir.remove("sym.txt"));
+            CHECK(dir.remove("hard.txt"));
+            CHECK(dir.remove("hard.txt"));
+            CHECK_EQ(readFile(outside), QByteArray("untouched\n"));
+            CHECK(!dir.write("../escape.txt", "x"));
+            CHECK(!QFileInfo::exists(tmp + QStringLiteral("/escape.txt")));
+        }
+        CHECK(QFile::link(shared, tmp + QStringLiteral("/shared-link")));
+        const SharedDir link(tmp + QStringLiteral("/shared-link"));
+        CHECK(!link.isOpen());
+        CHECK(!link.write("through.txt", "x"));
+        CHECK(!QFileInfo::exists(shared + QStringLiteral("/through.txt")));
+        // One that has to belong to root: the stand-in's is fine.
+        const SharedDir owned(shared, SharedDir::Owner::System);
+        CHECK(owned.isOpen());
+    }
 
     // A process with its user's rights: as it always has.
     setForTests(base, trusted, /*privileged=*/false);

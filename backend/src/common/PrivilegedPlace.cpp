@@ -34,6 +34,8 @@
 #include <windows.h>
 #include <aclapi.h>
 #include <sddl.h>
+#include <shlobj.h>
+#include <winternl.h>
 // clang-format on
 #include <fcntl.h>
 #include <io.h>
@@ -209,6 +211,22 @@ QString currentUserSid()
 {
 #ifdef Q_OS_WIN
     return tokenFacts().userSid;
+#else
+    return {};
+#endif
+}
+
+QString userLocalDataDir()
+{
+#ifdef Q_OS_WIN
+    PWSTR path = nullptr;
+    QString dir;
+    if (SUCCEEDED(
+            SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_DONT_VERIFY, nullptr, &path)) &&
+        path)
+        dir = QDir::fromNativeSeparators(QString::fromWCharArray(path));
+    CoTaskMemFree(path);
+    return dir;
 #else
     return {};
 #endif
@@ -392,6 +410,23 @@ Check checkSecurity(HANDLE h, const SidSet& trusted, bool locked)
         if ((allowed->Mask & refused) && !trusted.contains(sid)) return Check::Acl;
     }
     return Check::Ok;
+}
+
+/// Whether the object @p h is open on belongs to SYSTEM, Administrators,
+/// TrustedInstaller or one of @p trustedSids.
+bool ownedByTrusted(HANDLE h, const QStringList& trustedSids)
+{
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (GetSecurityInfo(h, SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION, &owner, nullptr, nullptr,
+                        nullptr, &sd) != ERROR_SUCCESS)
+        return false;
+    QStringList owners = trustedSids;
+    owners << QStringLiteral("S-1-5-18") << QStringLiteral("S-1-5-32-544")
+           << QString::fromWCharArray(kTrustedInstaller);
+    const bool trusted = owner && SidSet(owners).contains(owner);
+    LocalFree(sd);
+    return trusted;
 }
 
 Check openError(DWORD err)
@@ -699,6 +734,136 @@ bool privilegedWritable(const QString& dir)
     return true;
 }
 
+/// NtCreateFile, looked up rather than linked: the one call that opens a name
+/// relative to a directory handle.
+using NtCreateFileFn = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK,
+                                        PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+
+NtCreateFileFn ntCreateFile()
+{
+    static const NtCreateFileFn fn = [] {
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        return ntdll ? reinterpret_cast<NtCreateFileFn>(
+                           reinterpret_cast<void*>(GetProcAddress(ntdll, "NtCreateFile")))
+                     : nullptr;
+    }();
+    return fn;
+}
+
+/// One name, with nothing that walks to another directory or names a stream.
+bool plainName(const QString& name)
+{
+    if (name.isEmpty() || name == QLatin1String(".") || name == QLatin1String("..")) return false;
+    for (const QChar c : name)
+        if (c == QLatin1Char('\\') || c == QLatin1Char('/') || c == QLatin1Char(':')) return false;
+    return true;
+}
+
+/// @p dir opened as itself, with no FILE_SHARE_DELETE: nothing renames or
+/// replaces it while the handle is held. Invalid, and @p why set, when it is
+/// a reparse point, not a directory, a path that resolves elsewhere, or (with
+/// @p systemOwned) owned by another account than SYSTEM, Administrators,
+/// TrustedInstaller or the TNR's stand-ins.
+HANDLE openDirItself(const QString& dir, bool systemOwned, QString* why, bool* missing)
+{
+    *missing = false;
+    Handle h(CreateFileW(native(dir).c_str(),
+                         FILE_READ_ATTRIBUTES | FILE_TRAVERSE | READ_CONTROL | SYNCHRONIZE,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+                         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    if (!h.valid()) {
+        const DWORD err = GetLastError();
+        *missing = err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
+        *why = QStringLiteral("the directory cannot be opened: %1").arg(lastError(err));
+        return INVALID_HANDLE_VALUE;
+    }
+    FILE_ATTRIBUTE_TAG_INFO tag{};
+    if (!GetFileInformationByHandleEx(h.h, FileAttributeTagInfo, &tag, sizeof(tag))) {
+        *why = QStringLiteral("the directory cannot be read: %1").arg(lastError());
+        return INVALID_HANDLE_VALUE;
+    }
+    if ((tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+        !(tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        !win::samePath(win::finalPath(h.h), dir)) {
+        *why = QStringLiteral("the directory is a reparse point, or resolves elsewhere");
+        return INVALID_HANDLE_VALUE;
+    }
+    if (systemOwned && !win::ownedByTrusted(h.h, trustedSids())) {
+        *why = QStringLiteral("the directory does not belong to SYSTEM or to Administrators");
+        return INVALID_HANDLE_VALUE;
+    }
+    return h.release();
+}
+
+enum class Shared
+{
+    Read,
+    Write,
+    Delete
+};
+
+constexpr NTSTATUS kStatusNameNotFound = NTSTATUS(0xC0000034L);
+
+/// The file @p name of the directory @p dir is open on, opened as itself for
+/// @p how. A regular file with a single link (to delete one: any file, or a
+/// link as itself). @p missing: there is no such file.
+HANDLE openIn(HANDLE dir, const QString& name, Shared how, QString* why, bool* missing)
+{
+    *missing = false;
+    const NtCreateFileFn create = ntCreateFile();
+    if (!create || !plainName(name)) {
+        *why = QStringLiteral("it cannot be opened by its name in its directory");
+        return INVALID_HANDLE_VALUE;
+    }
+    std::wstring wide = name.toStdWString();
+    UNICODE_STRING uname{};
+    uname.Buffer = wide.data();
+    uname.Length = USHORT(wide.size() * sizeof(wchar_t));
+    uname.MaximumLength = uname.Length;
+    OBJECT_ATTRIBUTES attributes{};
+    InitializeObjectAttributes(&attributes, &uname, OBJ_CASE_INSENSITIVE, dir, nullptr);
+
+    ACCESS_MASK access = FILE_GENERIC_READ;
+    ULONG share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    ULONG disposition = FILE_OPEN;
+    if (how == Shared::Write) {
+        access = FILE_GENERIC_WRITE | FILE_READ_ATTRIBUTES;
+        share = FILE_SHARE_READ;
+        disposition = FILE_OPEN_IF;
+    } else if (how == Shared::Delete) {
+        access = DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+    }
+    HANDLE raw = nullptr;
+    IO_STATUS_BLOCK io{};
+    const NTSTATUS status =
+        create(&raw, access, &attributes, &io, nullptr, FILE_ATTRIBUTE_NORMAL, share, disposition,
+               FILE_NON_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
+               nullptr, 0);
+    if (status < 0) {
+        *missing = status == kStatusNameNotFound;
+        *why = QStringLiteral("it cannot be opened (status 0x%1)")
+                   .arg(quint32(status), 8, 16, QLatin1Char('0'));
+        return INVALID_HANDLE_VALUE;
+    }
+    Handle h(raw);
+    if (how == Shared::Delete) return h.release();
+
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(h.h, &info)) {
+        *why = lastError();
+        return INVALID_HANDLE_VALUE;
+    }
+    if (info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
+        *why = QStringLiteral("it is a reparse point");
+        return INVALID_HANDLE_VALUE;
+    }
+    if (info.nNumberOfLinks != 1) {
+        *why = QStringLiteral("it has more than one link");
+        return INVALID_HANDLE_VALUE;
+    }
+    return h.release();
+}
+
 /// This account's host-data\logs\<SID>, when it is there and checks out.
 QString ownHostDataLogs()
 {
@@ -818,6 +983,20 @@ QString walkChain(const QString& dir, bool make)
     for (const QString& part : missing)
         out += QLatin1Char('/') + part;
     return out;
+}
+
+/// @p dir opened as itself, never through a link: -1 when it cannot be, or
+/// (with @p systemOwned) when it does not belong to root or the TNR's
+/// stand-in.
+int openDirItself(const QString& dir, bool systemOwned)
+{
+    const int fd =
+        ::open(QFile::encodeName(dir).constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || !systemOwned) return fd;
+    struct stat st{};
+    if (fstat(fd, &st) == 0 && st.st_uid == chain().owner) return fd;
+    ::close(fd);
+    return -1;
 }
 
 QString posixPlace(const QString& leaf)
@@ -959,6 +1138,187 @@ bool openForAppend(QFile& file, QString* why)
         return refuse(file.errorString());
     }
     return true;
+}
+
+SharedDir::SharedDir(const QString& dir, Owner owner, bool make)
+    : m_Dir(QDir::cleanPath(QFileInfo(dir).absoluteFilePath()))
+    , m_Privileged(isPrivileged())
+{
+    if (!m_Privileged) {
+        m_Open = QFileInfo(m_Dir).isDir() || (make && QDir().mkpath(m_Dir));
+        if (!m_Open) m_Error = QStringLiteral("%1 is not a directory").arg(m_Dir);
+        return;
+    }
+    const bool systemOwned = owner == Owner::System;
+#ifdef Q_OS_WIN
+    bool missing = false;
+    HANDLE h = openDirItself(m_Dir, systemOwned, &m_Error, &missing);
+    if (h == INVALID_HANDLE_VALUE && missing && make) {
+        // Made with what the directory above hands down, then opened and
+        // checked like one that was there.
+        if (!CreateDirectoryW(native(m_Dir).c_str(), nullptr) &&
+            GetLastError() != ERROR_ALREADY_EXISTS) {
+            m_Error = QStringLiteral("the directory cannot be made: %1").arg(lastError());
+            return;
+        }
+        h = openDirItself(m_Dir, systemOwned, &m_Error, &missing);
+    }
+    if (h == INVALID_HANDLE_VALUE) return;
+    m_Handle = reinterpret_cast<qintptr>(h);
+#else
+    int fd = openDirItself(m_Dir, systemOwned);
+    if (fd < 0 && make && errno == ENOENT &&
+        ::mkdir(QFile::encodeName(m_Dir).constData(), 0755) == 0)
+        fd = openDirItself(m_Dir, systemOwned);
+    if (fd < 0) {
+        m_Error = QStringLiteral("the directory cannot be opened as itself, or belongs to "
+                                 "another account");
+        return;
+    }
+    m_Handle = fd;
+#endif
+    m_Error.clear();
+    m_Open = true;
+}
+
+SharedDir::~SharedDir()
+{
+    if (!m_Privileged || !m_Open) return;
+#ifdef Q_OS_WIN
+    CloseHandle(reinterpret_cast<HANDLE>(m_Handle));
+#else
+    ::close(int(m_Handle));
+#endif
+}
+
+bool SharedDir::open(QFile& file, const QString& name, QIODevice::OpenMode mode, QString* why,
+                     bool* missing) const
+{
+    QString reason;
+    bool absent = false;
+    auto refuse = [&](const QString& text) {
+        if (why) *why = text.isEmpty() ? reason : text;
+        if (missing) *missing = absent;
+        return false;
+    };
+    if (missing) *missing = false;
+    if (!m_Open) return refuse(m_Error);
+    file.setFileName(m_Dir + QLatin1Char('/') + name);
+    const bool write = mode & QIODevice::WriteOnly;
+    const QIODevice::OpenMode text = mode & QIODevice::Text;
+    if (!m_Privileged) {
+        absent = !write && !QFileInfo::exists(file.fileName());
+        const QIODevice::OpenMode plain =
+            write ? QIODevice::WriteOnly | QIODevice::Truncate : QIODevice::ReadOnly;
+        if (file.open(plain | text)) return true;
+        return refuse(file.errorString());
+    }
+
+#ifdef Q_OS_WIN
+    Handle h(openIn(reinterpret_cast<HANDLE>(m_Handle), name, write ? Shared::Write : Shared::Read,
+                    &reason, &absent));
+    if (!h.valid()) return refuse({});
+    if (write) {
+        // Emptied through the handle that was checked, and only now.
+        FILE_END_OF_FILE_INFO end{};
+        if (!SetFileInformationByHandle(h.h, FileEndOfFileInfo, &end, sizeof(end)))
+            return refuse(lastError());
+    }
+    const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h.h),
+                                   (write ? _O_WRONLY : _O_RDONLY) | _O_BINARY);
+    if (fd == -1) return refuse(QStringLiteral("the C runtime refused its handle"));
+    h.release(); // the descriptor owns it now
+#else
+    if (name.isEmpty() || name.contains(QLatin1Char('/')) || name == QLatin1String(".") ||
+        name == QLatin1String(".."))
+        return refuse(QStringLiteral("it cannot be opened by its name in its directory"));
+    // O_NONBLOCK for the open alone: a name that is a FIFO would otherwise
+    // hold this process until someone opened its other end.
+    const int fd =
+        openat(int(m_Handle), QFile::encodeName(name).constData(),
+               (write ? O_WRONLY | O_CREAT : O_RDONLY) | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0644);
+    if (fd < 0) {
+        absent = errno == ENOENT;
+        return refuse(QString::fromLocal8Bit(strerror(errno)));
+    }
+    struct stat st{};
+    const int flags = fcntl(fd, F_GETFL);
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1 || flags == -1 ||
+        fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1 || (write && ftruncate(fd, 0) != 0)) {
+        ::close(fd);
+        return refuse(QStringLiteral("it is not a regular file with one link"));
+    }
+#endif
+    if (!file.open(fd, (write ? QIODevice::WriteOnly : QIODevice::ReadOnly) | text,
+                   QFileDevice::AutoCloseHandle)) {
+#ifdef Q_OS_WIN
+        _close(fd);
+#else
+        ::close(fd);
+#endif
+        return refuse(file.errorString());
+    }
+    return true;
+}
+
+std::optional<QByteArray> SharedDir::read(const QString& name, qint64 maxBytes, QString* why,
+                                          bool* missing) const
+{
+    QFile file;
+    if (!open(file, name, QIODevice::ReadOnly, why, missing)) return std::nullopt;
+    if (file.size() > maxBytes) {
+        if (why) *why = QStringLiteral("it holds more than %1 bytes").arg(maxBytes);
+        return std::nullopt;
+    }
+    // One more byte than allowed would show a file that grew since.
+    const QByteArray data = file.read(maxBytes + 1);
+    if (data.size() > maxBytes) {
+        if (why) *why = QStringLiteral("it holds more than %1 bytes").arg(maxBytes);
+        return std::nullopt;
+    }
+    return data;
+}
+
+bool SharedDir::write(const QString& name, const QByteArray& data, QString* why) const
+{
+    QFile file;
+    if (!open(file, name, QIODevice::WriteOnly, why)) return false;
+    const bool ok = file.write(data) == data.size() && file.flush();
+    if (!ok && why) *why = file.errorString();
+    file.close();
+    return ok;
+}
+
+bool SharedDir::remove(const QString& name) const
+{
+    if (!m_Open) return false;
+    const QString path = m_Dir + QLatin1Char('/') + name;
+    if (!m_Privileged) return QFile::remove(path) || !QFileInfo::exists(path);
+#ifdef Q_OS_WIN
+    QString why;
+    bool missing = false;
+    Handle h(openIn(reinterpret_cast<HANDLE>(m_Handle), name, Shared::Delete, &why, &missing));
+    if (!h.valid()) return missing;
+    return deleteByHandle(h.h);
+#else
+    if (name.isEmpty() || name.contains(QLatin1Char('/')) || name == QLatin1String(".") ||
+        name == QLatin1String(".."))
+        return false;
+    // unlinkat removes the name itself, a link included, and no directory.
+    return unlinkat(int(m_Handle), QFile::encodeName(name).constData(), 0) == 0 || errno == ENOENT;
+#endif
+}
+
+bool openShared(QFile& file, QIODevice::OpenMode mode, QString* why)
+{
+    const QFileInfo info(file.fileName());
+    return SharedDir(info.absolutePath()).open(file, info.fileName(), mode, why);
+}
+
+bool removeShared(const QString& path)
+{
+    const QFileInfo info(path);
+    return SharedDir(info.absolutePath()).remove(info.fileName());
 }
 
 QString traceDir(const QString& logFilePath)

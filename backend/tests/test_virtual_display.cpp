@@ -266,6 +266,27 @@ void run_virtual_display_tests()
         CHECK(isOurSettings(settingsXml()));
         CHECK(isOurSettings(settingsXml(2532, 1170)));
         CHECK(!isOurSettings(QStringLiteral("<?xml version=\"1.0\"?><vdd_settings/>")));
+
+        // A file someone else wrote gets a mode added only when it reads as
+        // plain XML: well-formed, and with no document type declaration.
+        CHECK(settingsProblem(QStringLiteral("<?xml version='1.0' encoding='utf-8'?>\n"
+                                             "<vdd_settings>\n  <!-- modes -->\n  <resolutions>"
+                                             "<resolution><width>1920</width></resolution>"
+                                             "</resolutions>\n</vdd_settings>\n"))
+                  .isEmpty());
+        CHECK(settingsProblem(settingsXml()).isEmpty());
+        CHECK(settingsProblem(settingsXml(2532, 1170)).isEmpty());
+        CHECK(settingsProblem(QStringLiteral("<!DOCTYPE vdd_settings [<!ENTITY a \"b\">]>"
+                                             "<vdd_settings>&a;</vdd_settings>"))
+                  .contains(QStringLiteral("document type")));
+        CHECK(settingsProblem(QStringLiteral("<?xml version=\"1.0\"?>\n<!DOCTYPE vdd_settings "
+                                             "SYSTEM \"file:///C:/x.dtd\"><vdd_settings/>"))
+                  .contains(QStringLiteral("document type")));
+        CHECK(settingsProblem(QStringLiteral("<vdd_settings><resolutions></vdd_settings>"))
+                  .contains(QStringLiteral("well-formed")));
+        CHECK(!settingsProblem(QStringLiteral("<vdd_settings>&nowhere;</vdd_settings>")).isEmpty());
+        CHECK(!settingsProblem(QStringLiteral("not a settings file")).isEmpty());
+        CHECK(!settingsProblem(QString()).isEmpty());
     }
 
     SECTION("VirtualDisplay — another VDD's mode list gains our size and keeps its own");

@@ -22,6 +22,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QRegularExpression>
+#include <QXmlStreamReader>
 
 #include <algorithm>
 #include <cstring>
@@ -420,6 +421,29 @@ static QString settingsMarker()
 bool isOurSettings(const QString& xml)
 {
     return xml.contains(settingsMarker());
+}
+
+QString settingsProblem(const QString& xml)
+{
+    // Read token by token and nothing more: no entity is looked up anywhere,
+    // and the first document type declaration ends the reading.
+    QXmlStreamReader reader(xml);
+    bool element = false;
+    while (!reader.atEnd()) {
+        switch (reader.readNext()) {
+        case QXmlStreamReader::DTD: return QStringLiteral("it carries a document type declaration");
+        case QXmlStreamReader::EntityReference:
+            return QStringLiteral("it refers to an entity it does not define");
+        case QXmlStreamReader::StartElement: element = true; break;
+        default: break;
+        }
+    }
+    if (reader.hasError())
+        return QStringLiteral("it is not well-formed XML: %1, line %2")
+            .arg(reader.errorString())
+            .arg(reader.lineNumber());
+    if (!element) return QStringLiteral("it holds no element");
+    return {};
 }
 
 /// One `<resolution>` block in the driver's own spelling: one refresh rate,

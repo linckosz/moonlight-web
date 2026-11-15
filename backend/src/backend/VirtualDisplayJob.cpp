@@ -19,6 +19,7 @@
 
 #include "backend/streambackend/NativeProbeService.h"
 #include "common/Logger.h"
+#include "common/PrivilegedPlace.h"
 #include "mw/native/VirtualDisplay.h"
 #include "server/AppSettings.h"
 #include "streaming/ConsoleSession.h"
@@ -75,7 +76,10 @@ const char* stateName(VirtualDisplayJob::State s)
 bool discardResult()
 {
     const QString path = VirtualDisplay::resultPath();
-    if (QFile::remove(path) || !QFile::exists(path)) return true;
+    // The exchange directory's files are reached as the helper reaches them
+    // (PrivilegedPlace.h, SharedDir): it matters when this server itself runs
+    // with more rights than its user.
+    if (mw::place::removeShared(path)) return true;
     Logger::warning(QStringLiteral("[vdisplay] %1 cannot be removed — the next run's verdict "
                                    "could not be told from the last one's")
                         .arg(path));
@@ -379,7 +383,7 @@ void VirtualDisplayJob::startNext()
         fail(QStringLiteral("The virtual display's last verdict cannot be removed"));
         return;
     }
-    QFile::remove(VirtualDisplay::requestPath());
+    mw::place::removeShared(VirtualDisplay::requestPath());
     dispatch();
 }
 
@@ -414,7 +418,7 @@ void VirtualDisplayJob::fail(const QString& error)
         m_Request = *next;
         m_HelperOut.clear();
         m_NextStages.clear();
-        QFile::remove(VirtualDisplay::requestPath());
+        mw::place::removeShared(VirtualDisplay::requestPath());
         dispatch();
         return;
     }
@@ -422,7 +426,7 @@ void VirtualDisplayJob::fail(const QString& error)
     m_FinishedAt = QDateTime::currentDateTimeUtc();
     m_Poll.stop();
     m_Deadline.stop();
-    QFile::remove(VirtualDisplay::requestPath());
+    mw::place::removeShared(VirtualDisplay::requestPath());
     Logger::warning(QStringLiteral("[vdisplay] %1 failed: %2")
                         .arg(VirtualDisplay::toString(m_Request.action), error));
     setState(State::Failed);
@@ -435,7 +439,7 @@ void VirtualDisplayJob::succeed(const VirtualDisplay::Result& res)
 {
     m_Display = res.display;
     m_FinishedAt = QDateTime::currentDateTimeUtc();
-    QFile::remove(VirtualDisplay::requestPath());
+    mw::place::removeShared(VirtualDisplay::requestPath());
     AppSettings settings;
     if (m_Request.action == Action::Activate) {
         QJsonObject rec;
@@ -488,7 +492,7 @@ void VirtualDisplayJob::startGuard()
 void VirtualDisplayJob::dispatch()
 {
     QFile req(VirtualDisplay::requestPath());
-    if (!req.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    if (!mw::place::openShared(req, QIODevice::WriteOnly)) {
         fail(QStringLiteral("Cannot write the request file"));
         return;
     }
@@ -701,7 +705,7 @@ void VirtualDisplayJob::pollResult()
 
 void VirtualDisplayJob::handleResult(const VirtualDisplay::Result& res)
 {
-    QFile::remove(VirtualDisplay::resultPath());
+    mw::place::removeShared(VirtualDisplay::resultPath());
     if (!res.ok) {
         fail(res.error.isEmpty() ? QStringLiteral("The helper failed at stage %1").arg(res.stage)
                                  : res.error);

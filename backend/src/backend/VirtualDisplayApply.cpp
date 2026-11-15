@@ -20,6 +20,7 @@
 #include "backend/DriverPackage.h"
 #include "backend/VirtualDisplay.h"
 #include "common/Logger.h"
+#include "common/PrivilegedPlace.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -69,6 +70,10 @@ constexpr int kExitOk = 0;
 constexpr int kExitFailed = 1;
 constexpr int kExitReboot = 3010; // ERROR_SUCCESS_REBOOT_REQUIRED, like a driver installer
 
+/// The largest file this helper reads, in its exchange directory or in the
+/// driver's: a larger one is not what it is looked for.
+constexpr qint64 kMaxFileBytes = 1024 * 1024;
+
 struct Context
 {
     QString dir;
@@ -82,12 +87,16 @@ struct Context
 int finish(Context& ctx)
 {
     const QByteArray json = VirtualDisplay::toJson(ctx.result);
+    // Like every file of the exchange directory: by its name in that
+    // directory, as a regular file (PrivilegedPlace.h, SharedDir).
     QFile f(ctx.dir + QStringLiteral("/result.json"));
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    QString why;
+    if (mw::place::openShared(f, QIODevice::WriteOnly, &why)) {
         f.write(json);
         f.close();
     } else {
-        Logger::warning(QStringLiteral("[vdisplay-apply] cannot write %1").arg(f.fileName()));
+        Logger::warning(
+            QStringLiteral("[vdisplay-apply] cannot write %1: %2").arg(f.fileName(), why));
     }
     std::fwrite(json.constData(), 1, size_t(json.size()), stdout);
     std::fflush(stdout);
@@ -357,35 +366,91 @@ void deletePackage()
     SetupDiDestroyDeviceInfoList(set);
 }
 
-/// The modes the record says this project added to another VDD's file.
-QList<VirtualDisplay::AddedMode> readAddedModes()
+// The driver's own directory (its path is the driver's, not ours) is shared
+// with whatever else configures that driver, and an account without
+// administrator rights may write to it. This helper therefore holds it open
+// for the length of one piece of work and reaches its two files by their
+// names in it, as regular files (PrivilegedPlace.h, SharedDir). The directory
+// must belong to SYSTEM or to Administrators.
+
+using DriverDir = mw::place::SharedDir;
+
+QString driverDirPath()
 {
-    QFile f(VirtualDisplay::addedModesPath());
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return {};
-    return VirtualDisplay::parseAddedModes(QString::fromUtf8(f.readAll()));
+    return QFileInfo(VirtualDisplay::settingsXmlPath()).absolutePath();
+}
+
+QString settingsName()
+{
+    return QFileInfo(VirtualDisplay::settingsXmlPath()).fileName();
+}
+
+QString addedModesName()
+{
+    return QFileInfo(VirtualDisplay::addedModesPath()).fileName();
+}
+
+/// What to say, and to do, when the driver's directory cannot be used.
+QString driverDirRefusal(const DriverDir& dir)
+{
+    return QStringLiteral("%1 cannot be used: %2. It has to be an ordinary directory that "
+                          "belongs to Administrators or to SYSTEM — delete it, or give it to "
+                          "Administrators, then try again")
+        .arg(QDir::toNativeSeparators(dir.path()), dir.error());
+}
+
+/// A file of that directory as text, the way a QFile opened in text mode
+/// reads it. @p missing: there is no such file.
+std::optional<QString> readText(const DriverDir& dir, const QString& name, QString* why,
+                                bool* missing)
+{
+    std::optional<QByteArray> raw = dir.read(name, kMaxFileBytes, why, missing);
+    if (!raw) return std::nullopt;
+    raw->replace("\r", "");
+    return QString::fromUtf8(*raw);
+}
+
+/// And written the way a QFile opened in text mode writes it.
+bool writeText(const DriverDir& dir, const QString& name, const QString& text, QString* why)
+{
+    QByteArray data = text.toUtf8();
+    data.replace("\n", "\r\n");
+    return dir.write(name, data, why);
+}
+
+/// The modes the record says this project added to another VDD's file.
+QList<VirtualDisplay::AddedMode> readAddedModes(const DriverDir& dir)
+{
+    QString why;
+    bool missing = false;
+    const std::optional<QString> text = readText(dir, addedModesName(), &why, &missing);
+    if (!text) {
+        if (!missing)
+            Logger::warning(QStringLiteral("[vdisplay-apply] cannot read %1: %2")
+                                .arg(VirtualDisplay::addedModesPath(), why));
+        return {};
+    }
+    return VirtualDisplay::parseAddedModes(*text);
 }
 
 /// The record rewritten, or removed when it holds nothing.
-void writeAddedModes(const QList<VirtualDisplay::AddedMode>& modes)
+void writeAddedModes(const DriverDir& dir, const QList<VirtualDisplay::AddedMode>& modes)
 {
-    const QString path = VirtualDisplay::addedModesPath();
     if (modes.isEmpty()) {
-        QFile::remove(path);
+        dir.remove(addedModesName());
         return;
     }
-    QFile f(path);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        Logger::warning(QStringLiteral("[vdisplay-apply] cannot write %1").arg(path));
-        return;
-    }
-    f.write(VirtualDisplay::addedModesText(modes).toUtf8());
+    QString why;
+    if (!writeText(dir, addedModesName(), VirtualDisplay::addedModesText(modes), &why))
+        Logger::warning(QStringLiteral("[vdisplay-apply] cannot write %1: %2")
+                            .arg(VirtualDisplay::addedModesPath(), why));
 }
 
 /// @p xml with every mode the record names taken out; @p removed lists them.
-QString withoutAddedModes(const QString& xml, QStringList* removed)
+QString withoutAddedModes(const DriverDir& dir, const QString& xml, QStringList* removed)
 {
     QString out = xml;
-    for (const VirtualDisplay::AddedMode& m : readAddedModes()) {
+    for (const VirtualDisplay::AddedMode& m : readAddedModes(dir)) {
         bool changed = false;
         out =
             VirtualDisplay::settingsWithoutMode(out, m.width, m.height, m.refreshMilliHz, &changed);
@@ -405,26 +470,32 @@ QString withoutAddedModes(const QString& xml, QStringList* removed)
 void forgetAddedModes()
 {
     const QString path = VirtualDisplay::settingsXmlPath();
-    QFile f(path);
-    QString current;
-    if (f.open(QIODevice::ReadOnly | QIODevice::Text)) current = QString::fromUtf8(f.readAll());
-    f.close();
+    const DriverDir dir(driverDirPath(), DriverDir::Owner::System);
+    if (!dir.isOpen()) {
+        // No directory: nothing was added. One that cannot be used: said, and
+        // the record stays, for the next try.
+        if (QFileInfo::exists(dir.path()))
+            Logger::warning(QStringLiteral("[vdisplay-apply] %1").arg(driverDirRefusal(dir)));
+        return;
+    }
+    QString why;
+    bool missing = false;
+    const QString current = readText(dir, settingsName(), &why, &missing).value_or(QString());
     if (!current.isEmpty() && !VirtualDisplay::isOurSettings(current)) {
         QStringList removed;
-        const QString cleaned = withoutAddedModes(current, &removed);
+        const QString cleaned = withoutAddedModes(dir, current, &removed);
         if (!removed.isEmpty()) {
-            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                Logger::warning(QStringLiteral("[vdisplay-apply] cannot write %1").arg(path));
+            if (!writeText(dir, settingsName(), cleaned, &why)) {
+                Logger::warning(
+                    QStringLiteral("[vdisplay-apply] cannot write %1: %2").arg(path, why));
                 return; // the record stays, for the next try
             }
-            f.write(cleaned.toUtf8());
-            f.close();
             Logger::info(QStringLiteral("[vdisplay-apply] taken out of another VDD's mode list "
                                         "again: %1")
                              .arg(removed.join(QStringLiteral(", "))));
         }
     }
-    writeAddedModes({});
+    writeAddedModes(dir, {});
 }
 
 /// The driver's mode list, holding @p width × @p height ahead of the rest.
@@ -446,13 +517,34 @@ bool writeSettings(int width, int height, int refreshMilliHz, const QString& gpu
     *changed = false;
     const QString path = VirtualDisplay::settingsXmlPath();
     const QString wanted = VirtualDisplay::settingsXml(width, height, refreshMilliHz, gpu);
-    QFile f(path);
-    if (f.exists()) {
-        QString current;
-        if (f.open(QIODevice::ReadOnly | QIODevice::Text)) current = QString::fromUtf8(f.readAll());
-        f.close();
+    // Made when this is the driver's first file, with the access C:\ hands
+    // down, as the driver's own tools expect it.
+    const DriverDir dir(driverDirPath(), DriverDir::Owner::System, /*make=*/true);
+    if (!dir.isOpen()) {
+        *error = driverDirRefusal(dir);
+        return false;
+    }
+    QString why;
+    bool missing = false;
+    const std::optional<QString> read = readText(dir, settingsName(), &why, &missing);
+    if (!read && !missing) {
+        // There, and not a file this reads: it is not replaced unread.
+        *error = QStringLiteral("%1 cannot be read (%2) — left as it is").arg(path, why);
+        return false;
+    }
+    if (read) {
+        const QString current = *read;
         if (current == wanted) return true;
         if (!current.isEmpty() && !VirtualDisplay::isOurSettings(current)) {
+            // Someone else's file is edited only when it reads as the plain
+            // XML a mode can be added to.
+            const QString problem = VirtualDisplay::settingsProblem(current);
+            if (!problem.isEmpty()) {
+                *error = QStringLiteral("%1 is not a settings file a mode can be added to (%2) "
+                                        "— left as it is")
+                             .arg(path, problem);
+                return false;
+            }
             // Someone else's file — an owner's own VDD, or an install of ours
             // from before the marker. It keeps every one of its modes; the
             // client's is added to the list, and nothing else is touched.
@@ -462,7 +554,7 @@ bool writeSettings(int width, int height, int refreshMilliHz, const QString& gpu
             // not come up): the list must not grow from one client to the
             // next — two sizes at 240 Hz and the driver brought nothing up.
             QStringList removed;
-            const QString cleaned = withoutAddedModes(current, &removed);
+            const QString cleaned = withoutAddedModes(dir, current, &removed);
             if (!removed.isEmpty())
                 Logger::info(QStringLiteral("[vdisplay-apply] left by an earlier stream, taken "
                                             "out of another VDD's mode list: %1")
@@ -488,20 +580,18 @@ bool writeSettings(int width, int height, int refreshMilliHz, const QString& gpu
             bool added = false;
             const QString grown =
                 VirtualDisplay::settingsWithMode(cleaned, addW, addH, milli, &added);
-            writeAddedModes(added && sized ? QList<VirtualDisplay::AddedMode>{mode}
-                                           : QList<VirtualDisplay::AddedMode>{});
+            writeAddedModes(dir, added && sized ? QList<VirtualDisplay::AddedMode>{mode}
+                                                : QList<VirtualDisplay::AddedMode>{});
             if (grown == current) {
                 Logger::info(QStringLiteral("[vdisplay-apply] %1 belongs to another VDD — left as "
                                             "it is")
                                  .arg(path));
                 return true;
             }
-            if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-                *error = QStringLiteral("cannot write %1").arg(path);
+            if (!writeText(dir, settingsName(), grown, &why)) {
+                *error = QStringLiteral("cannot write %1: %2").arg(path, why);
                 return false;
             }
-            f.write(grown.toUtf8());
-            f.close();
             *changed = true;
             if (added)
                 Logger::info(QStringLiteral("[vdisplay-apply] %1x%2 at %3 Hz added to another "
@@ -513,16 +603,11 @@ bool writeSettings(int width, int height, int refreshMilliHz, const QString& gpu
                                  .arg(path));
             return true;
         }
-    } else if (!QDir().mkpath(QFileInfo(path).absolutePath())) {
-        *error = QStringLiteral("cannot create %1").arg(path);
+    }
+    if (!writeText(dir, settingsName(), wanted, &why)) {
+        *error = QStringLiteral("cannot write %1: %2").arg(path, why);
         return false;
     }
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        *error = QStringLiteral("cannot write %1").arg(path);
-        return false;
-    }
-    f.write(wanted.toUtf8());
-    f.close();
     *changed = true;
     Logger::info(QStringLiteral("[vdisplay-apply] mode list rewritten with %1x%2 at %3 Hz first, "
                                 "drawn by %4")
@@ -623,7 +708,8 @@ int stageDriver(Context& ctx)
         if (!ok) return failAt(ctx, stage, error);
         if (!othersRemain) {
             deletePackage();
-            QFile::remove(VirtualDisplay::settingsXmlPath());
+            const DriverDir dir(driverDirPath(), DriverDir::Owner::System);
+            if (dir.isOpen()) dir.remove(settingsName());
         } else {
             Logger::info(QStringLiteral(
                 "[vdisplay-apply] another node uses the driver — package and settings kept"));
@@ -865,8 +951,9 @@ bool saveTopology(const Context& ctx, QString* error)
     h.pathSize = sizeof(DISPLAYCONFIG_PATH_INFO);
     h.modeSize = sizeof(DISPLAYCONFIG_MODE_INFO);
     QFile f(topologyPath(ctx));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        *error = QStringLiteral("cannot write %1").arg(f.fileName());
+    QString why;
+    if (!mw::place::openShared(f, QIODevice::WriteOnly, &why)) {
+        *error = QStringLiteral("cannot write %1: %2").arg(f.fileName(), why);
         return false;
     }
     f.write(reinterpret_cast<const char*>(&h), sizeof(h));
@@ -880,8 +967,9 @@ bool saveTopology(const Context& ctx, QString* error)
 std::optional<Topology> loadTopology(const Context& ctx)
 {
     QFile f(topologyPath(ctx));
-    if (!f.open(QIODevice::ReadOnly)) return std::nullopt;
-    const QByteArray raw = f.readAll();
+    if (!mw::place::openShared(f, QIODevice::ReadOnly) || f.size() > kMaxFileBytes)
+        return std::nullopt;
+    const QByteArray raw = f.read(kMaxFileBytes);
     TopologyHeader h{};
     if (raw.size() < qsizetype(sizeof(h))) return std::nullopt;
     memcpy(&h, raw.constData(), sizeof(h));
@@ -1276,12 +1364,14 @@ bool othersOff(const Context& ctx)
 void setOthersOff(const Context& ctx, bool off)
 {
     if (!off) {
-        QFile::remove(othersOffPath(ctx));
+        mw::place::removeShared(othersOffPath(ctx));
         return;
     }
     QFile f(othersOffPath(ctx));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-        Logger::warning(QStringLiteral("[vdisplay-apply] cannot write %1").arg(f.fileName()));
+    QString why;
+    if (!mw::place::openShared(f, QIODevice::WriteOnly, &why))
+        Logger::warning(
+            QStringLiteral("[vdisplay-apply] cannot write %1: %2").arg(f.fileName(), why));
 }
 
 // ── Stage "snapshot": the desktop half that runs before the node goes on ──
@@ -1309,7 +1399,7 @@ int stageSnapshot(Context& ctx)
         Logger::info(QStringLiteral("[vdisplay-apply] display layout saved"));
     } else {
         // Not fatal: the primary alone is restored then (the way back below).
-        QFile::remove(topologyPath(ctx));
+        mw::place::removeShared(topologyPath(ctx));
         Logger::warning(QStringLiteral("[vdisplay-apply] display layout not saved: %1").arg(error));
     }
     return kExitOk;
@@ -1335,14 +1425,14 @@ int stageMode(Context& ctx)
                     "gone — restoring the primary only"));
             } else if (applyTopology(*saved, &error)) {
                 Logger::info(QStringLiteral("[vdisplay-apply] display layout restored"));
-                QFile::remove(topologyPath(ctx));
+                mw::place::removeShared(topologyPath(ctx));
                 setOthersOff(ctx, false);
                 return kExitOk; // the driver stage (disable) follows
             } else {
                 Logger::warning(
                     QStringLiteral("[vdisplay-apply] display layout not restored: %1").arg(error));
             }
-            QFile::remove(topologyPath(ctx));
+            mw::place::removeShared(topologyPath(ctx));
         }
         if (wereOff) {
             // An exclusive stream's displays, without the layout to put them
@@ -1631,15 +1721,31 @@ int stageMode(Context& ctx)
 int run(const QString& stageArg, const QString& dirArg)
 {
     Context ctx;
-    ctx.dir = dirArg.isEmpty() ? VirtualDisplay::stagingDir() : QDir::fromNativeSeparators(dirArg);
+    ctx.dir = VirtualDisplay::stagingDir();
     const QString stage = stageArg.isEmpty() ? QStringLiteral("all") : stageArg;
+    if (!dirArg.isEmpty()) {
+        const QString asked = QDir::cleanPath(QDir::fromNativeSeparators(dirArg));
+        // A process with more rights than its user works in the directory it
+        // works out for itself: one it is handed has to be that one.
+        if (mw::place::isPrivileged() &&
+            asked.compare(QDir::cleanPath(ctx.dir), Qt::CaseInsensitive) != 0)
+            return failAt(
+                ctx, QStringLiteral("request"),
+                QStringLiteral("%1 is not this helper's directory (%2)")
+                    .arg(QDir::toNativeSeparators(asked), QDir::toNativeSeparators(ctx.dir)));
+        ctx.dir = asked;
+    }
 
     QFile req(ctx.dir + QStringLiteral("/request.json"));
-    if (!req.open(QIODevice::ReadOnly))
+    QString why;
+    if (!mw::place::openShared(req, QIODevice::ReadOnly, &why))
         return failAt(ctx, QStringLiteral("request"),
-                      QStringLiteral("no request file at %1").arg(req.fileName()));
+                      QStringLiteral("no request file at %1 (%2)").arg(req.fileName(), why));
+    if (req.size() > kMaxFileBytes)
+        return failAt(ctx, QStringLiteral("request"),
+                      QStringLiteral("the request file at %1 is too large").arg(req.fileName()));
     QString error;
-    const auto parsed = VirtualDisplay::parseRequest(req.readAll(), &error);
+    const auto parsed = VirtualDisplay::parseRequest(req.read(kMaxFileBytes), &error);
     if (!parsed) return failAt(ctx, QStringLiteral("request"), error);
     ctx.request = *parsed;
 
@@ -1734,7 +1840,7 @@ int guard(const QString& server)
     // nothing is touched.
     const auto othersOffReadable = [&ctx] {
         QFile f(othersOffPath(ctx));
-        return f.exists() && f.open(QIODevice::ReadOnly);
+        return mw::place::openShared(f, QIODevice::ReadOnly);
     };
     Logger::info(QStringLiteral("[vdisplay-guard] watching the server (pid %1)%2")
                      .arg(pid)
@@ -1751,7 +1857,7 @@ int guard(const QString& server)
             VirtualDisplay::Request req;
             req.action = VirtualDisplay::Request::Action::Deactivate;
             QFile f(VirtualDisplay::requestPath());
-            if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            if (mw::place::openShared(f, QIODevice::WriteOnly)) {
                 f.write(VirtualDisplay::toJson(req));
                 f.close();
                 rc = run(QStringLiteral("mode"), QString());

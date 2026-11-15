@@ -21,6 +21,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
+
 /**
  * Where a process that runs with more rights than its user keeps its own
  * files: logs, crash dumps, the bench's traces.
@@ -79,6 +81,66 @@ bool openForAppend(QFile& file, QString* why = nullptr);
 /// (on Windows, @p dir and every directory up to the install directory).
 bool isWritablePlace(const QString& dir);
 
+/// A directory a privileged process shares with its user (a helper's request
+/// and its result, what it remembers from one run to the next), or with other
+/// software (a driver's settings): one that an account without administrator
+/// rights may write to.
+///
+/// In a privileged process the directory is opened as itself and held for as
+/// long as this object lives, so it stays where it is: a reparse point, or a
+/// path that resolves elsewhere, is refused. Each file is then opened by its
+/// name in that directory, as itself: a regular file with a single link, and
+/// anything else is refused. A file is emptied and deleted through the handle
+/// that was checked, never by its path. Any other process gets what QFile and
+/// QDir do.
+class SharedDir
+{
+public:
+    enum class Owner
+    {
+        Any,    ///< whoever made it
+        System, ///< SYSTEM, Administrators or TrustedInstaller (POSIX: root)
+    };
+
+    /// Open @p dir. With @p make, a directory that is missing is made first,
+    /// with the access the directory above hands down.
+    explicit SharedDir(const QString& dir, Owner owner = Owner::Any, bool make = false);
+    ~SharedDir();
+    SharedDir(const SharedDir&) = delete;
+    SharedDir& operator=(const SharedDir&) = delete;
+
+    bool isOpen() const { return m_Open; }
+    /// Why it is not open.
+    QString error() const { return m_Error; }
+    QString path() const { return m_Dir; }
+
+    /// Open the file @p name with @p mode: ReadOnly, or WriteOnly (the file is
+    /// made when missing, and emptied), with Text or without. @p missing:
+    /// there is no such file.
+    bool open(QFile& file, const QString& name, QIODevice::OpenMode mode, QString* why = nullptr,
+              bool* missing = nullptr) const;
+    /// The whole of @p name, when it holds at most @p maxBytes.
+    std::optional<QByteArray> read(const QString& name, qint64 maxBytes, QString* why = nullptr,
+                                   bool* missing = nullptr) const;
+    /// @p name holding @p data and nothing else.
+    bool write(const QString& name, const QByteArray& data, QString* why = nullptr) const;
+    /// Delete @p name, as itself. True when it is gone, or was not there.
+    bool remove(const QString& name) const;
+
+private:
+    QString m_Dir;
+    QString m_Error;
+    bool m_Open = false;
+    bool m_Privileged = false;
+    qintptr m_Handle = -1;
+};
+
+/// One file of such a directory, for a caller that touches a single one:
+/// @p file, whose name is set, opened as SharedDir::open() does.
+bool openShared(QFile& file, QIODevice::OpenMode mode, QString* why = nullptr);
+/// The file @p path deleted as SharedDir::remove() does.
+bool removeShared(const QString& path);
+
 /// Where a bench trace (a click trace, the relay's frame and audio logs) is
 /// written: beside @p logFilePath, the log this process writes. With no log,
 /// the temp directory for an unprivileged process, and nowhere (empty) for a
@@ -103,6 +165,11 @@ int removeHostData(bool withLogs);
 /// The SID string of this process's own user, empty off Windows or when the
 /// token cannot be read.
 QString currentUserSid();
+
+/// The local application data directory of this process's own account, asked
+/// of the system for its token and never read from the environment. Empty off
+/// Windows, or when it cannot be had.
+QString userLocalDataDir();
 
 // ── For the TNR ─────────────────────────────────────────────────────────────
 

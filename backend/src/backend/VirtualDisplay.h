@@ -606,6 +606,11 @@ inline bool validGpuName(const QString& name)
 /// Does this vdd_settings.xml carry our marker, i.e. did we write it?
 bool isOurSettings(const QString& xml);
 
+/// Why a vdd_settings.xml someone else wrote is not one a mode is added to:
+/// it is not well-formed XML, or it carries a document type declaration
+/// (which no settings file of the driver does). Empty when it is fine.
+QString settingsProblem(const QString& xml);
+
 /// @p existing — a settings file someone else wrote — with @p width ×
 /// @p height at @p refreshMilliHz added to its mode list, ahead of the rest, and
 /// everything else left exactly as it was. The one edit this project makes to
