@@ -1984,20 +1984,10 @@ int main(int argc, char* argv[])
             else if (qstrncmp(argv[i], "--worker-log-reader=", 20) == 0)
                 workerLogReader = QString::fromLocal8Bit(argv[i] + 20);
             else {
-                // Commands that print and exit. Both spellings again: --status
-                // and --native-bench=<spec>. Matching the bare prefix would also
-                // swallow a future --status-something, so require the boundary.
+                // Commands that print and exit (mw::edition::isTransientCommand).
                 // --update-apply too: it opens its own log once the directory
                 // only administrators can write exists (UpdateApply.h).
-                for (const char* flag :
-                     {"--native-bench", "--status", "--new-pin", "--set-admin-password",
-                      "--clear-admin-password", "--enable-internet", "--update-apply",
-                      "--open-on-desktop", "--owner-record", "--remove-host-data"}) {
-                    const size_t n = qstrlen(flag);
-                    if (qstrncmp(argv[i], flag, int(n)) == 0 &&
-                        (argv[i][n] == '\0' || argv[i][n] == '='))
-                        transient = true;
-                }
+                if (mw::edition::isTransientCommand(argv[i])) transient = true;
                 if (qstrcmp(argv[i], "--remove-host-data") == 0) removesHostData = true;
             }
         }

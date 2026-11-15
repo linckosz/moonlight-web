@@ -134,4 +134,26 @@ void run_edition_tests()
         CHECK(!payload({"--max-allowed-bitrates"}));
         CHECK(!payload({"--log", "status"}));
     }
+
+    SECTION("Edition — a command run beside the server opens no server log");
+    {
+        // The operator commands, as before.
+        for (const char* verb : {"--native-bench", "--status", "--new-pin", "--set-admin-password",
+                                 "--clear-admin-password", "--enable-internet", "--update-apply",
+                                 "--open-on-desktop", "--owner-record", "--remove-host-data"})
+            CHECK(isTransientCommand(verb));
+        // A script's local request and the link commands: a bench that loops on
+        // --local-request wrote a "server starting" into the running server's
+        // moonlightweb.log at each call.
+        for (const char* verb : {"--local-request", "--print-link", "--open-link", "--wait-link"})
+            CHECK(isTransientCommand(verb));
+        CHECK(isTransientCommand("--local-request=GET /api/auth/status"));
+        CHECK(isTransientCommand("--native-bench=hevc"));
+        // A server run, and words that only start like a command, are not.
+        for (const char* word : {"--dev", "--autostart", "--noadmin", "--log", "--port",
+                                 "--stream-worker", "--local-requests", "--print-links",
+                                 "--statusx", "status", "GET /api/auth/status", ""})
+            CHECK(!isTransientCommand(word));
+        CHECK(!isTransientCommand(nullptr));
+    }
 }

@@ -127,4 +127,11 @@ QString lanOnlyRefusal();
 /// count in both spellings, "--limit value" and "--limit=value".
 bool stdoutIsPayload(int argc, char** argv);
 
+/// Whether this command-line word is a command that runs and exits beside the
+/// server (an operator command, a script's local request, a link handed out or
+/// opened, the installer's wait): such a run opens no moonlightweb.log, the
+/// running server's own file. "--flag" and "--flag=value" both count; a word
+/// that only starts like one ("--statusx") does not.
+bool isTransientCommand(const char* arg);
+
 } // namespace mw::edition

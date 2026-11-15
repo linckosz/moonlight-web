@@ -193,4 +193,25 @@ bool stdoutIsPayload(int argc, char** argv)
     return false;
 }
 
+bool isTransientCommand(const char* arg)
+{
+    // Both spellings: --status and --native-bench=<spec>. Matching the bare
+    // prefix would also swallow a future --status-something, so the word ends
+    // there or at its '='.
+    static const char* const kTransient[] = {
+        "--native-bench", "--status", "--new-pin", "--set-admin-password", "--clear-admin-password",
+        "--enable-internet", "--update-apply", "--open-on-desktop", "--owner-record",
+        "--remove-host-data",
+        // A script's request to the running server, and the commands that hand
+        // out or open a link to it: each runs beside a server that already
+        // writes moonlightweb.log, and a run of its own there read as a start.
+        "--local-request", "--print-link", "--open-link", "--wait-link"};
+    if (!arg) return false;
+    for (const char* flag : kTransient) {
+        const std::size_t n = std::strlen(flag);
+        if (std::strncmp(arg, flag, n) == 0 && (arg[n] == '\0' || arg[n] == '=')) return true;
+    }
+    return false;
+}
+
 } // namespace mw::edition
