@@ -292,15 +292,54 @@ void run_mic_uplink_tests()
         CHECK_EQ(log->started.load(), 1);
     }
 
-    SECTION("MicUplink — refuseAllByHost reaches the other processes' hook");
+    SECTION("MicUplink — the host's word is a state, not an event");
     {
-        int asked = 0;
-        MicUplink::setRefuseElsewhere([&]() { ++asked; });
+        auto log = std::make_shared<FakeOutput::Log>();
+        const auto fake = [log](const std::string&) { return std::make_unique<FakeOutput>(log); };
+        std::vector<bool> told;
+        MicUplink::setHostStateElsewhere([&](bool allowed) { told.push_back(allowed); });
+
+        // Started before the refusal: revoked by it.
+        auto before = std::make_shared<MicUplink>("", fake);
+        std::string why;
+        CHECK(before->start(why));
         MicUplink::refuseAllByHost();
-        CHECK_EQ(asked, 1);
-        MicUplink::setRefuseElsewhere(nullptr);
+        CHECK(!MicUplink::hostAllows());
+        CHECK(before->revoked());
+        CHECK(told.size() == 1 && told[0] == false);
+
+        // Started after it (the /start passed before the refusal, the
+        // microphone opens after): refused all the same, no device opened.
+        const int opened = log->started.load();
+        auto after = std::make_shared<MicUplink>("", fake);
+        CHECK(!after->start(why));
+        CHECK(why == MicUplink::kRefusedByHost);
+        CHECK_EQ(log->started.load(), opened);
+        // Nor is anything read by one that would have been started.
+        auto f = pcmFrame(1);
+        after->onSocketFrame(f.data(), f.size());
+
+        // A worker joining the pool after the refusal is given the state, and
+        // starts nothing (what StreamWorkerMain does with micAllowed).
+        MicUplink::applyHostState(false);
+        auto inWorker = std::make_shared<MicUplink>("", fake);
+        CHECK(!inWorker->start(why));
+
+        // Allowed again: a NEW stream gets one; the revoked one stays revoked.
+        MicUplink::allowAllByHost();
+        CHECK(MicUplink::hostAllows());
+        CHECK(told.size() == 2 && told[1] == true);
+        CHECK(!before->start(why));
+        CHECK(before->revoked());
+        auto fresh = std::make_shared<MicUplink>("", fake);
+        CHECK(fresh->start(why));
+        CHECK_EQ(log->started.load(), opened + 1);
+        fresh->stop();
+
+        MicUplink::setHostStateElsewhere(nullptr);
         MicUplink::refuseAllByHost();
-        CHECK_EQ(asked, 1);
+        CHECK(told.size() == 2);
+        MicUplink::applyHostState(true); // as the other sections expect it
     }
 
     SECTION("MicCable — the cables Windows may play into, in order");

@@ -38,7 +38,9 @@ constexpr int kMaxFrames = 5760;
 // relay owns them, and one that is gone has nothing left to revoke.
 std::mutex g_LiveMutex;
 std::vector<std::weak_ptr<MicUplink>> g_Live;
-std::function<void()> g_RefuseElsewhere;
+std::function<void(bool)> g_HostStateElsewhere;
+// The host's word for this whole process (hostAllows()).
+std::atomic<bool> g_HostAllows{true};
 
 } // namespace
 
@@ -62,7 +64,7 @@ bool MicUplink::start(std::string& why)
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
     if (m_Started) return true;
-    if (revoked()) {
+    if (revoked() || !hostAllows()) {
         why = kRefusedByHost;
         return false;
     }
@@ -135,24 +137,53 @@ int MicUplink::revokeAll(const std::string& why)
     return revokedNow;
 }
 
-void MicUplink::refuseAllByHost()
+bool MicUplink::hostAllows()
 {
-    const int here = revokeAll(kRefusedByHost);
-    if (here > 0)
-        logLine("viewers' microphones refused by the host: " + std::to_string(here) +
-                " closed in this process");
-    std::function<void()> elsewhere;
-    {
-        std::lock_guard<std::mutex> lock(g_LiveMutex);
-        elsewhere = g_RefuseElsewhere;
-    }
-    if (elsewhere) elsewhere();
+    return g_HostAllows.load(std::memory_order_acquire);
 }
 
-void MicUplink::setRefuseElsewhere(std::function<void()> hook)
+void MicUplink::applyHostState(bool allowed)
+{
+    // The state first: an instance starting while the others are revoked
+    // reads it and is refused.
+    const bool was = g_HostAllows.exchange(allowed, std::memory_order_acq_rel);
+    if (was != allowed)
+        logLine(allowed ? "viewers' microphones allowed by the host"
+                        : "viewers' microphones refused by the host");
+    if (allowed) return;
+    const int here = revokeAll(kRefusedByHost);
+    if (here > 0) logLine(std::to_string(here) + " closed under a running stream");
+}
+
+namespace {
+
+void hostStateEverywhere(bool allowed)
+{
+    MicUplink::applyHostState(allowed);
+    std::function<void(bool)> elsewhere;
+    {
+        std::lock_guard<std::mutex> lock(g_LiveMutex);
+        elsewhere = g_HostStateElsewhere;
+    }
+    if (elsewhere) elsewhere(allowed);
+}
+
+} // namespace
+
+void MicUplink::allowAllByHost()
+{
+    hostStateEverywhere(true);
+}
+
+void MicUplink::refuseAllByHost()
+{
+    hostStateEverywhere(false);
+}
+
+void MicUplink::setHostStateElsewhere(std::function<void(bool allowed)> hook)
 {
     std::lock_guard<std::mutex> lock(g_LiveMutex);
-    g_RefuseElsewhere = std::move(hook);
+    g_HostStateElsewhere = std::move(hook);
 }
 
 void MicUplink::stop()
@@ -197,7 +228,7 @@ std::string MicUplink::deviceName() const
 void MicUplink::onPacket(const uint8_t* data, size_t size)
 {
     // Refused by the host: not even read.
-    if (revoked()) return;
+    if (revoked() || !hostAllows()) return;
     mw::mic::RtpPacket rtp;
     if (!mw::mic::parseRtp(data, size, rtp)) {
         if (!mw::mic::isRtcp(data, size)) {
@@ -224,7 +255,7 @@ void MicUplink::onPacket(const uint8_t* data, size_t size)
 void MicUplink::onSocketFrame(const uint8_t* data, size_t size)
 {
     // Refused by the host: not even read.
-    if (revoked()) return;
+    if (revoked() || !hostAllows()) return;
     mw::mic::MicFrame frame;
     std::lock_guard<std::mutex> lock(m_Mutex);
     if (!mw::mic::parseMicFrame(data, size, frame)) {

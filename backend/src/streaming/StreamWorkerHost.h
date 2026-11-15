@@ -186,11 +186,13 @@ public:
     /// A command for the worker's own loop, as it is (the guests' feed:
     /// {"cmd":"codec","codec":"h264"}). Fire-and-forget, like the policy.
     void sendControl(const QJsonObject& command) { sendJson(command); }
-    /// The administrator refused viewers' microphones: the worker closes the
-    /// one it carries, if any (MicUplink::revokeAll). Fire-and-forget.
-    void refuseMic()
+    /// The host's word on viewers' microphones (issue #69), given as the
+    /// worker joins the pool and at each change after: refused, it closes the
+    /// one it carries (MicUplink::applyHostState). Fire-and-forget.
+    void setMicAllowed(bool allowed)
     {
-        sendJson(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("micRefused")}});
+        sendJson(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("micAllowed")},
+                             {QStringLiteral("allowed"), allowed}});
     }
 
     bool isRunning() const;

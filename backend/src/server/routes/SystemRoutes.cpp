@@ -1624,8 +1624,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             const bool allowed = body["viewer_mic_allowed"].toBool();
             appSettings.setViewerMicAllowed(allowed);
             // At once, streams already running too: their microphone closes
-            // and the page is told why (MicUplink::refuseAllByHost).
-            if (!allowed) MicUplink::refuseAllByHost();
+            // and the page is told why. Here and in every worker
+            // (MicUplink::refuseAllByHost); allowing again is for new streams.
+            if (allowed)
+                MicUplink::allowAllByHost();
+            else
+                MicUplink::refuseAllByHost();
             obj["viewer_mic_allowed"] = allowed;
             obj["status"] = "saved";
             hadChange = true;

@@ -49,11 +49,15 @@ struct OpusDecoder;
 // instance per session; the relay holds it and stops it with its connection.
 //
 // The administrator can refuse viewers' microphones while streams run
-// (settings.json viewer_mic_allowed, issue #69): refuseAllByHost() revokes
-// every started instance of this process, and the server asks each stream
-// worker to do the same in its own. A revoked instance has closed its device,
-// drops whatever arrives after without parsing it, and has told its relay,
-// which tells the page.
+// (settings.json viewer_mic_allowed, issue #69). Whether this process takes
+// them is a STATE (hostAllows()), not an event: start() and every packet read
+// it, so an instance that starts after the refusal is refused too. The server
+// sets it from its file at startup and at each change (allowAllByHost /
+// refuseAllByHost), and gives it to each stream worker as the worker joins the
+// pool and at each change after (applyHostState). Refusing also revokes every
+// started instance: its device closes, whatever arrives after is dropped
+// unread, and its relay tells the page. A revoked instance stays revoked, even
+// once microphones are allowed again: only a new stream gets one.
 class MicUplink : public std::enable_shared_from_this<MicUplink>
 {
 public:
@@ -93,10 +97,17 @@ public:
     /// Revokes every started instance of this process. Returns how many.
     static int revokeAll(const std::string& why);
 
-    /// The administrator turned viewer_mic_allowed off: revokeAll() here, then
-    /// the hook main.cpp set, which asks every stream worker to do the same.
+    /// Whether this process takes a viewer's microphone (true until told).
+    static bool hostAllows();
+    /// Sets that state; false also revokes every started instance. What a
+    /// worker does with the server's word, and the server at startup.
+    static void applyHostState(bool allowed);
+
+    /// The administrator changed viewer_mic_allowed: applyHostState() here,
+    /// then the hook main.cpp set, which gives the state to every worker.
+    static void allowAllByHost();
     static void refuseAllByHost();
-    static void setRefuseElsewhere(std::function<void()> hook);
+    static void setHostStateElsewhere(std::function<void(bool allowed)> hook);
 
     /// One packet as Track::onMessage delivers it — RTP, or the track's RTCP,
     /// which is skipped. Any thread; serialised inside.

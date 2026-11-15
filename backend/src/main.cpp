@@ -3187,12 +3187,15 @@ int main(int argc, char* argv[])
                              worker->setInputPolicy(gamepad, keyboardMouse, hid);
                      });
 
-    // The administrator refused viewers' microphones (issue #69): after the
-    // ones in this process (MicUplink::refuseAllByHost), every stream worker
-    // closes its own. Cleared before the pool goes away.
-    MicUplink::setRefuseElsewhere([&g_Pool]() {
+    // The host's word on viewers' microphones (issue #69): this process's
+    // from the file, and each change given to every stream worker, which
+    // closes its own when refused. A worker joining the pool is given the
+    // state as it joins (below). Cleared before the pool goes away.
+    MicUplink::applyHostState(appSettings.viewerMicAllowed());
+    MicUplink::setHostStateElsewhere([&g_Pool](bool allowed) {
         for (int slot = 0; slot < kTotalSlots; ++slot)
-            if (auto* worker = g_Pool.workerAs<StreamWorkerHost>(slot)) worker->refuseMic();
+            if (auto* worker = g_Pool.workerAs<StreamWorkerHost>(slot))
+                worker->setMicAllowed(allowed);
     });
 
     // Suspend host polling whenever a relay is active, so we stop hammering
@@ -5618,6 +5621,9 @@ int main(int argc, char* argv[])
                 }
                 SessionPool::Slot& sl = g_Pool.at(reqSlot);
                 sl.worker = worker;
+                // The host's word now, which may have changed since its config
+                // was written (issue #69): every change after reaches it too.
+                worker->setMicAllowed(MicUplink::hostAllows());
                 sl.clientUniqueId = uid;
                 sl.hostUuid = hostUuidCopy;
                 sl.sessionToken = sessionToken;
@@ -7304,6 +7310,8 @@ int main(int argc, char* argv[])
             }
             SessionPool::Slot& sl = g_Pool.at(slot);
             sl.worker = worker;
+            // The host's word now, as for the owner's slots (issue #69).
+            worker->setMicAllowed(MicUplink::hostAllows());
             sl.clientUniqueId = uid;
             sl.hostUuid = hostUuidCopy;
             sl.appId = appId;
@@ -8180,7 +8188,7 @@ int main(int argc, char* argv[])
     }
 
     const int exitCode = app.exec();
-    MicUplink::setRefuseElsewhere(nullptr);
+    MicUplink::setHostStateElsewhere(nullptr);
     // The router first, before anything else is torn down: what this host
     // holds there is taken off within a budget, so that an uninstall or an
     // update that asked this process to quit (--quit-server) leaves nothing
