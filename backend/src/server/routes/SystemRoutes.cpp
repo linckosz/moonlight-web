@@ -53,6 +53,7 @@
 #include "common/Edition.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
+#include "common/QuitSignals.h"
 #include "common/RunFlags.h"
 
 #include <QCoreApplication>
@@ -995,6 +996,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         Logger::info(QStringLiteral("[System] Restart requested over loopback (%1)")
                          .arg(supervised ? QStringLiteral("supervisor respawn")
                                          : QStringLiteral("self relaunch")));
+        // From here nothing new starts in this process (common/QuitSignals.h).
+        mw::beginQuit();
 
         // Delay the exit so the HTTP response flushes over TLS before the socket
         // dies under it — otherwise the caller sees a transport error, not a 200.
@@ -1016,6 +1019,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     server.router()->post("/api/system/quit", [](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
         Logger::info(QStringLiteral("[System] Quit requested over loopback"));
+        // From here nothing new starts (common/QuitSignals.h): the 300 ms
+        // below only let this answer leave, they are not a time to launch in.
+        mw::beginQuit();
         QTimer::singleShot(300, qApp, []() { QCoreApplication::exit(0); });
         QJsonObject obj;
         obj["status"] = "quitting";
