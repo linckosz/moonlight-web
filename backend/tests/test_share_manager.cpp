@@ -787,6 +787,145 @@ void test_revoking_one_hosts_guests()
     delete restarted;
 }
 
+void test_a_booth_join_is_bound_at_once()
+{
+    SECTION("share: a booth's stream PIN opens a free row, bound to its device at once");
+    ShareManager* mgr = freshManager();
+    ShareManager::Permissions viewer;
+    ShareManager::Permissions gamer;
+    gamer.gamepad = true;
+    gamer.hid = true;
+
+    CHECK_EQ(mgr->freeSlot(), kSlot);
+    QString token, cookie;
+    CHECK(mgr->activateBound(kSlot, kHost, kApp, viewer, QStringLiteral("LAPTOP-SAM"),
+                             QStringLiteral("Mozilla/5.0 (Windows NT 10.0)"), token, cookie));
+    CHECK(token.size() >= 40);
+    CHECK(cookie.size() >= 40);
+    CHECK(token != cookie);
+    CHECK(mgr->isBooth(kSlot));
+    CHECK(mgr->isBound(kSlot));
+    CHECK(mgr->state(kSlot) == ShareManager::State::Binded);
+    CHECK_EQ(mgr->slotForToken(token), kSlot);
+    CHECK_EQ(mgr->slotForCookie(cookie), kSlot);
+    CHECK(mgr->hostForSlot(kSlot) == kHost);
+    CHECK_EQ(mgr->appForSlot(kSlot), kApp);
+    CHECK(mgr->permissions(kSlot) == viewer);
+    // As long as the stream: no deadline of its own.
+    CHECK_EQ(mgr->ttlSecs(kSlot), qint64(0));
+    CHECK_EQ(mgr->expiresAt(kSlot), qint64(0));
+    // The row goes by the machine that joined, and says it is a booth's.
+    const ShareManager::SlotStatus st = mgr->status().at(0);
+    CHECK(st.name == QStringLiteral("LAPTOP-SAM"));
+    CHECK(st.booth);
+    CHECK(st.state == ShareManager::State::Binded);
+    CHECK_EQ(st.devices.size(), 1);
+
+    // It has no PIN of its own: its link answers none, and tries count for
+    // nothing — never enough to end it.
+    for (int i = 0; i < ShareManager::kMaxPinFailures + 2; ++i) {
+        const ShareManager::PinOutcome o =
+            mgr->redeemPin(token, QStringLiteral("000000"), QStringLiteral("10.0.%1.1").arg(i));
+        CHECK(o.result == ShareManager::PinResult::Invalid ||
+              o.result == ShareManager::PinResult::RateLimited);
+    }
+    CHECK(mgr->isBooth(kSlot));
+    CHECK_EQ(mgr->slotForCookie(cookie), kSlot);
+
+    // The next join takes the next free row; a taken row is never replaced.
+    CHECK_EQ(mgr->freeSlot(), kSlot + 1);
+    QString t2, c2;
+    CHECK(!mgr->activateBound(kSlot, kHost, kApp, gamer, QStringLiteral("IPAD-ALEX"), QString(), t2,
+                              c2));
+    CHECK_EQ(mgr->slotForCookie(cookie), kSlot);
+    CHECK(mgr->activateBound(kSlot + 1, kHost, kApp, gamer, QStringLiteral("IPAD-ALEX"), QString(),
+                             t2, c2));
+    CHECK(mgr->permissions(kSlot + 1) == gamer);
+    // A board invitation is not one: an activation by the board is no booth's.
+    QString t3, p3;
+    ShareManager::SlotStatus s3;
+    CHECK(mgr->activate(kSlot + 2, kHost, kApp, kTtl, t3, p3, s3));
+    CHECK(!mgr->isBooth(kSlot + 2));
+    CHECK(!mgr->status().at(2).booth);
+    // Every row taken: nowhere to join.
+    for (int slot = kSlot + 3; slot <= ShareManager::kLastSlot; ++slot) {
+        QString t, c;
+        CHECK(mgr->activateBound(slot, kHost, kApp, viewer, QStringLiteral("X"), QString(), t, c));
+    }
+    CHECK_EQ(mgr->freeSlot(), -1);
+
+    // Refused: no host, a slot that is no player's.
+    QString t4, c4;
+    mgr->deactivate(kSlot, ShareManager::EndReason::GuestLeft);
+    CHECK(!mgr->activateBound(kSlot, QString(), kApp, viewer, QStringLiteral("X"), QString(), t4,
+                              c4));
+    CHECK(!mgr->activateBound(0, kHost, kApp, viewer, QStringLiteral("X"), QString(), t4, c4));
+    CHECK(!mgr->activateBound(ShareManager::kLastSlot + 1, kHost, kApp, viewer, QStringLiteral("X"),
+                              QString(), t4, c4));
+
+    // Left: the row is free again, its cookie and link dead.
+    CHECK_EQ(mgr->freeSlot(), kSlot);
+    CHECK_EQ(mgr->slotForCookie(cookie), -1);
+    CHECK_EQ(mgr->slotForToken(token), -1);
+    CHECK(!mgr->isBooth(kSlot));
+
+    mgr->deactivateAll(ShareManager::EndReason::OwnerStop);
+    delete mgr;
+}
+
+void test_a_booth_join_is_never_saved()
+{
+    SECTION("share: a booth's guest is never written, so a restart never brings it back");
+    ShareManager* mgr = freshManager();
+    ShareManager::Permissions viewer;
+    QString token, cookie;
+    CHECK(mgr->activateBound(kSlot, kHost, kApp, viewer, QStringLiteral("LAPTOP-SAM"), QString(),
+                             token, cookie));
+    // A board invitation beside it is saved as before.
+    QString t2, p2;
+    ShareManager::SlotStatus s2;
+    CHECK(mgr->activate(kSlot + 1, kHost, kApp, kTtl, t2, p2, s2));
+    delete mgr;
+
+    ShareManager* restarted = new ShareManager();
+    CHECK_EQ(restarted->slotForCookie(cookie), -1);
+    CHECK(!restarted->tokenIsLive(token));
+    CHECK(!restarted->isBooth(kSlot));
+    CHECK(restarted->state(kSlot) == ShareManager::State::Off);
+    CHECK(restarted->tokenIsLive(t2));
+    restarted->deactivateAll(ShareManager::EndReason::OwnerStop);
+    delete restarted;
+}
+
+void test_a_booth_guests_level_is_not_the_rows()
+{
+    SECTION("share: a booth guest's level moves live, and leaves the row's choice alone");
+    ShareManager* mgr = freshManager();
+    ShareManager::Permissions remembered;
+    remembered.keyboardMouse = true;
+    CHECK(mgr->setPermissions(kSlot, remembered)); // the row's choice, nothing shared
+    ShareManager::Permissions viewer;
+    QString token, cookie;
+    CHECK(mgr->activateBound(kSlot, kHost, kApp, viewer, QStringLiteral("LAPTOP-SAM"), QString(),
+                             token, cookie));
+    // Joined at the booth's level, not at the row's remembered one.
+    CHECK(mgr->permissions(kSlot) == viewer);
+
+    int pushed = 0;
+    QObject::connect(mgr, &ShareManager::permissionsChanged,
+                     [&pushed](int, bool, bool, bool) { ++pushed; });
+    ShareManager::Permissions gamer;
+    gamer.gamepad = true;
+    CHECK(mgr->setPermissions(kSlot, gamer));
+    CHECK(mgr->permissions(kSlot) == gamer);
+    CHECK_EQ(pushed, 1);
+
+    // Gone: the row offers what its owner chose for it, not the guest's level.
+    mgr->deactivate(kSlot, ShareManager::EndReason::GuestLeft);
+    CHECK(mgr->status().at(0).permissions == remembered);
+    delete mgr;
+}
+
 } // namespace
 
 void run_share_manager_tests()
@@ -811,4 +950,7 @@ void run_share_manager_tests()
     test_link_address_is_per_host_and_kept();
     test_each_opening_is_named();
     test_revoking_one_hosts_guests();
+    test_a_booth_join_is_bound_at_once();
+    test_a_booth_join_is_never_saved();
+    test_a_booth_guests_level_is_not_the_rows();
 }

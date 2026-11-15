@@ -51,6 +51,7 @@ const char* reasonName(ShareManager::EndReason reason)
     case ShareManager::EndReason::OwnerStop: return "owner-stop";
     case ShareManager::EndReason::Expired: return "expired";
     case ShareManager::EndReason::PinAbuse: return "pin-abuse";
+    case ShareManager::EndReason::GuestLeft: return "guest-left";
     }
     return "unknown";
 }
@@ -205,7 +206,10 @@ QList<ShareManager::SlotStatus> ShareManager::status()
         const Slot* s = &m_Slots[slot];
         SlotStatus st;
         st.slot = slot;
-        st.name = s->name;
+        // A booth's guest goes by the machine that joined, not by the row's
+        // label, which stays the owner's for the next invitation.
+        st.name = s->activation.booth ? s->activation.label : s->name;
+        st.booth = s->activation.booth;
         if (!s->activation.live()) {
             st.state = State::Off;
             // Off rows still show a choice: the one this player had last time.
@@ -286,6 +290,62 @@ bool ShareManager::activate(int slot, const QString& hostUuid, int appId, qint64
     return true;
 }
 
+int ShareManager::freeSlot()
+{
+    pruneExpired();
+    for (int slot = kFirstSlot; slot <= kLastSlot; ++slot)
+        if (!m_Slots[slot].activation.live()) return slot;
+    return -1;
+}
+
+bool ShareManager::activateBound(int slot, const QString& hostUuid, int appId,
+                                 const Permissions& perms, const QString& label,
+                                 const QString& userAgent, QString& outToken, QString& outCookie)
+{
+    if (!isPlayerSlot(slot) || hostUuid.isEmpty()) return false;
+    pruneExpired();
+    Slot* s = slotFor(slot);
+    // A free slot only: someone's invitation is never replaced by a join.
+    if (!s || s->activation.live()) return false;
+
+    outToken = randomToken();
+    outCookie = randomToken();
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+
+    Activation act;
+    act.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    act.tokenHash = hash(outToken);
+    // No PIN of its own: the stream's PIN was proved to get here, and this
+    // invitation is bound to the device that proved it from the start.
+    act.cookieHashes.append(hash(outCookie));
+    act.devices.append(BoundDevice{now, userAgent.simplified().left(256)});
+    act.permissions = perms;
+    // perms.hid only ever rides with the gamepad, as on the board.
+    if (!act.permissions.gamepad) act.permissions.hid = false;
+    act.ttlSecs = 0; // as long as the stream it joined
+    act.activatedAt = now;
+    act.hostUuid = hostUuid;
+    act.appId = appId;
+    act.booth = true;
+    act.label = sanitizeName(label);
+    s->activation = act;
+
+    // Not saved: share.json has nothing to say about it (see save()).
+    emit slotChanged(slot);
+    Logger::info(QStringLiteral("[Share] Slot %1 joined by a booth's stream PIN on host %2 "
+                                "(access=%3)")
+                     .arg(slot)
+                     .arg(hostUuid, act.permissions.accessLevel()));
+    return true;
+}
+
+bool ShareManager::isBooth(int slot)
+{
+    pruneExpired();
+    const Slot* s = slotFor(slot);
+    return s && s->activation.live() && s->activation.booth;
+}
+
 bool ShareManager::secrets(int slot, QString& outToken, QString& outPin)
 {
     pruneExpired();
@@ -320,7 +380,9 @@ bool ShareManager::setPermissions(int slot, const Permissions& perms)
     if (s->activation.permissions == perms) return true;
 
     s->activation.permissions = perms;
-    s->lastPermissions = perms; // remembered for the next opening
+    // Remembered for the next opening of the row — not a booth guest's level,
+    // which is the booth's to set (booth_join_level), not the row's.
+    if (!s->activation.booth) s->lastPermissions = perms;
     save();
 
     Logger::info(
@@ -493,6 +555,9 @@ ShareManager::PinOutcome ShareManager::redeemPin(const QString& token, const QSt
 
     int slot = -1;
     Slot* s = slotForTokenHash(hash(token), &slot);
+    // A booth's guest has no PIN of its own to redeem: its link answers no PIN,
+    // and tries against it count towards nothing (they cannot end it either).
+    if (s && s->activation.booth) s = nullptr;
     const bool matched =
         s && !pin.isEmpty() && constantTimeEquals(s->activation.pinHash, hash(pin));
 
@@ -746,7 +811,9 @@ void ShareManager::save()
         obj[QStringLiteral("name")] = s.name;
         obj[QStringLiteral("lastPermissions")] = s.lastPermissions.toJson();
         obj[QStringLiteral("lastTtlSecs")] = s.lastTtlSecs;
-        if (s.activation.live()) {
+        // A booth's guest lives as long as the stream it joined, which a
+        // restart ends: it is never written, so never brought back.
+        if (s.activation.live() && !s.activation.booth) {
             QJsonObject act;
             act[QStringLiteral("id")] = s.activation.id;
             act[QStringLiteral("tokenHash")] = s.activation.tokenHash;

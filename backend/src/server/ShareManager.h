@@ -109,7 +109,8 @@ public:
         OwnerToggle, ///< owner clicked the player row
         OwnerStop,   ///< owner stopped the stream / the app went away
         Expired,     ///< the eight hours ran out
-        PinAbuse     ///< too many wrong PINs on this activation
+        PinAbuse,    ///< too many wrong PINs on this activation
+        GuestLeft    ///< a guest who joined by a booth's stream PIN left
     };
     Q_ENUM(EndReason)
 
@@ -170,6 +171,10 @@ public:
         /// one. 0 when it never happened. The board surfaces it verbatim.
         qint64 lastRefusedAt = 0;
         QString lastRefusedAgent;
+
+        /// Opened by a booth's stream PIN (activateBound) rather than by the
+        /// board: its name is the joining machine's, and it ends with its stream.
+        bool booth = false;
     };
 
     explicit ShareManager(QObject* parent = nullptr);
@@ -191,6 +196,26 @@ public:
     /// range, an empty @p hostUuid (nothing to bind to), or an unlisted lifetime.
     bool activate(int slot, const QString& hostUuid, int appId, qint64 ttlSecs, QString& outToken,
                   QString& outPin, SlotStatus& outStatus);
+
+    // ── A booth's stream PIN (issue #68) ─────────────────────────────────────
+
+    /// The lowest player slot with nothing shared on it, -1 when every one is
+    /// taken. A booth join takes a free slot; it never replaces an invitation.
+    int freeSlot();
+
+    /// Open @p slot for a device that just proved a booth's stream PIN: bound to
+    /// that device at once, with no PIN of its own, at @p perms, named @p label
+    /// (the joining machine's name). Hands back the link token (the guest
+    /// page's address) and the mw_player cookie. Never written to share.json:
+    /// it lives as long as the stream it joined, and a restart ends that
+    /// anyway. False for a slot outside the player range or not free, or an
+    /// empty @p hostUuid.
+    bool activateBound(int slot, const QString& hostUuid, int appId, const Permissions& perms,
+                       const QString& label, const QString& userAgent, QString& outToken,
+                       QString& outCookie);
+
+    /// Whether @p slot's live activation was opened by a booth's stream PIN.
+    bool isBooth(int slot);
 
     /// The raw link token and PIN of a live activation, so the owner reopening
     /// the popin can read what they already sent out. False when the slot is
@@ -390,6 +415,11 @@ private:
         /// restart simply forgets the pair while the share stays valid.
         QString tokenClear;
         QString pinClear;
+
+        /// Opened by a booth's stream PIN (activateBound): no PIN of its own,
+        /// named after the machine that joined, never saved.
+        bool booth = false;
+        QString label;
 
         bool live() const { return !tokenHash.isEmpty(); }
         qint64 expiresAt() const { return expiresAtSecs; }
