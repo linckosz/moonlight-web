@@ -31,6 +31,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | 15 | [Client Presentation Benchmarks](15-Client-Presentation-Benchmarks.md) | The measurements behind the client defaults: Canvas2D vs WebGL2 vs WebGPU vs `<video>`, Enhancer algorithms, HDR routing, 4:4:4 |
 | 16 | [Auto Bitrate Benchmarks](16-Auto-Bitrate-Benchmarks.md) | Picture quality and latency against bitrate: NVENC and AMF, ten resolution and frame rate combinations, the measurements behind the Auto bitrate |
 | 17 | [Learned Auto Ceiling](17-Learned-Auto-Ceiling.md) | How many pixels a second Auto asks of each machine: the rungs, climbing and falling, the browser's guard, the memory and its switch, and the benches behind them |
+| 18 | [Command Line](18-Command-Line.md) | Every option of `moonlightweb`: how a run behaves, the commands to the server running on this machine, the tools, and the internal ones |
 
 ## Project at a glance
 

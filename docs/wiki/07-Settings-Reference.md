@@ -22,6 +22,8 @@ Access is single-threaded, synchronous I/O. **Restart the server after a manual 
 
 ## 7.2 Key reference
 
+Some keys are also set from the command line, on the running server or for one run: see [Command Line](18-Command-Line.md).
+
 ### Server & network
 
 | Key | Type | Default | Description |

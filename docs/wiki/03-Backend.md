@@ -128,6 +128,8 @@ All under `QStandardPaths::AppDataLocation` (e.g. `%APPDATA%\MoonlightWeb\Moonli
 
 On a server there is no browser on the machine, and the admin API is localhost-only — so the two ends never meet. A few flags close the gap by driving the **already-running** instance through the very endpoints the admin page calls, printing the result as text and exiting. They branch **before** the single-instance `QLockFile` (they are queries against another process, not a second server) and route the log echo to stderr so stdout carries only the report.
 
+Every option of `moonlightweb`, with the `settings.json` key it stands for, is in [Command Line](18-Command-Line.md). The commands below are the ones an operator reaches for first.
+
 | Flag | Endpoint(s) | Prints |
 |---|---|---|
 | `--status` | `server/status`, `setup/status`, `auth/status`, `internet/status`, `internet/upnp-probe` | Loopback/LAN URLs, the remote entry link (and whether its line is up — an address that exists but is not being held is a link that would fail), access PIN, Sunshine state, and — while Internet Access is off — whether a UPnP router answered or a port forward has to be typed in by hand |
