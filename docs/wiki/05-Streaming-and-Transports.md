@@ -45,7 +45,7 @@ A school, an office or a guest Wi-Fi that blocks outgoing UDP usually still lets
 
 Two cases still end on *"Your machine answered, but no direct connection could be opened"* (`noRouteError` in `bootstrap/v1/tunnel.js`):
 - a network that lets TCP out on 80 and 443 only. The host's ports are high: 3478-3481 and 5349-5352 then 46000-46031 for the tunnel, 48550-48573 or 46100-46199 for the media;
-- a Linux host whose ufw or firewalld opens only the UDP ports, as the packages do: the browser's TCP connection is refused before it reaches the listener.
+- a Linux host whose ufw or firewalld lets those ports in over UDP and not over TCP (the packages open both; a rule written by hand may not): the browser's TCP connection is refused before it reaches the listener.
 
 The project runs no relay (no TURN), so that is the expected outcome, not a fault.
 
@@ -57,6 +57,16 @@ The project runs no relay (no TURN), so that is the expected outcome, not a faul
 4. **Wait for the chain.** The browser's STUN probe (`api/UdpProbe.js`) finds no UDP and the start request says `udp_blocked`. For a browser planned for the internet, `dropUdpRungsWhenBlocked` (`main.cpp`) then removes the `-udp` rungs, and only those: the one or two `-tcp` rungs still run to their ICE deadline (8 s each in the 22/10 bench) before `wss` takes over. The first frame can take about twenty seconds. A player's chain ignores the owner's forced transport.
 
 What it costs: the link carries the home's public address in clear, and a dynamic IP breaks it at the next change. `wss` is also the worst latency profile of the five, with TCP head-of-line blocking under loss. Putting `wss` back under the entry link would need a valid certificate for that address, so a name per user, which the project does not issue ([Security §6.5](06-Security.md#65-tls)).
+
+### One port for every stream (`ice_udp_mux`)
+
+Off by default in this version; `"ice_udp_mux": true` in `settings.json` (no UI) turns it on, `false` gives back exactly the ports described above. Design: `docs/design/ice-mux.md`.
+
+- **What changes.** The server holds one or two UDP ports for as long as it runs, and every stream's datagrams go through them: an installed host takes one conferencing port (the first of 3478-3481, 5349-5352 that is free on this PC and on the router) and the head of the stream block (48550, else the next free up to 48561); a DEV identity takes one port, 48573 and down to 48562. With UPnP each gets a hole on the router, external = internal. A browser on a network that lets only the conferencing ports out then streams over UDP. A datagram that belongs to no stream is dropped on arrival; with no stream at all, nothing is read.
+- **TCP on the same ports.** A browser that cannot use UDP reaches the shared port in TCP (passive ICE-TCP): the server listens there only while a stream negotiates, then hands the connection to that stream. The router's TCP entry for the port exists as long as the server runs; between two negotiations nothing of MoonlightWeb listens on it, so another program of this PC that takes that number meanwhile can be reached from the Internet through that entry.
+- **TCP 443 (`ice_tcp_443`, off by default).** On top of the shared ports, the router may be asked for 443/TCP forwarded to the block port, for networks that let only TCP 443 out. Only after a check, step by step: no entry on 443 yet, the router loops back to this host, nothing answers on the public 443, then the entry is written, read back and proved by a connection made to it; any doubt and 443 is left alone. **If you already forward 443 to a web server of your own, set `"ice_tcp_443": false`**: a forward made on the router's own page does not always show over UPnP.
+- **On the router** the entries read `MoonlightWeb streams <tag>` and `MoonlightWeb TCP 443 <tag>` (the tag is six characters of this installation). They are taken off when the server quits, and before an update or an uninstall stops it; what a killed run left is taken back at the next start (the record of what was written, `router_holes.json`, beside `settings.json`).
+- **Turning it off:** `"ice_udp_mux": false` in `settings.json`, then restart. The shared ports and their holes go; each stream takes its own port again.
 
 ## 5.2 Video path
 

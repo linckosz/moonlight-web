@@ -261,7 +261,7 @@ curl -fsSL https://moonlightweb.top/install.sh | bash
 
 It adds the signed **APT** or **DNF** repository, so MoonlightWeb updates with the system and appears in GNOME Software, KDE Discover and App Center. Arch uses [`moonlightweb-bin`](https://aur.archlinux.org/packages/moonlightweb-bin) from the AUR. Manual setup: [Linux guide](https://moonlightweb.top/guides/linux.html#one-line-install).
 
-Or install a package directly. All are **self‑contained** (Qt + OpenSSL bundled), install to `/opt/moonlightweb`, open the firewall ports (80/tcp, 443/tcp, 48550‑48573/udp) and start the app.
+Or install a package directly. All are **self‑contained** (Qt + OpenSSL bundled), install to `/opt/moonlightweb`, open the firewall ports (80/tcp, 443/tcp, 48550‑48573 and the conferencing ports 3478‑3481, 5349‑5352 in UDP and TCP, 46000‑46031/tcp) and start the app. These rules are the package's own and go with it; a rule of yours on the same ports should take another form (a single port, or a source) to outlive an uninstall.
 
 | Distro family | Package | Command |
 |---|---|---|
