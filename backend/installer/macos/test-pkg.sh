@@ -20,8 +20,8 @@
 #
 #  No hand-off asks for Internet Access. The app the postinstall starts gets
 #  MW_LAN_ONLY=1 from the user's session, and its own log has to say so after
-#  runs 1 and 2, with no [UPNP] line; otherwise the app is stopped and the
-#  run ends there.
+#  every run, with no [UPNP] line; otherwise the app is stopped and the run
+#  ends there.
 #
 #  Usage: bash backend/installer/macos/test-pkg.sh <package.pkg> <prod|dev>
 # ===========================================================================
@@ -88,7 +88,7 @@ launchctl setenv MW_LAN_ONLY 1
 # that the text can carry a control character.
 write_handoff() { # <mode> <autostart> <consent file> [binary]
     rm -f "$HANDOFF"
-    python3 - "$HANDOFF" "$2" "$3" "${4:-xml}" <<'PY'
+    if ! python3 - "$HANDOFF" "$2" "$3" "${4:-xml}" <<'PY'; then
 import plistlib, sys
 path, autostart, consent, fmt = sys.argv[1], sys.argv[2] == "true", sys.argv[3], sys.argv[4]
 text = open(consent, encoding="utf-8").read()
@@ -96,6 +96,10 @@ with open(path, "wb") as f:
     plistlib.dump({"internet": False, "consent": text, "autostart": autostart}, f,
                   fmt=plistlib.FMT_BINARY if fmt == "binary" else plistlib.FMT_XML)
 PY
+        fail "the hand-off file could not be written"
+        rm -f "$HANDOFF"
+        return 1
+    fi
     chmod "$1" "$HANDOFF"
 }
 
@@ -125,8 +129,9 @@ install_pkg() { # <run>
     fi
 }
 
-this_run() { # the log from the last "== postinstall" line on
-    awk '/^== postinstall / { buf = "" } { buf = buf $0 "\n" } END { printf "%s", buf }' "$LOG" 2>/dev/null
+this_run() { # the log from the last "== postinstall <date> ==" line on
+    awk '/^== postinstall / && !/^== postinstall done ==$/ { buf = "" } { buf = buf $0 "\n" }
+         END { printf "%s", buf }' "$LOG" 2>/dev/null
 }
 
 # provisioning.json as the postinstall wrote it: JSON, LAN only, and the
@@ -228,7 +233,7 @@ check "run 1: the app bundle is $ME's" [ "$(stat -f %Su "$APP")" = "$ME" ]
 check "run 1: the hand-off file is gone" [ ! -e "$HANDOFF" ]
 
 # ── 2. The same hand-off file, writable by everyone ──────────────────────
-write_handoff 666 false "$WORK/consent-1.txt"
+write_handoff 666 false "$WORK/consent-1.txt" binary
 install_pkg 2
 must_be_lan_only 2
 RUN="$(this_run)"
@@ -247,6 +252,7 @@ printf '%5000s' '' | tr ' ' x >"$WORK/consent-3.txt"
 write_handoff 600 true "$WORK/consent-3.txt"
 rm -f "$AGENT"
 install_pkg 3
+must_be_lan_only 3
 RUN="$(this_run)"
 check "run 3: the hand-off file is read" lacks_line "$RUN" "not the console user's own file"
 check "run 3: Start at login is on" has_line "$RUN" "handoff: internet=false autostart=true"
@@ -263,6 +269,7 @@ echo "kept" >"$WORK/elsewhere.log"
 sudo rm -f "$LOG"
 sudo ln -s "$WORK/elsewhere.log" "$LOG"
 install_pkg 4
+must_be_lan_only 4
 check "run 4: provisioning.json is written, LAN only" provisioning_is ""
 check "run 4: nothing written through the link" [ "$(cat "$WORK/elsewhere.log")" = "kept" ]
 sudo rm -f "$LOG"
@@ -272,6 +279,7 @@ mkdir "$WORK/elsewhere"
 sudo rmdir "$LOG_DIR"
 sudo ln -s "$WORK/elsewhere" "$LOG_DIR"
 install_pkg 5
+must_be_lan_only 5
 check "run 5: provisioning.json is written, LAN only" provisioning_is ""
 check "run 5: nothing written through the link" [ -z "$(ls -A "$WORK/elsewhere")" ]
 check "run 5: everything under the app data is $ME's" owned_by_me
