@@ -1,8 +1,10 @@
 """The owner's latency while guests watch the same native host.
 
     python owner_load.py --tag rtx-s0 --display-gpu RTX --client-gpu AMD --guest-gpu Arc
-    python owner_load.py --tag n95-s0 --host-url https://10.0.0.8:48443/ --ssh bench-intel \\
+    python owner_load.py --tag n95-s0 --host-url https://10.0.0.8:48443/ --fleet-id mw-intel \\
                          --client-gpu AMD --guest-gpu Arc
+    python owner_load.py ... --client-gpu RTX --client-screen \\\\.\\DISPLAY5 \\
+                             --guest-gpu RTX --guest-screen \\\\.\\DISPLAY5 --guests 0,1,0
 
 Plan « flux commun des invités » (S0 then S9): does a guest cost the owner
 anything, and how much? One owner stream on the display a GPU drives, then
@@ -28,7 +30,11 @@ bench page (content/scroll.html) for the whole run.
 
 A local host is the --dev instance (MW_BENCH_LOCAL_PORTS, as the acceptance run
 reads it). A remote one (--host-url) is reached over the LAN; its PIN is minted
-over SSH (--ssh) by fleet.py, and so is its worker count.
+over SSH by fleet.py (--fleet-id), and its workers are not counted.
+
+--client-screen and --guest-screen put the windows on a given screen of their
+GPU instead of its first one; a guest window that would not fit inside the
+guests' screen stops the run before any window opens.
 """
 import argparse
 import json
@@ -69,17 +75,67 @@ def monitors():
     return rects
 
 
-def gpu(name):
-    """(full name, "high,low" LUID, (x, y, w, h) of its screen) for the GPU
-    whose name contains `name`. A GPU with no screen is refused: a client there
-    would present through another GPU (bench-campaign §4)."""
-    g = next((g for g in run.list_gpus() if name.lower() in g[0].lower()), None)
+FORBIDDEN_SCREEN = run.FORBIDDEN_SCREEN
+overlaps = run.overlaps
+
+
+def gpu(name, screen=""):
+    """(full name, "high,low" LUID, (x, y, w, h) of its screen, the screen's
+    name, whether that rectangle is in physical pixels) for the GPU whose name
+    contains `name`. A GPU with no screen is refused: a client there would
+    present through another GPU (bench-campaign §4). So is FORBIDDEN_SCREEN.
+
+    `screen` ("\\\\.\\DISPLAY5") puts the windows on that screen rather than the
+    GPU's first one; the GPU is then the adapter behind it, by identity
+    (run.gpu_on_screen). Its rectangle is in the coordinates kiosk.ps1 takes
+    (unaware of the scaling), which the guests' windows are opened with."""
+    if screen:
+        run.check_screen(screen)
+        if screen.lower() == FORBIDDEN_SCREEN.lower():
+            raise SystemExit("%s is refused: no bench window on that screen" % screen)
+        full, luid = run.gpu_on_screen(name, screen)
+        rect = run.screen_bounds(screen)
+        if not rect:
+            raise SystemExit("%s is not on the desktop" % screen)
+        return full, luid, rect, screen, False
+    g = run.gpu_by_name(name)
     if not g:
         raise SystemExit("no GPU named like %r" % name)
+    if g[2] and g[2].lower() == FORBIDDEN_SCREEN.lower():
+        raise SystemExit("the %s's first screen is %s, which is refused: name another of its "
+                         "screens (--client-screen / --guest-screen)" % (g[0], g[2]))
     rect = monitors().get(g[2]) if g[2] else None
     if not rect:
         raise SystemExit("the %s drives no screen on the desktop" % g[0])
-    return g[0], g[1], rect
+    return g[0], g[1], rect, g[2], True
+
+
+def check_windows(owner_screen, guest_rect, guest_physical, guests):
+    """Every window the run opens, before any opens: the owner's at the size
+    kiosk_start gives it, and each guest's, inside its own screen and clear of
+    FORBIDDEN_SCREEN. The owner is placed in unaware coordinates; the guests in
+    those of guest_rect (physical on the default path, as before)."""
+    owner = run.kiosk_rect(run.screen_bounds(owner_screen))
+    if guests > 3:
+        raise SystemExit("at most 3 guests: the board has slots 2-4")
+    gx, gy, gw, gh = guest_rect
+    spots = [(gx, gy), (gx + GUEST_W, gy), (gx, gy + GUEST_H)][:guests]
+    forbidden_unaware = run.screen_bounds(FORBIDDEN_SCREEN)
+    forbidden_guest = (monitors().get(FORBIDDEN_SCREEN) if guest_physical
+                       else forbidden_unaware)
+    windows = [("the owner's window", owner, run.screen_bounds(owner_screen), forbidden_unaware)]
+    windows += [("guest window %d" % (i + 2), (sx, sy, GUEST_W, GUEST_H), guest_rect,
+                 forbidden_guest) for i, (sx, sy) in enumerate(spots)]
+    for label, r, screen, forbidden in windows:
+        x, y, w, h = r
+        sx, sy, sw, sh = screen
+        if x < sx or y < sy or x + w > sx + sw or y + h > sy + sh:
+            raise SystemExit("%s at %d,%d %dx%d would leave its screen %d,%d %dx%d: fewer "
+                             "guests, or another screen" % (label, x, y, w, h, sx, sy, sw, sh))
+        if forbidden and overlaps(r, forbidden):
+            raise SystemExit("%s at %d,%d %dx%d would reach %s" % (label, x, y, w, h,
+                                                                  FORBIDDEN_SCREEN))
+    return spots
 
 
 # ── the machine ─────────────────────────────────────────────────────────────
@@ -105,19 +161,10 @@ def dev_server_pid():
     return None, []
 
 
-def worker_count(ssh):
-    if ssh:
-        # The edition installed there streams through its SYSTEM launcher: the
-        # workers are the MoonlightWebDev.exe whose parent is one too (the
-        # service). A script copied there beforehand (README): quotes do not
-        # survive two shells on the way.
-        out = subprocess.run(["ssh", ssh, "powershell -NoProfile -ExecutionPolicy Bypass -File "
-                              r"C:\Users\Public\mw-run\count-workers.ps1 < NUL"],
-                             capture_output=True, text=True, timeout=60).stdout.strip()
-        try:
-            return int(out.splitlines()[-1])
-        except (ValueError, IndexError):
-            return None
+def worker_count():
+    """The local --dev instance's stream workers. A remote host's are not
+    counted: that took one more SSH per window, and the script it ran counted
+    the DEV edition's processes whatever edition was measured."""
     _pid, children = dev_server_pid()
     return len(children)
 
@@ -331,8 +378,13 @@ def main():
     ap.add_argument("--content", default="scroll.html?px=600",
                     help="the bench page over the captured screen (local host)")
     ap.add_argument("--host-url", default="", help="a remote host's address (LAN)")
-    ap.add_argument("--ssh", default="", help="SSH alias of the remote host (PIN, worker count)")
-    ap.add_argument("--fleet-id", default="", help="its id in hosts.local.json, for fleet.probe")
+    ap.add_argument("--fleet-id", default="", help="its id in hosts.local.json, for fleet.probe "
+                                                    "and the PIN (fleet.py's own SSH)")
+    ap.add_argument("--client-screen", default="",
+                    help="the owner's window on this screen (\"\\\\.\\DISPLAY5\"), decoded by the "
+                         "adapter behind it, whose name must contain --client-gpu")
+    ap.add_argument("--guest-screen", default="",
+                    help="the guests' windows on this screen, the same way with --guest-gpu")
     ap.add_argument("--display-index", default="0", help="remote host: which physical display")
     ap.add_argument("--feed-heights", default="",
                     help="the guests' picture height the owner picks before each window, in "
@@ -351,10 +403,13 @@ def main():
     remote = bool(a.host_url)
     os.makedirs(OUT, exist_ok=True)
 
-    client_name, client_luid, client_rect = gpu(a.client_gpu)
-    guest_name, guest_luid, guest_rect = gpu(a.guest_gpu)
+    client_name, client_luid, _client_rect, client_screen, _ = gpu(a.client_gpu, a.client_screen)
+    guest_name, guest_luid, guest_rect, _guest_screen, guest_physical = gpu(a.guest_gpu,
+                                                                             a.guest_screen)
     if client_luid == guest_luid:
         print("  note: the owner's client and the guests decode on the same GPU", flush=True)
+    # Before any window opens: one that overflows lands on the next screen.
+    spots = check_windows(client_screen, guest_rect, guest_physical, max(schedule + [0]))
 
     if remote:
         mid = a.fleet_id or "mw-intel"
@@ -372,7 +427,7 @@ def main():
         if pin:
             access["pin"] = pin
         base = fleet.lan_url("local", probe) or access.get("lan")
-        enc_name, enc_luid, enc_rect = gpu(a.display_gpu)
+        enc_name, enc_luid, enc_rect, _enc_screen, _ = gpu(a.display_gpu)
         if enc_luid in (client_luid, guest_luid):
             raise SystemExit("the encoder's GPU (%s) would also decode: move a client" % enc_name)
         encoder = {"gpu": enc_name, "luid": enc_luid}
@@ -397,7 +452,7 @@ def main():
     started = time.time()
     gl.keep_output()
     warnings = []
-    run.kiosk_start(base, on_gpu=a.client_gpu)
+    run.kiosk_start(base, on_gpu=a.client_gpu, screen=a.client_screen or None)
     d = drive.Driver(run.DEBUG_PORT)
     guests = {}
     shown = False
@@ -427,9 +482,7 @@ def main():
             raise SystemExit("the stats hook is not in the owner's page")
         time.sleep(a.settle)
 
-        gx, gy, _gw, _gh = guest_rect
         slots = [2, 3, 4]
-        spots = [(gx, gy), (gx + GUEST_W, gy), (gx, gy + GUEST_H)]
         for w_index, want in enumerate(schedule):
             height = feed_heights[w_index] if w_index < len(feed_heights) else 0
             if height:
@@ -480,7 +533,7 @@ def main():
                 "guestStages": {slot: summarize(g.take()) for slot, g in guests.items()},
                 "guestOverlay": {slot: overlay(g.d) for slot, g in guests.items()},
                 "guestCodec": {slot: g.codec() for slot, g in guests.items()},
-                "workers": worker_count(a.ssh if remote else ""),
+                "workers": None if remote else worker_count(),
                 "sessions": [] if remote else [s for s in sessions(started) if not s["ended"]],
                 "nvenc": nvenc() if "NVIDIA" in encoder["gpu"] else None,
                 "encodeEngines": engines,

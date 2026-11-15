@@ -17,9 +17,11 @@ python summary.py ../../../bench-out/shared-feed/s0-*.json
 - The owner's Chrome decodes on `--client-gpu`, from its screen; the guests'
   three windows on `--guest-gpu`'s screen. Neither is the encoder's GPU
   (docs/bench-campaign.md §4). The captured screen shows `content/scroll.html`.
-- A remote host (`--host-url`, `--ssh`, `--fleet-id`) is reached over the LAN;
-  its PIN is minted over SSH by fleet.py, and so is its worker count. Its
-  bench page is put on its screen apart.
+  `--client-screen` / `--guest-screen` (`\\.\DISPLAY5`) pick another screen of
+  that GPU than its first; a guest window that would leave it stops the run.
+- A remote host (`--host-url`, `--fleet-id`) is reached over the LAN; its PIN is
+  minted over SSH by fleet.py. Its workers are not counted. Its bench page is
+  put on its screen apart.
 
 ## What a window reads
 

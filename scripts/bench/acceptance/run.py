@@ -91,26 +91,198 @@ def list_gpus():
     return gpus
 
 
-def client_on_gpu(name):
-    """Where to open the client so that it decodes on the GPU named `name`:
-    ((x, y) of that GPU's screen, its LUID). A GPU with no screen is refused,
-    for the reason client_luid() gives."""
-    gpu = next((g for g in list_gpus() if name.lower() in g[0].lower()), None)
-    if not gpu or not gpu[2]:
-        raise SystemExit("the client cannot sit on the %s: %s" % (
-            name, "no screen of its own" if gpu else "no such GPU"))
-    out = subprocess.run(["powershell", "-NoProfile", "-Command",
-                          "Add-Type -AssemblyName System.Windows.Forms; "
-                          "[System.Windows.Forms.Screen]::AllScreens | "
-                          "Where-Object { $_.DeviceName -eq '%s' } | "
-                          "ForEach-Object { '{0},{1}' -f $_.Bounds.X, $_.Bounds.Y }" % gpu[2]],
-                         capture_output=True, text=True).stdout.strip()
+SCREEN_NAME = re.compile(r"\\\\\.\\DISPLAY[0-9]{1,2}")
+# The size kiosk_start gives the client, smaller where its screen is.
+KIOSK_SIZE = (1920, 1200)
+# Bruno's main screen on DualRTX: no bench window there, whichever way it is reached.
+FORBIDDEN_SCREEN = "\\\\.\\DISPLAY1"
+
+
+def check_screen(screen):
+    """A screen name as Windows writes it ("\\\\.\\DISPLAY5") and nothing else,
+    not even a trailing newline: it goes into a PowerShell command below."""
+    if not isinstance(screen, str) or not SCREEN_NAME.fullmatch(screen):
+        raise SystemExit("not a screen name: %r (\\\\.\\DISPLAYn)" % (screen,))
+    return screen
+
+
+def overlaps(a, b):
+    """Whether two (x, y, w, h) rectangles share a pixel."""
+    return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
+
+
+def refuse_forbidden(rect, label):
+    """SystemExit when the window `rect` (x, y, w, h, in the unaware coordinates
+    kiosk.ps1 and Chrome's --window-position take) would reach FORBIDDEN_SCREEN."""
+    forbidden = screen_bounds(FORBIDDEN_SCREEN)
+    if forbidden and overlaps(rect, forbidden):
+        raise SystemExit("%s at %d,%d %dx%d would reach %s: refused" % (
+            (label,) + tuple(rect) + (FORBIDDEN_SCREEN,)))
+
+
+def kiosk_rect(bounds):
+    """The client's window on a screen of these bounds: its top-left corner, at
+    KIOSK_SIZE or the screen's own size where that is smaller."""
+    x, y, w, h = bounds
+    return x, y, min(KIOSK_SIZE[0], w), min(KIOSK_SIZE[1], h)
+
+
+def screen_bounds(screen):
+    """(x, y, w, h) of the screen named `screen` ("\\\\.\\DISPLAY5"), in the
+    coordinates kiosk.ps1 and Chrome's --window-position take (those of a
+    process unaware of the screens' scaling), or None when it is not on the
+    desktop."""
+    check_screen(screen)
+    # Fails closed: a query that did not run, or said anything but x,y,w,h, stops the
+    # run. None means only that the query ran and that screen is not on the desktop
+    # (refuse_forbidden relies on that).
+    try:
+        done = subprocess.run(["powershell", "-NoProfile", "-Command",
+                               "Add-Type -AssemblyName System.Windows.Forms; "
+                               "[System.Windows.Forms.Screen]::AllScreens | "
+                               "Where-Object { $_.DeviceName -eq '%s' } | "
+                               "ForEach-Object { '{0},{1},{2},{3}' -f $_.Bounds.X, $_.Bounds.Y, "
+                               "$_.Bounds.Width, $_.Bounds.Height }" % screen],
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise SystemExit("the screens could not be listed (%s): stopped" % type(e).__name__)
+    if done.returncode != 0:
+        raise SystemExit("the screens could not be listed (PowerShell exit %d): stopped"
+                         % done.returncode)
+    out = (done.stdout or "").strip()
     if not out:
+        return None
+    if not re.fullmatch(r"-?\d+,-?\d+,\d+,\d+", out):
+        raise SystemExit("the screens could not be listed (unexpected answer): stopped")
+    return tuple(int(v) for v in out.split(","))
+
+
+def screen_adapter(screen):
+    """The name of the GPU that drives the screen named `screen`, as Windows
+    lists it (EnumDisplayDevices), or "" when no adapter drives it."""
+    import ctypes
+    from ctypes import wintypes
+    check_screen(screen)
+
+    class DisplayDevice(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("DeviceName", wintypes.WCHAR * 32),
+                    ("DeviceString", wintypes.WCHAR * 128), ("StateFlags", wintypes.DWORD),
+                    ("DeviceID", wintypes.WCHAR * 128), ("DeviceKey", wintypes.WCHAR * 128)]
+
+    i = 0
+    while True:
+        dd = DisplayDevice()
+        dd.cb = ctypes.sizeof(dd)
+        if not ctypes.windll.user32.EnumDisplayDevicesW(None, i, ctypes.byref(dd), 0):
+            return ""
+        if dd.DeviceName.lower() == screen.lower():
+            return dd.DeviceString
+        i += 1
+
+
+def screen_luid(screen):
+    """The "high,low" LUID of the adapter that drives the screen named `screen`
+    (QueryDisplayConfig, active paths), or "" when none does. The identity of
+    that adapter, not its name: two cards of the same model share a name, and a
+    LUID taken by name may be the other card's."""
+    import ctypes
+    from ctypes import wintypes
+    check_screen(screen)
+
+    class Luid(ctypes.Structure):
+        _fields_ = [("LowPart", wintypes.DWORD), ("HighPart", wintypes.LONG)]
+
+    class PathSource(ctypes.Structure):
+        _fields_ = [("adapterId", Luid), ("id", ctypes.c_uint32),
+                    ("modeInfoIdx", ctypes.c_uint32), ("statusFlags", ctypes.c_uint32)]
+
+    class PathTarget(ctypes.Structure):
+        _fields_ = [("adapterId", Luid), ("id", ctypes.c_uint32),
+                    ("modeInfoIdx", ctypes.c_uint32), ("outputTechnology", ctypes.c_uint32),
+                    ("rotation", ctypes.c_uint32), ("scaling", ctypes.c_uint32),
+                    ("refreshNum", ctypes.c_uint32), ("refreshDen", ctypes.c_uint32),
+                    ("scanLineOrdering", ctypes.c_uint32), ("targetAvailable", wintypes.BOOL),
+                    ("statusFlags", ctypes.c_uint32)]
+
+    class PathInfo(ctypes.Structure):
+        _fields_ = [("sourceInfo", PathSource), ("targetInfo", PathTarget),
+                    ("flags", ctypes.c_uint32)]
+
+    class ModeInfo(ctypes.Structure):
+        _fields_ = [("infoType", ctypes.c_uint32), ("id", ctypes.c_uint32),
+                    ("adapterId", Luid), ("info", ctypes.c_byte * 48)]
+
+    class SourceName(ctypes.Structure):
+        _fields_ = [("type", ctypes.c_uint32), ("size", ctypes.c_uint32),
+                    ("adapterId", Luid), ("id", ctypes.c_uint32),
+                    ("viewGdiDeviceName", wintypes.WCHAR * 32)]
+
+    u = ctypes.windll.user32
+    only_active, get_source_name = 2, 1
+    n_paths, n_modes = ctypes.c_uint32(), ctypes.c_uint32()
+    if u.GetDisplayConfigBufferSizes(only_active, ctypes.byref(n_paths), ctypes.byref(n_modes)):
+        return ""
+    paths = (PathInfo * n_paths.value)()
+    modes = (ModeInfo * n_modes.value)()
+    if u.QueryDisplayConfig(only_active, ctypes.byref(n_paths), paths, ctypes.byref(n_modes),
+                            modes, None):
+        return ""
+    for p in paths[:n_paths.value]:
+        name = SourceName()
+        name.type, name.size = get_source_name, ctypes.sizeof(SourceName)
+        name.adapterId, name.id = p.sourceInfo.adapterId, p.sourceInfo.id
+        if u.DisplayConfigGetDeviceInfo(ctypes.byref(name)) == 0 and \
+                name.viewGdiDeviceName.lower() == screen.lower():
+            a = p.sourceInfo.adapterId
+            return "%d,%d" % (a.HighPart, a.LowPart)
+    return ""
+
+
+def gpu_on_screen(name, screen):
+    """(full name, LUID) of the adapter that drives the screen `screen`, refused
+    unless its name contains `name`. The LUID is that adapter's own
+    (screen_luid), so the client decodes and presents on the card behind its
+    window — not on another card of the same name, which list_gpus() may be the
+    only one to show."""
+    adapter = screen_adapter(screen)
+    if not adapter or name.lower() not in adapter.lower():
+        raise SystemExit("%s is driven by %s, not by a GPU named like %r" % (
+            screen, adapter or "no adapter", name))
+    luid = screen_luid(screen)
+    if not luid:
+        raise SystemExit("no active adapter found behind %s" % screen)
+    return adapter, luid
+
+
+def gpu_by_name(name):
+    """The one GPU of list_gpus() whose name contains `name`. Two of them stop
+    the run: which card is meant can only be said by its screen."""
+    found = [g for g in list_gpus() if name.lower() in g[0].lower()]
+    if len(found) > 1:
+        raise SystemExit("%d GPUs are named like %r: name the screen of the one meant" % (
+            len(found), name))
+    return found[0] if found else None
+
+
+def client_on_gpu(name, screen=None):
+    """Where to open the client so that it decodes on the GPU named `name`:
+    ((x, y, w, h) of that GPU's screen, its LUID). A GPU with no screen is
+    refused, for the reason client_luid() gives. `screen` picks the screen, and
+    the GPU is then the adapter behind it (gpu_on_screen)."""
+    if screen:
+        full, luid = gpu_on_screen(name, screen)
+        gpu = (full, luid, screen)
+    else:
+        gpu = gpu_by_name(name)
+        if not gpu or not gpu[2]:
+            raise SystemExit("the client cannot sit on the %s: %s" % (
+                name, "no screen of its own" if gpu else "no such GPU"))
+    bounds = screen_bounds(gpu[2])
+    if not bounds:
         raise SystemExit("the %s's screen %s is not on the desktop" % (gpu[0], gpu[2]))
-    x, y = out.split(",")
     print("  client decodes on the %s (%s), which drives %s" % (gpu[0], gpu[1], gpu[2]),
           flush=True)
-    return (int(x), int(y)), gpu[1]
+    return bounds, gpu[1]
 
 
 def client_luid():
@@ -159,15 +331,30 @@ def client_luid():
 KIOSK = {"gpu": None}
 
 
-def kiosk_start(url, on_gpu=None):
+def kiosk_start(url, on_gpu=None, screen=None):
     """A Chrome of its own, with a debugging port and no certificate fuss.
 
     Not the Chrome extension: it emulates a fixed viewport, its synthetic
     clicks carry no user activation so requestFullscreen is refused, and its
     tab stays visibilityState=hidden, which freezes rAF.
 
-    `on_gpu` opens it on the screen of that GPU, so that it decodes there.
+    `on_gpu` opens it on the screen of that GPU, so that it decodes there;
+    `screen` names which one, when that GPU drives more than its first.
+
+    A window that would reach FORBIDDEN_SCREEN is refused before anything is
+    touched, on every path.
     """
+    # The client decodes on the GPU of its own screen, never the encoder's
+    # (docs/bench-campaign.md §4). Chrome wants "high,low": a bare decimal is
+    # ignored without a word.
+    size = KIOSK_SIZE
+    if on_gpu:
+        bounds, luid = client_on_gpu(on_gpu, screen)
+        x, y, w, h = kiosk_rect(bounds)
+        pos, size = (x, y), (w, h)
+    else:
+        pos, luid = client_position(), client_luid()
+    refuse_forbidden((pos[0], pos[1], size[0], size[1]), "the client's window")
     subprocess.run(["powershell", "-NoProfile", "-Command",
                     "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
                     "Where-Object { $_.CommandLine -like '*%s*' } | "
@@ -175,13 +362,6 @@ def kiosk_start(url, on_gpu=None):
                     % os.path.basename(PROFILE)],
                    capture_output=True, text=True)
     time.sleep(2)
-    # The client decodes on the GPU of its own screen, never the encoder's
-    # (docs/bench-campaign.md §4). Chrome wants "high,low": a bare decimal is
-    # ignored without a word.
-    if on_gpu:
-        pos, luid = client_on_gpu(on_gpu)
-    else:
-        pos, luid = client_position(), client_luid()
     KIOSK["gpu"] = on_gpu
     subprocess.Popen([CHROME] + (["--use-adapter-luid=" + luid] if luid else []) + [
                       "--user-data-dir=" + PROFILE,
@@ -207,7 +387,7 @@ def kiosk_start(url, on_gpu=None):
                       "--disable-features=CalculateNativeWinOcclusion",
                       "--disable-backgrounding-occluded-windows",
                       "--disable-renderer-backgrounding",
-                      "--window-position=%d,%d" % pos, "--window-size=1920,1200",
+                      "--window-position=%d,%d" % pos, "--window-size=%d,%d" % size,
                       url])
     # Wait for the debugging port to answer rather than for a fixed delay: on a
     # busy machine Chrome takes longer than eight seconds to open it, and the
