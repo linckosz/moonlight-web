@@ -70,6 +70,10 @@ export const STREAM_REDIAL_EVERY_MS = 10000;
 const STREAM_ATTEMPT_MS = 8000;
 /** How often a wait under a stream looks whether the stream is still on. */
 const STREAM_CHECK_MS = 1000;
+/** Hidden this long, the line is asked whether it still carries on return. */
+export const LONG_HIDE_MS = 60000;
+/** How long that question may take: requests wait for it, so it is short. */
+export const RETURN_CHECK_MS = 1500;
 
 /** Methods that can be asked again on a new line without doing anything twice. */
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
@@ -140,12 +144,56 @@ export class LineKeeper {
         /** Under a stream, past the first budget: requests fail at once. */
         this._outOfReach = false;
 
+        /** When the page last went behind something; null while in front. */
+        this._hiddenAt = null;
+        /** @type {Promise<void> | null} the question to the line on return */
+        this._checking = null;
+
         // Back in front with a line that died without a word (its close still
         // queued behind the page's return): dial now, before a request finds out.
         doc.addEventListener('visibilitychange', () => {
-            if (doc.visibilityState !== 'visible' || !this.line || this._redial) return;
-            if (!this.line.connected) this.lost(this.line, 'found closed on return');
+            if (doc.visibilityState !== 'visible') {
+                if (this._hiddenAt === null) this._hiddenAt = Date.now();
+                return;
+            }
+            const hiddenFor = this._hiddenAt === null ? 0 : Date.now() - this._hiddenAt;
+            this._hiddenAt = null;
+            if (!this.line || this._redial) return;
+            if (!this.line.connected) {
+                this.lost(this.line, 'found closed on return');
+                return;
+            }
+            // A line can still look open after a long absence and carry nothing:
+            // iOS kept Safari's page for 35 minutes, its channel still "open",
+            // and the launch pressed a second after the return went out on it
+            // and failed four seconds later, when the transport gave up on it
+            // (15/11/2026). Asked first, it is dialled again before the press.
+            if (hiddenFor >= LONG_HIDE_MS && !this._checking)
+                this._checking = this._checkOnReturn(this.line);
         });
+    }
+
+    /**
+     * Whether a line that looks open after a long absence still carries: one
+     * small request, RETURN_CHECK_MS at most. No answer in time, it is dialled
+     * again. Requests wait for the question (ready()), so none goes out on a
+     * line about to be found dead.
+     * @param {any} line
+     */
+    async _checkOnReturn(line) {
+        let timer = null;
+        const late = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error('no answer')), RETURN_CHECK_MS);
+        });
+        try {
+            await Promise.race([line.fetch('/api/health'), late]);
+        } catch (e) {
+            if (line === this.line && !this._redial)
+                this.lost(line, `silent after a long absence (${e.message})`);
+        } finally {
+            clearTimeout(timer);
+            this._checking = null;
+        }
     }
 
     /** The line that is up now, watched from here on. */
@@ -174,6 +222,9 @@ export class LineKeeper {
 
     /** The line to send on: the one in use, or the next one while it is dialled. */
     async ready() {
+        // The line is being asked whether it still carries (back from a long
+        // absence): wait for the answer, at most RETURN_CHECK_MS.
+        if (this._checking) await this._checking;
         if (!this._redial && this.line && !this.line.connected)
             this.lost(this.line, 'found closed');
         // The stream this was waiting behind is over: the page has nothing to

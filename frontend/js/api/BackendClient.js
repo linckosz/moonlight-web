@@ -20,6 +20,7 @@
  */
 
 import { t } from '../i18n/i18n.js';
+import { lineReady, notCarriedSoFar } from '../net/tunnelBridge.js';
 
 /**
  * Ride out a gap instead of asking the host for a keyframe. **The A/B switch.**
@@ -551,6 +552,46 @@ export class BackendClient {
             { client_uniqueid: this.clientUniqueId() },
             { timeoutMs: 40000 },
         );
+    }
+
+    /**
+     * A launch (launchApp), made once more when the line to the machine
+     * dropped under it.
+     *
+     * Through the rendezvous a launch rides the line, and a line can look open
+     * and carry nothing: on 15/11/2026 an iPhone back from 35 minutes in the
+     * background pressed a card a second after its return, the launch went out
+     * on the dead line, failed when the transport gave up on it four seconds
+     * later, and the line came back a second after that. The second press
+     * worked. That second press is made here, once, on the new line.
+     *
+     * Only when the line failed to carry one of this launch's own requests:
+     * the service worker then answers 502 itself, and the bridge counts the
+     * request as not carried (notCarriedSoFar). Anything the host answered — a
+     * 409, a key refused, a 403, a quota — is reported as it is and never asked
+     * again, even when the line dropped and came back in between: a second
+     * refusal would count twice against the lock-out and say something the
+     * host never said. Safe whether or not the first /start reached the host:
+     * a /start from this device for the same app on the same host takes its
+     * own slot back, as a quality switch or a transport fallback does.
+     * launchApp is made again from its start, so nothing of the first launch
+     * is replayed.
+     */
+    static async launchAppKeepingLine(hostId, appId, streamingSettings = {}) {
+        const launchPaths = `/api/hosts/${hostId}/`;
+        const before = notCarriedSoFar('POST', launchPaths);
+        try {
+            return await this.launchApp(hostId, appId, streamingSettings);
+        } catch (e) {
+            const notCarried =
+                e?.statusCode === 502 && notCarriedSoFar('POST', launchPaths) > before;
+            if (!notCarried) throw e;
+            console.warn(
+                '[MW] The line dropped under the launch — asking once more on the new one',
+            );
+            await lineReady();
+            return this.launchApp(hostId, appId, streamingSettings);
+        }
     }
 
     // ── Session sharing ────────────────────────────────────────────────────

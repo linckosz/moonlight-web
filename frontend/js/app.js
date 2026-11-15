@@ -2783,7 +2783,13 @@ export const MoonlightApp = {
         );
 
         try {
-            const result = await BackendClient.launchApp(host.uuid, app.id, streamingSettings);
+            // Asked once more if the line to the machine drops under it
+            // (launchAppKeepingLine): the second press the person would make.
+            const result = await BackendClient.launchAppKeepingLine(
+                host.uuid,
+                app.id,
+                streamingSettings,
+            );
             // Log only safe fields — never log the full response as it may contain
             // internal IP info (e.g. sessionUrl exposes Sunshine's LAN address).
             console.log('[MW] Launch result:', {

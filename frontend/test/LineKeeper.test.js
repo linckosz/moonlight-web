@@ -6,7 +6,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
     LineKeeper,
     hangUp,
+    LONG_HIDE_MS,
     NOTICE_DELAY_MS,
+    RETURN_CHECK_MS,
     REDIAL_ATTEMPTS,
     REDIAL_BUDGET_MS,
     STREAM_REDIAL_EVERY_MS,
@@ -318,6 +320,51 @@ describe('LineKeeper', () => {
 
         expect(dial).toHaveBeenCalledTimes(1);
         expect(keeper.line).toBe(next);
+    });
+
+    // 15/11/2026: an iPhone back from 35 minutes in the background launched on
+    // a line that still looked open and carried nothing.
+    it('asks a line back from a long absence first, and a launch waits for the answer', async () => {
+        const next = new FakeLine();
+        const { keeper, first, dial, doc } = setup({ lines: [next] });
+
+        doc.hide();
+        await vi.advanceTimersByTimeAsync(LONG_HIDE_MS + 1000);
+        first.hold = true; // looks open, carries nothing
+        doc.show();
+        const launch = keeper.fetch('/api/hosts/h/start', { method: 'POST' });
+        await vi.advanceTimersByTimeAsync(RETURN_CHECK_MS);
+
+        expect((await launch).via).toBe(next);
+        expect(dial).toHaveBeenCalledTimes(1);
+        expect(first.closed).toBe(true);
+    });
+
+    it('keeps a line back from a long absence that answers', async () => {
+        const { keeper, first, dial, doc } = setup();
+        const asked = vi.spyOn(first, 'fetch');
+
+        doc.hide();
+        await vi.advanceTimersByTimeAsync(LONG_HIDE_MS + 1000);
+        doc.show();
+        const launch = await keeper.fetch('/api/hosts/h/start', { method: 'POST' });
+
+        expect(asked).toHaveBeenCalledWith('/api/health');
+        expect(launch.via).toBe(first);
+        expect(dial).not.toHaveBeenCalled();
+    });
+
+    it('asks nothing after a short absence', async () => {
+        const { keeper, first, doc } = setup();
+        const asked = vi.spyOn(first, 'fetch');
+
+        doc.hide();
+        await vi.advanceTimersByTimeAsync(LONG_HIDE_MS - 1000);
+        doc.show();
+        await keeper.fetch('/api/hosts');
+
+        expect(asked).toHaveBeenCalledTimes(1);
+        expect(asked).toHaveBeenCalledWith('/api/hosts', {});
     });
 });
 

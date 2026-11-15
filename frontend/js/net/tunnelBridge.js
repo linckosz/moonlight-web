@@ -79,6 +79,44 @@ export function isTunnelMode() {
 }
 
 /**
+ * The requests the line failed to carry, by "METHOD /path": the service worker
+ * then answers 502 itself, with nothing from the host in it. Kept here, where
+ * the failure is known for what it is, rather than read back from the status,
+ * which a host can answer too.
+ * @type {Map<string, number>}
+ */
+const notCarried = new Map();
+
+/**
+ * Note a request the line failed to carry.
+ * @param {string} method
+ * @param {string} url
+ */
+export function noteNotCarried(method, url) {
+    const key = `${(method || 'GET').toUpperCase()} ${new URL(url, 'http://x').pathname}`;
+    notCarried.set(key, (notCarried.get(key) || 0) + 1);
+}
+
+/**
+ * How many @p method requests under @p pathPrefix the line has failed to carry
+ * so far; 0 without a tunnel. A request that failed while this moved was never
+ * answered by the host.
+ * @param {string} method
+ * @param {string} pathPrefix
+ */
+export function notCarriedSoFar(method, pathPrefix) {
+    const start = `${method.toUpperCase()} ${pathPrefix}`;
+    let n = 0;
+    for (const [key, count] of notCarried) if (key.startsWith(start)) n += count;
+    return n;
+}
+
+/** Resolves once there is a line to send on (at once without a tunnel). */
+export async function lineReady() {
+    if (keeper) await keeper.ready();
+}
+
+/**
  * The same question, answered synchronously and before anything is loaded.
  *
  * A controlling service worker means this document was served by one, and the
@@ -183,6 +221,7 @@ function serveWorkerRequests() {
             response.headers.forEach((value, name) => headers.push([name, value]));
             port.postMessage({ status: response.status, headers, body }, [body]);
         } catch (e) {
+            noteNotCarried(msg.method, msg.url);
             port.postMessage({ error: e.message || 'the connection failed' });
         }
     });
