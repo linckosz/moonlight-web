@@ -73,7 +73,7 @@ CONSOLE_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>
 [ -z "$CONSOLE_HOME" ] && CONSOLE_HOME="/Users/$CONSOLE_USER"
 echo "console user=$CONSOLE_USER uid=$CONSOLE_UID home=$CONSOLE_HOME"
 
-# ── Read the plugin hand-off (best-effort defaults; no jq/python on stock macOS).
+# ── Read the plugin hand-off (no jq/python on stock macOS: plutil reads it).
 #    The pane writes it in the console user's session, in /tmp. It is read only
 #    when it is that user's own ordinary file — not a link, not another kind of
 #    file, theirs, and writable by nobody else. Anything else is left unread:
@@ -95,9 +95,12 @@ if [ -f "$HANDOFF_FILE" ] && [ ! -L "$HANDOFF_FILE" ]; then
 elif [ -e "$HANDOFF_FILE" ] || [ -L "$HANDOFF_FILE" ]; then
     echo "handoff: $HANDOFF_FILE is not an ordinary file — not read, defaults apply"
 fi
+# Each value as the pane wrote it: plutil's raw form prints a string as it is,
+# where `defaults read` writes a backslash, a control character or a letter
+# outside ASCII as an escape.
 read_val() {
     [ "$HANDOFF_OK" = true ] || return 0
-    /usr/bin/defaults read "$HANDOFF" "$1" 2>/dev/null
+    /usr/bin/plutil -extract "$1" raw -o - "$HANDOFF_FILE" 2>/dev/null
 }
 # Absent key → the default, so a plain `installer` CLI run (no plugin pane, no
 # hand-off) behaves as if the pane had been left alone: LAN only.
