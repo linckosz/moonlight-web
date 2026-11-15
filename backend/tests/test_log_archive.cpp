@@ -4,6 +4,7 @@
 #include "test_framework.h"
 #include "common/Logger.h"
 #include "common/ZipWriter.h"
+#include "server/ClientLogLines.h"
 #include "server/LogArchive.h"
 #include "server/LogScrubber.h"
 
@@ -11,6 +12,8 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QMap>
 #include <QTemporaryDir>
 #include <QThread>
@@ -490,6 +493,25 @@ void run_log_scrubber_tests()
              QString("[k3j4 guest 2@192.168.x.{a2}] page /p/(link) — Mozilla/5.0"));
     CHECK_EQ(s.scrubLine("[k3j4 owner@192.168.1.20] page /41zvnyqjdnybgwhw8f20martz4 — x"),
              QString("[k3j4 owner@192.168.x.{a2}] page /(link) — x"));
+    // A share link after a host and its port, and after the rendezvous path.
+    CHECK_EQ(s.scrubLine("join failed: https://192.168.1.66:8443/p/Zx81-abcdefgh?x=1"),
+             QString("join failed: https://192.168.x.{A}:8443/p/(link)?x=1"));
+    CHECK_EQ(
+        s.scrubLine("[k3j4 owner@192.168.1.20] page /41zvnyqjdnybgwhw8f20martz4/p/Zx81-abcdefgh"),
+        QString("[k3j4 owner@192.168.x.{a2}] page /(link)/p/(link)"));
+    CHECK_EQ(LogScrubber::hideShareLinks("/p/(link) and /p/abc stay"),
+             QString("/p/(link) and /p/abc stay"));
+    // The token as a query; another key ending in "token" is not this one.
+    CHECK_EQ(LogScrubber::hideShareLinks("GET /api/share/player/info?token=Zx81-abc&x=1"),
+             QString("GET /api/share/player/info?token=(hidden)&x=1"));
+    CHECK_EQ(LogScrubber::hideShareLinks("mytoken=abc"), QString("mytoken=abc"));
+    // And as a JSON member, in the archive too.
+    CHECK_EQ(LogScrubber::hideShareLinks(R"({"token": "Zx81-abcdefgh", "slot": 2})"),
+             QString(R"~({"token": "(hidden)", "slot": 2})~"));
+    CHECK_EQ(LogScrubber::hideShareLinks(R"({"mytoken": "abc"})"),
+             QString(R"({"mytoken": "abc"})"));
+    CHECK_EQ(s.scrubLine(R"(join body {"token":"Zx81-abcdefgh"})"),
+             QString(R"~(join body {"token":"(hidden)"})~"));
     CHECK_EQ(s.scrubLine("SSL certificate loaded from source: CN=8f3b2aa.moonlightweb.top"),
              QString("SSL certificate loaded from source: CN=instance.moonlightweb.top"));
     CHECK_EQ(s.scrubLine("Untrusted Host 'dualrtx.tailbea5b3.ts.net' refused"),
@@ -613,5 +635,63 @@ void run_log_scrubber_tests()
                                     "[NETWORK] {B} is online (192.168.x.{B}:47989)\n";
         CHECK(holds(entries.value("moonlightweb.log"), expected));
         CHECK(holds(entries.value("about.txt"), "Settings file: /home/user/s.json\n"));
+    }
+
+    // What moonlightweb-client.log gets of a page's batch: no share link, in
+    // the page's address as in its lines, whatever is cut to length.
+    SECTION("Client log lines");
+    {
+        const QString token = "Zx81-abcdefghijklmnopqrstuvwxyz0123456789AB";
+        QJsonObject body;
+        body["id"] = "k3j4!x";
+        body["seq"] = 0;
+        body["page"] = "/p/" + token;
+        body["ua"] = "Mozilla/5.0";
+        body["dropped"] = 2;
+        QJsonArray lines;
+        lines.append(
+            QJsonObject{{"t", 0.0},
+                        {"l", "warn"},
+                        {"m", "join failed: https://192.168.1.66:8443/p/" + token + "?x=1"}});
+        lines.append(QJsonObject{{"t", 0.0}, {"l", "info"}, {"m", "two\nlines /p/" + token}});
+        lines.append(QJsonObject{
+            {"t", 0.0}, {"l", "error"}, {"m", QString(8 * 1024 - 5, 'a') + "/p/" + token}});
+        lines.append(
+            QJsonObject{{"t", 0.0},
+                        {"l", "warn"},
+                        {"m", "GET /api/share/player/info?token=" + token + "&x=1 failed"}});
+        body["lines"] = lines;
+        // No six characters in a row of the token, anywhere.
+        auto leaks = [&token](const QString& text) {
+            for (int i = 0; i + 6 <= token.size(); i++)
+                if (text.contains(token.mid(i, 6))) return true;
+            return false;
+        };
+        const QList<ClientLogLine> out = clientLogLines(body, "guest 2", "192.168.1.20");
+        CHECK_EQ(out.size(), 6);
+        for (const ClientLogLine& line : out)
+            CHECK(!leaks(line.text));
+        CHECK_EQ(out.value(0).text,
+                 QString("[k3j4x guest 2@192.168.1.20] page /p/(link) — Mozilla/5.0"));
+        CHECK_EQ(out.value(0).level, Logger::Info);
+        CHECK_EQ(out.value(1).level, Logger::Warning);
+        CHECK(out.value(1).text.endsWith(" 2 earlier lines dropped (the page's buffer was full)"));
+        CHECK_EQ(out.value(2).level, Logger::Warning);
+        CHECK(out.value(2).text.endsWith(" join failed: https://192.168.1.66:8443/p/(link)?x=1"));
+        CHECK(out.value(3).text.endsWith(" two\n    lines /p/(link)"));
+        CHECK_EQ(out.value(4).level, Logger::Error);
+        CHECK(out.value(4).text.endsWith(QString(8 * 1024 - 5, 'a') + "/p/(l […]"));
+        CHECK(out.value(5).text.endsWith(" GET /api/share/player/info?token=(hidden)&x=1 failed"));
+
+        // A later batch: no page line. A page's address cut to 200 characters
+        // past the link's start.
+        body["seq"] = 1;
+        body.remove("dropped");
+        CHECK_EQ(clientLogLines(body, "owner", "127.0.0.1").size(), 4);
+        body["seq"] = 0;
+        body["page"] = QString(195, 'x') + "/p/" + token;
+        const QString page = clientLogLines(body, "owner", "127.0.0.1").value(0).text;
+        CHECK(page.contains(QString(195, 'x') + "/p/(l — Mozilla/5.0"));
+        CHECK(!leaks(page));
     }
 }

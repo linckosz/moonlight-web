@@ -21,6 +21,7 @@
 #include "common/PrivilegedPlace.h"
 #include "common/RunFlags.h"
 #include "server/AppSettings.h"
+#include "server/ClientLogLines.h"
 #include "server/HttpServer.h"
 #include "server/LogArchive.h"
 #include "server/RestRouter.h"
@@ -31,7 +32,6 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QSysInfo>
 
@@ -42,15 +42,6 @@ namespace {
 // The file's own rotation bounds the rest.
 constexpr qsizetype kMaxBody = 512 * 1024;
 constexpr qsizetype kMaxLines = 2000;
-constexpr qsizetype kMaxLineChars = 8 * 1024;
-
-Logger::Level levelOf(const QString& l)
-{
-    if (l == QLatin1String("error")) return Logger::Error;
-    if (l == QLatin1String("warn")) return Logger::Warning;
-    if (l == QLatin1String("debug")) return Logger::Debug;
-    return Logger::Info;
-}
 
 QString onOff(bool on, bool fromCli)
 {
@@ -125,37 +116,9 @@ HttpResponse writeClientLog(const HttpRequest& req, const QString& who)
         }
     }
 
-    // Who, in every line: the page's own id (two tabs are two pages), the kind
-    // of user, and where from.
-    QString id = body.value(QStringLiteral("id")).toString().left(16);
-    id.remove(QRegularExpression(QStringLiteral("[^A-Za-z0-9]")));
-    const QString tag = QStringLiteral("[%1 %2@%3]").arg(id, who, req.clientAddress);
-
-    if (body.value(QStringLiteral("seq")).toInt() == 0) {
-        log->log(Logger::Info,
-                 tag + QStringLiteral(" page %1 — %2")
-                           .arg(body.value(QStringLiteral("page")).toString().left(200),
-                                body.value(QStringLiteral("ua")).toString().left(300)));
-    }
-    const int dropped = body.value(QStringLiteral("dropped")).toInt();
-    if (dropped > 0)
-        log->log(Logger::Warning,
-                 tag + QStringLiteral(" %1 earlier lines dropped (the page's buffer was full)")
-                           .arg(dropped));
-
-    for (const QJsonValue& v : lines) {
-        const QJsonObject line = v.toObject();
-        // The page's own clock: the server's stamp says when the batch came in,
-        // this one when the line was written.
-        const QString when =
-            QDateTime::fromMSecsSinceEpoch(qint64(line.value(QStringLiteral("t")).toDouble()))
-                .toString(QStringLiteral("hh:mm:ss.zzz"));
-        QString text = line.value(QStringLiteral("m")).toString();
-        if (text.size() > kMaxLineChars) text = text.left(kMaxLineChars) + QStringLiteral(" […]");
-        text.replace(QLatin1Char('\n'), QStringLiteral("\n    "));
-        log->log(levelOf(line.value(QStringLiteral("l")).toString()),
-                 tag + QLatin1Char(' ') + when + QLatin1Char(' ') + text);
-    }
+    // Share links in them are written /p/(link) (ClientLogLines.h).
+    for (const ClientLogLine& line : clientLogLines(body, who, req.clientAddress))
+        log->log(line.level, line.text);
 
     QJsonObject obj;
     obj[QStringLiteral("status")] = QStringLiteral("ok");

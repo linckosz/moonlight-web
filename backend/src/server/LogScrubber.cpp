@@ -327,6 +327,22 @@ void LogScrubber::replaceAddresses(QString& line)
     }
 }
 
+QString LogScrubber::hideShareLinks(QString text)
+{
+    static const QRegularExpression share(QStringLiteral(R"(/p/[A-Za-z0-9_-]{6,})"));
+    if (text.contains(QLatin1String("/p/"))) text.replace(share, QStringLiteral("/p/(link)"));
+    // The same token as a query: /api/share/player/info?token=...
+    static const QRegularExpression query =
+        re(R"((?<![A-Za-z0-9_-])(token)=(?!\(hidden\))[^&\s"'#<>]+)");
+    if (text.contains(QLatin1String("token="), Qt::CaseInsensitive))
+        text.replace(query, QStringLiteral("\\1=") + kHidden);
+    // And as a JSON member: {"token": "..."}.
+    static const QRegularExpression member = re(R"~(("token"\s*:\s*")(?!\(hidden\))[^"]*")~");
+    if (text.contains(QLatin1String("\"token\""), Qt::CaseInsensitive))
+        text.replace(member, QStringLiteral("\\1") + kHidden + QLatin1Char('"'));
+    return text;
+}
+
 QString LogScrubber::scrubLine(QString line)
 {
     // Keyboard diagnostics (keyboard_debug): each line is a key someone typed,
@@ -401,9 +417,7 @@ QString LogScrubber::scrubLine(QString line)
     static const QRegularExpression rdv =
         re(R"(\b((?:stream|app)(?:\.dev)?\.moonlightweb\.top)/(?!\(link\))([A-Za-z0-9_-]{6,}))");
     line.replace(rdv, QStringLiteral("\\1/(link)"));
-    static const QRegularExpression share(
-        QStringLiteral(R"((?<![A-Za-z0-9_])/p/[A-Za-z0-9_-]{6,})"));
-    line.replace(share, QStringLiteral("/p/(link)"));
+    line = hideShareLinks(line);
     // A client log's page path, when the page came through the rendezvous.
     static const QRegularExpression pagePath(QStringLiteral(R"(\bpage /[a-z0-9]{20,}\b)"));
     line.replace(pagePath, QStringLiteral("page /(link)"));

@@ -361,6 +361,7 @@ add_executable(mw-server
     src/server/PhonePairing.cpp
     src/server/LogArchive.cpp
     src/server/LogScrubber.cpp
+    src/server/ClientLogLines.cpp
     src/common/Logger.cpp
     src/common/PrivilegedPlace.cpp
     src/common/RunFlags.cpp

@@ -100,6 +100,12 @@ public:
     /// For about.txt: what was done to the files, in a few lines.
     static QString notice();
 
+    /// @p text with each share link (/p/ and its token) written /p/(link),
+    /// after a host and port as anywhere else, and the value of a token= or of
+    /// a JSON "token" as (hidden): what scrubLine() does to every line, and what
+    /// moonlightweb-client.log keeps of a page's (ClientLogLines.h).
+    static QString hideShareLinks(QString text);
+
 private:
     /// A machine's tag, {A}; its letters are given on first use, and this
     /// PC's (machine 0) are A from the start.

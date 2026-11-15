@@ -312,6 +312,8 @@ add_executable(run_tests
     ${_src}/src/common/ZipWriter.cpp
     ${_src}/src/server/LogArchive.cpp
     ${_src}/src/server/LogScrubber.cpp
+    # What moonlightweb-client.log gets of a page's console.
+    ${_src}/src/server/ClientLogLines.cpp
     # The error reports: what is kept, when it leaves, what it carries.
     ${_src}/src/server/ErrorReports.cpp
     ${_src}/src/server/routes/ErrorRoutes.cpp
