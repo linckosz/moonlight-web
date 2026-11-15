@@ -64,6 +64,39 @@ QString logDir(const QString& readerSid = QString());
 /// Empty: no place could be had.
 QString crashDir();
 
+/// A directory of a privileged process's own under host-data, for SYSTEM and
+/// Administrators only, made if missing: where it stages what it is about to
+/// run. @p name is one name, other than logs and crashes. Windows, in a
+/// privileged process; empty anywhere else, or when no place could be had.
+QString privateDir(const QString& name);
+
+/// A file kept as it is for as long as this object lives: while it is held
+/// nothing else may write to it, rename it or delete it, and what it holds is
+/// what sha256() was computed from, read through the same handle. For a file
+/// that is checked and then run. A regular file with a single link, opened as
+/// itself; anything else is not held, and error() says why.
+class HeldFile
+{
+public:
+    explicit HeldFile(const QString& path);
+    ~HeldFile();
+    HeldFile(const HeldFile&) = delete;
+    HeldFile& operator=(const HeldFile&) = delete;
+
+    bool isHeld() const { return m_Held; }
+    QString error() const { return m_Error; }
+    /// Its SHA-256, in lowercase hexadecimal.
+    QString sha256() const { return m_Sha256; }
+    /// Let go of it before the object dies.
+    void release();
+
+private:
+    QString m_Error;
+    QString m_Sha256;
+    bool m_Held = false;
+    qintptr m_Handle = -1;
+};
+
 /// The directories the "Download logs" archive reads, newest file per kind
 /// across them. A privileged process reads its own host-data\logs\<SID>
 /// only. Any other reads its AppDataLocation logs, plus its account's
@@ -158,8 +191,9 @@ void pruneWorkerFiles(const QString& dir, int maxAgeDays = 7);
 bool removeNoFollow(const QString& path);
 #endif
 
-/// The uninstaller's verb (--remove-host-data): the crash dumps always, the
-/// logs too with @p withLogs. Returns the process exit code: 0 when done.
+/// The uninstaller's verb (--remove-host-data): the crash dumps and what was
+/// staged to be run always, the logs too with @p withLogs. Returns the
+/// process exit code: 0 when done.
 int removeHostData(bool withLogs);
 
 /// The SID string of this process's own user, empty off Windows or when the

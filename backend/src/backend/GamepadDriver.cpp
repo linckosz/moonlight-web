@@ -18,6 +18,7 @@
 #include "backend/GamepadDriver.h"
 
 #include "common/Logger.h"
+#include "common/PrivilegedPlace.h"
 #include "common/WinSystemPath.h"
 #include "network/AddressRace.h"
 
@@ -32,6 +33,8 @@
 #include <QNetworkRequest>
 #include <QProcess>
 #include <QTimer>
+
+#include <memory>
 #include <QUrl>
 
 #ifdef Q_OS_WIN
@@ -58,22 +61,17 @@ bool g_probed = false;
 Status g_status;
 bool g_installing = false;
 
-/// Where the downloaded installer is staged.
-///
-/// Not the temp directory on Windows, for the same reason SelfUpdater avoids
-/// it: this is an executable we are about to run elevated, and C:\Windows\Temp
-/// is writable by every local account — which would turn "install a driver"
-/// into "run whatever another account swapped in".
+/// Where the downloaded installer is staged: a directory of this process's
+/// own under the install directory's host-data, which only SYSTEM and
+/// Administrators may read or write (common/PrivilegedPlace.h). It is an
+/// executable this process is about to run with its own rights, and the
+/// install only ever runs in a process that has them (canInstall()). Not
+/// under System32 either, where the 32-bit WiX bundle cannot find itself (see
+/// isUnderSystem32). Empty when no such directory could be had.
 QString stagingDir()
 {
 #ifdef Q_OS_WIN
-    const QString base = qEnvironmentVariable("LOCALAPPDATA");
-    if (!base.isEmpty() && !mw::win::isUnderSystem32(base))
-        return base + QStringLiteral("/MoonlightWeb/driver");
-    // A service has either no LOCALAPPDATA or SYSTEM's own, under System32 —
-    // where the 32-bit WiX bundle cannot find itself (see isUnderSystem32). The
-    // install directory is admin-only, which is the property that matters here.
-    return QCoreApplication::applicationDirPath() + QStringLiteral("/driver");
+    return mw::place::privateDir(QStringLiteral("driver"));
 #else
     return QDir::tempPath() + QStringLiteral("/MoonlightWeb-driver");
 #endif
@@ -111,6 +109,26 @@ void runInstaller(QNetworkAccessManager* nam, const DoneFn& done)
     QProcess* proc = new QProcess();
     QTimer* deadline = new QTimer(proc);
     deadline->setSingleShot(true);
+
+    // The file that is run is the one that was verified: held from here until
+    // the installer is done, so nothing writes to it or takes its place, and
+    // hashed again through that hold.
+    auto held = std::make_shared<mw::place::HeldFile>(stagedPath());
+    if (!held->isHeld() || held->sha256() != downloadSha256()) {
+        const QString why =
+            held->isHeld() ? QStringLiteral("it changed after it was written") : held->error();
+        held->release();
+        proc->deleteLater();
+        finish(nam, Result::Failed,
+               QStringLiteral("The staged driver installer cannot be run (%1)").arg(why), done);
+        return;
+    }
+    // Let go of it when the installer ends, whichever way: connected first, so
+    // it is done before the slots below delete the file.
+    QObject::connect(proc, &QProcess::finished, proc, [held]() { held->release(); });
+    QObject::connect(proc, &QProcess::errorOccurred, proc, [held](QProcess::ProcessError err) {
+        if (err == QProcess::FailedToStart) held->release();
+    });
 
     QObject::connect(deadline, &QTimer::timeout, proc, [proc]() {
         Logger::warning(
@@ -216,7 +234,8 @@ void install(std::function<void(Result, QString)> done)
                  .arg(downloadUrl()));
         return;
     }
-    if (!QDir().mkpath(stagingDir())) {
+    const QString staging = stagingDir();
+    if (staging.isEmpty() || !QDir().mkpath(staging)) {
         done(Result::Failed, QStringLiteral("Cannot create the driver staging directory"));
         return;
     }
@@ -263,8 +282,10 @@ void install(std::function<void(Result, QString)> done)
             return;
         }
 
+        // A new file: nothing already under that name is written to.
         QFile file(stagedPath());
-        if (!file.open(QIODevice::WriteOnly) || file.write(payload) != payload.size()) {
+        if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly) ||
+            file.write(payload) != payload.size()) {
             file.close();
             finish(nam, Result::Failed,
                    QStringLiteral("Cannot write to the driver staging directory"), done);

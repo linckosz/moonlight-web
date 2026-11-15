@@ -17,6 +17,8 @@
  * directory shared with the user, a file is reached by its name in that
  * directory and as itself: a link, a second name for another file or a
  * directory in its place is refused, and what it stood for is left as it was.
+ * What such a process is about to run is staged where only SYSTEM and
+ * Administrators can reach it, and held unchanged from its check to its end.
  *
  * The TNR runs without the rights the real directories need, so the tests name
  * this process's own account as the one that owns and may write them
@@ -39,6 +41,7 @@
 #include "common/Logger.h"
 #include "common/PrivilegedPlace.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -562,6 +565,95 @@ void run_windows(const QString& tmp, const QString& me)
         CHECK(samePath(logDir(), logs)); // made again for what follows
     }
 
+    // ── What a privileged process is about to run ───────────────────────────
+    {
+        const auto sha256 = [](const QByteArray& data) {
+            return QString::fromLatin1(
+                QCryptographicHash::hash(data, QCryptographicHash::Sha256).toHex());
+        };
+        // A directory of its own under host-data, for the trusted accounts.
+        const QString staging = privateDir(QStringLiteral("driver"));
+        CHECK(samePath(staging, hostData + QStringLiteral("/driver")));
+        CHECK(win::checkLockedDir(staging, trusted) == Check::Ok);
+        CHECK(isWritablePlace(staging));
+        for (const char* name : {"", ".", "..", "logs", "Crashes", "a/b", "a\\b", "x:y"})
+            CHECK(privateDir(QLatin1String(name)).isEmpty());
+        setForTests(app, trusted, /*privileged=*/false);
+        CHECK(privateDir(QStringLiteral("driver")).isEmpty());
+        setForTests(app, trusted);
+
+        // Held: read by anyone who may, and neither written, replaced nor
+        // deleted; what it holds is what was hashed.
+        const QString staged = staging + QStringLiteral("/setup.exe");
+        const QByteArray payload(200000, 'p');
+        CHECK(writeFile(staged, payload));
+        {
+            HeldFile held(staged);
+            CHECK(held.isHeld());
+            CHECK(held.error().isEmpty());
+            CHECK_EQ(held.sha256(), sha256(payload));
+            CHECK(readFile(staged) == payload);
+            QFile writer(staged);
+            CHECK(!writer.open(QIODevice::WriteOnly | QIODevice::Append));
+            CHECK(!QFile::remove(staged));
+            CHECK(QFileInfo(staged).size() == payload.size());
+            held.release();
+            CHECK(!held.isHeld());
+            CHECK(writer.open(QIODevice::WriteOnly | QIODevice::Append));
+            CHECK(writer.write("x") == 1);
+            writer.close();
+        }
+        {
+            // One byte more: another hash.
+            HeldFile changed(staged);
+            CHECK(changed.isHeld());
+            CHECK(changed.sha256() != sha256(payload));
+            CHECK_EQ(changed.sha256(), sha256(payload + "x"));
+        }
+        // A second name for it, a directory, nothing at all: not held.
+        CHECK(makeHardLink(staging + QStringLiteral("/second.exe"), staged));
+        {
+            HeldFile linked(staged);
+            CHECK(!linked.isHeld());
+            CHECK(!linked.error().isEmpty());
+            CHECK(linked.sha256().isEmpty());
+        }
+        CHECK(QFile::remove(staging + QStringLiteral("/second.exe")));
+        {
+            HeldFile directory(staging);
+            CHECK(!directory.isHeld());
+            HeldFile absent(staging + QStringLiteral("/absent.exe"));
+            CHECK(!absent.isHeld());
+        }
+        // Held, and run: the hold leaves the system what it needs to start the
+        // file, and still nothing else writes to it or moves it. The command
+        // interpreter stands in for an installer: it ends with the code asked.
+        const QString runnable = staging + QStringLiteral("/held-run.exe");
+        const QString interpreter = QDir::fromNativeSeparators(qEnvironmentVariable("ComSpec"));
+        CHECK(!interpreter.isEmpty() && QFile::copy(interpreter, runnable));
+        {
+            HeldFile held(runnable);
+            CHECK(held.isHeld());
+            QProcess process;
+            process.start(runnable,
+                          {QStringLiteral("/c"), QStringLiteral("exit"), QStringLiteral("7")});
+            CHECK(process.waitForFinished(20000));
+            CHECK(process.exitStatus() == QProcess::NormalExit);
+            CHECK_EQ(process.exitCode(), 7);
+            QFile writer(runnable);
+            CHECK(!writer.open(QIODevice::WriteOnly | QIODevice::Append));
+            CHECK(!MoveFileExW(QDir::toNativeSeparators(runnable).toStdWString().c_str(),
+                               QDir::toNativeSeparators(staging + QStringLiteral("/moved.exe"))
+                                   .toStdWString()
+                                   .c_str(),
+                               0));
+            CHECK(QFileInfo::exists(runnable));
+            CHECK(!QFileInfo::exists(staging + QStringLiteral("/moved.exe")));
+        }
+        CHECK(QFile::remove(runnable));
+        // Left there: the uninstaller's verb takes it with the crash dumps.
+    }
+
     // ── A directory shared with the user ────────────────────────────────────
     {
         // Made the plain way: whoever may write to the directory above may
@@ -742,8 +834,10 @@ void run_windows(const QString& tmp, const QString& me)
     {
         CHECK(writeFile(crashes + QStringLiteral("/crash-1.dmp"), "x"));
         CHECK(writeFile(logs + QStringLiteral("/moonlightweb.log"), "x"));
+        CHECK(QFileInfo::exists(hostData + QStringLiteral("/driver/setup.exe")));
         CHECK_EQ(removeHostData(/*withLogs=*/false), 0);
         CHECK(!QFileInfo::exists(crashes));
+        CHECK(!QFileInfo::exists(hostData + QStringLiteral("/driver")));
         CHECK(QFileInfo::exists(logs + QStringLiteral("/moonlightweb.log")));
         CHECK_EQ(removeHostData(/*withLogs=*/false), 0); // nothing left to delete
         CHECK(makeJunction(hostData + QStringLiteral("/crashes"), elsewhere));

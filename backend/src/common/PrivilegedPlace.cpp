@@ -18,6 +18,7 @@
 #include "PrivilegedPlace.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
@@ -700,17 +701,23 @@ QString privilegedLogDir(const QString& readerSid)
     return QDir::fromNativeSeparators(mine);
 }
 
-QString privilegedCrashDir()
+/// host-data\<leaf>, for SYSTEM and Administrators only, checked or made.
+QString privilegedPrivateDir(const QString& leaf)
 {
     const QString base = installBase();
     if (base.isEmpty()) return {};
     const QStringList trusted = trustedSids();
     const QString hostData = hostDataUnder(base);
-    const QString crashes = hostData + QStringLiteral("\\crashes");
+    const QString dir = hostData + QLatin1Char('\\') + leaf;
     if (!ensureLocked(hostData, win::Dir::HostData, {}, trusted) ||
-        !ensureLocked(crashes, win::Dir::Crashes, {}, trusted))
+        !ensureLocked(dir, win::Dir::Crashes, {}, trusted))
         return {};
-    return QDir::fromNativeSeparators(crashes);
+    return QDir::fromNativeSeparators(dir);
+}
+
+QString privilegedCrashDir()
+{
+    return privilegedPrivateDir(QStringLiteral("crashes"));
 }
 
 /// @p dir and each directory above it, up to the install directory, are
@@ -1051,6 +1058,100 @@ QString crashDir()
 #endif
 }
 
+QString privateDir(const QString& name)
+{
+#ifdef Q_OS_WIN
+    if (!isPrivileged() || !plainName(name) ||
+        name.compare(QLatin1String("logs"), Qt::CaseInsensitive) == 0 ||
+        name.compare(QLatin1String("crashes"), Qt::CaseInsensitive) == 0)
+        return {};
+    return privilegedPrivateDir(name);
+#else
+    Q_UNUSED(name);
+    return {};
+#endif
+}
+
+HeldFile::HeldFile(const QString& path)
+{
+    const QString clean = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    QByteArray buffer(1 << 16, Qt::Uninitialized);
+#ifdef Q_OS_WIN
+    // Read access for others and nothing else: no write, no rename, no delete
+    // while this handle is open.
+    Handle h(CreateFileW(native(clean).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                         OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_SEQUENTIAL_SCAN,
+                         nullptr));
+    if (!h.valid()) {
+        m_Error = lastError();
+        return;
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    if (!GetFileInformationByHandle(h.h, &info)) {
+        m_Error = lastError();
+        return;
+    }
+    if ((info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) ||
+        info.nNumberOfLinks != 1 || !win::samePath(win::finalPath(h.h), clean)) {
+        m_Error = QStringLiteral("it is not a regular file with one link, at its own path");
+        return;
+    }
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(h.h, buffer.data(), DWORD(buffer.size()), &got, nullptr)) {
+            m_Error = lastError();
+            return;
+        }
+        if (got == 0) break;
+        hash.addData(QByteArrayView(buffer.constData(), qsizetype(got)));
+    }
+    m_Handle = reinterpret_cast<qintptr>(h.release());
+#else
+    const int fd = ::open(QFile::encodeName(clean).constData(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) {
+        m_Error = QString::fromLocal8Bit(strerror(errno));
+        return;
+    }
+    struct stat st{};
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
+        ::close(fd);
+        m_Error = QStringLiteral("it is not a regular file with one link");
+        return;
+    }
+    for (;;) {
+        const ssize_t got = ::read(fd, buffer.data(), size_t(buffer.size()));
+        if (got < 0) {
+            m_Error = QString::fromLocal8Bit(strerror(errno));
+            ::close(fd);
+            return;
+        }
+        if (got == 0) break;
+        hash.addData(QByteArrayView(buffer.constData(), qsizetype(got)));
+    }
+    m_Handle = fd;
+#endif
+    m_Sha256 = QString::fromLatin1(hash.result().toHex());
+    m_Held = true;
+}
+
+HeldFile::~HeldFile()
+{
+    release();
+}
+
+void HeldFile::release()
+{
+    if (!m_Held) return;
+    m_Held = false;
+#ifdef Q_OS_WIN
+    CloseHandle(reinterpret_cast<HANDLE>(m_Handle));
+#else
+    ::close(int(m_Handle));
+#endif
+    m_Handle = -1;
+}
+
 QStringList readableLogDirs()
 {
     if (isPrivileged()) {
@@ -1360,10 +1461,22 @@ int removeHostData(bool withLogs)
         return 0;
     }
     const QString hostData = hostDataUnder(base);
-    const QString target = withLogs ? hostData : hostData + QStringLiteral("\\crashes");
-    if (!removeNoFollow(target)) {
-        say(QStringLiteral("cannot delete %1: %2").arg(target, lastError()));
-        return 1;
+    // With the logs: all of it. Without: everything but them (the crash dumps,
+    // what was staged to be run).
+    QStringList targets{hostData};
+    if (!withLogs) {
+        targets.clear();
+        const QStringList names = QDir(hostData).entryList(QDir::AllEntries | QDir::NoDotAndDotDot |
+                                                           QDir::Hidden | QDir::System);
+        for (const QString& name : names)
+            if (name.compare(QLatin1String("logs"), Qt::CaseInsensitive) != 0)
+                targets << hostData + QLatin1Char('\\') + name;
+    }
+    for (const QString& target : targets) {
+        if (!removeNoFollow(target)) {
+            say(QStringLiteral("cannot delete %1: %2").arg(target, lastError()));
+            return 1;
+        }
     }
     if (!withLogs) {
         // What is left empty goes as well. RemoveDirectoryW takes a directory
