@@ -37,6 +37,7 @@ frontend/
 │   │   ├── gamepadMapping.js   # non-standard pads: user / built-in / Android / SDL DB resolution, device kind, remap capture
 │   │   ├── gamepadDb.js        # GENERATED from SDL_GameControllerDB (npm run gamepad-db), loaded on demand
 │   │   ├── TouchPadState.js    # on-screen controller: what is held, stick maths, layout, its settings (no DOM)
+│   │   ├── PenInput.js         # a pen as a pen: pointer samples → the pen packet's events, tilt maths (no DOM)
 │   │   ├── LatencyProbe.js     # click→photon probe (debug builds, mwLatency.run())
 │   │   └── renderers/          # VideoRenderer base + Canvas2D / WebGl / WebGpu / VideoElement + factory
 │   ├── ui/
@@ -44,6 +45,7 @@ frontend/
 │   │   ├── StreamView.js       # the streaming overlay (largest module: decode, render, input, stats)
 │   │   ├── StreamViewKeyboard.js / StreamViewTouch.js / StreamViewFullscreen.js
 │   │   ├── StreamViewTouchPad.js / TouchPadView.js  # on-screen controller: when it is offered and shown; its layer
+│   │   ├── StreamViewPen.js    # the pen on the picture, kept off the mouse and trackpad paths while the host takes it
 │   │   ├── AdminView.js / SettingsView.js / SetupView.js / LoginView.js
 │   │   ├── GamepadRemapDialog.js / GamepadArt.js / DeviceArt.js  # Test & Remap: wizard, drawn pad, radio, flight stick, wheel
 │   │   ├── PairDialog.js / Toast.js / icons.js
