@@ -538,6 +538,47 @@ describe('BackendClient request shaping', () => {
         });
     });
 
+    // Auto (issue #67) names no height: the host works it out from the screen,
+    // which is all the page says — and a screen it could not read is left out.
+    it('playerJoin sends Auto as the screen and no height', async () => {
+        const auto = mockFetch(jsonResponse({ ok: true }));
+        await BackendClient.playerJoin('tok', 'auto', undefined, 0, undefined, false, undefined, {
+            screen: '2560x1440',
+            tv: false,
+        });
+        expect(JSON.parse(auto.apiCalls()[0][1].body)).toEqual({
+            token: 'tok',
+            auto: true,
+            screen: '2560x1440',
+            ride_out_loss: true,
+        });
+
+        const tv = mockFetch(jsonResponse({ ok: true }));
+        await BackendClient.playerJoin('tok', 'auto', undefined, 2, undefined, false, undefined, {
+            screen: null,
+            tv: true,
+        });
+        expect(JSON.parse(tv.apiCalls()[0][1].body)).toEqual({
+            token: 'tok',
+            auto: true,
+            tv: true,
+            transport_index: 2,
+            ride_out_loss: true,
+        });
+
+        // A rung sends its height, whatever screen came along.
+        const rung = mockFetch(jsonResponse({ ok: true }));
+        await BackendClient.playerJoin('tok', 1440, undefined, 0, undefined, false, undefined, {
+            screen: '2560x1440',
+            tv: false,
+        });
+        expect(JSON.parse(rung.apiCalls()[0][1].body)).toEqual({
+            token: 'tok',
+            height: 1440,
+            ride_out_loss: true,
+        });
+    });
+
     // A guest of a Linux host encodes on its own: without the wish, its stream
     // had no refresh wave and every lost frame cost a keyframe (01/10/2026).
     it('playerJoin asks to ride out a gap, except from an Apple platform', async () => {

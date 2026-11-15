@@ -55,7 +55,8 @@ describe('PlayerJoinView: Enter presses Join', () => {
     it('joins on Enter with nothing focused', async () => {
         enter();
         await vi.waitFor(() => expect(onJoin).toHaveBeenCalledTimes(1));
-        expect(onJoin.mock.calls[0][0].height).toBe(1080);
+        // Auto, the join page's default (issue #67).
+        expect(onJoin.mock.calls[0][0].height).toBe('auto');
     });
 
     it('joins once after the PIN, with the key that submitted it already spent', async () => {
@@ -75,7 +76,7 @@ describe('PlayerJoinView: Enter presses Join', () => {
     });
 
     it('leaves Enter to a focused control', async () => {
-        const q720 = container.querySelector('.player-quality-btn[data-height="720"]');
+        const q720 = container.querySelector('.player-quality-btn[data-quality="720"]');
         q720.focus();
         enter();
         await Promise.resolve();

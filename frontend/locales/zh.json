@@ -1250,6 +1250,8 @@
         "thisPc": "这台电脑",
         "quality": "串流分辨率",
         "qualityFixed": "画面：{{height}}p，由主机设定",
+        "qualityAuto": "自动",
+        "qualityAutoHint": "自动会根据你的屏幕和网络连接调整。",
         "mouseMode": "鼠标模式",
         "desktop": "桌面",
         "desktopHint": "适合办公：鼠标仍归你所有，可以移出画面去操作屏幕的其他部分。",

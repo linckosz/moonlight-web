@@ -1250,6 +1250,8 @@
         "thisPc": "this PC",
         "quality": "Streaming resolution",
         "qualityFixed": "Picture: {{height}}p, set by the host",
+        "qualityAuto": "Auto",
+        "qualityAutoHint": "Auto follows your screen and your connection.",
         "mouseMode": "Mouse mode",
         "desktop": "Desktop",
         "desktopHint": "For desktop work: the mouse stays yours and can leave the stream to reach the rest of your screen.",

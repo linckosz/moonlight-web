@@ -699,14 +699,18 @@ export class BackendClient {
     static async playerPin(token, pin) {
         return this.post('/api/share/player/pin', { token, pin });
     }
-    /** @param {string} [aspect] "W:H" override; omitted, the backend reuses the
+    /** @param {number|'auto'} height a rung, or 'auto': the backend works it
+     *  out from @p screen (issue #67), and no height is sent.
+     *  @param {string} [aspect] "W:H" override; omitted, the backend reuses the
      *  ratio the owner's session settled on for that host.
      *  @param {number} [transportIndex] rung of the transport chain to try; a
      *  later rung replaces the guest's own failed one.
      *  @param {string} [codec] 'h264' after this browser failed to decode the
      *  codec the backend picked; omitted, the backend picks.
      *  @param {boolean} [udpBlocked] this browser's STUN probe got no answer:
-     *  the backend skips the UDP rungs for an internet guest. */
+     *  the backend skips the UDP rungs for an internet guest.
+     *  @param {{screen?: string|null, tv?: boolean}} [screen] for Auto: this
+     *  screen's "WxH" in device pixels and whether it is a TV's (guestScreen). */
     static async playerJoin(
         token,
         height,
@@ -715,8 +719,16 @@ export class BackendClient {
         codec,
         udpBlocked,
         reconnectOf,
+        screen,
     ) {
-        const body = aspect ? { token, height, aspect } : { token, height };
+        /** @type {Record<string, unknown>} */
+        const body = { token };
+        if (height === 'auto') {
+            body.auto = true;
+            if (screen && typeof screen.screen === 'string') body.screen = screen.screen;
+            if (screen && screen.tv === true) body.tv = true;
+        } else body.height = height;
+        if (aspect) body.aspect = aspect;
         if (transportIndex > 0) body.transport_index = transportIndex;
         if (codec) body.codec = codec;
         if (udpBlocked) body.udp_blocked = true;

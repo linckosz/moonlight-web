@@ -26,7 +26,13 @@
 import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
-import { IS_MOBILE_OR_TABLET, IS_TOUCH_DEVICE, hevcClientDecodes } from '../util/BrowserDetect.js';
+import {
+    IS_MOBILE_OR_TABLET,
+    IS_TOUCH_DEVICE,
+    IS_TV,
+    hevcClientDecodes,
+} from '../util/BrowserDetect.js';
+import { devicePixelSize } from '../util/StreamResolution.js';
 import { PlayerArt } from './PlayerArt.js';
 import { noticeHtml } from './PrivacyNotice.js';
 import { setErrorTrailAllowed } from '../util/ErrorTrail.js';
@@ -39,6 +45,28 @@ import {
 import { padKey, padName, isAutoMapped } from '../stream/gamepadMapping.js';
 
 const HEIGHTS = [720, 1080, 1440];
+
+/**
+ * What a guest can pick: Auto, the default (issue #67), then the rungs. Auto
+ * is the host's to work out (GuestProfile on the backend): the page only says
+ * how big this screen is and whether it is a TV's, never a height or a bitrate.
+ */
+const QUALITIES = ['auto', ...HEIGHTS];
+
+/** @param {unknown} v @returns {'auto'|number} a choice of QUALITIES, Auto when it is none */
+function qualityOf(v) {
+    return QUALITIES.includes(/** @type {any} */ (v)) ? /** @type {'auto'|number} */ (v) : 'auto';
+}
+
+/**
+ * This screen as Auto reads it: its size in device pixels, held landscape
+ * ("WxH"), and whether it is a TV's. Null size when the browser gives none.
+ * @returns {{screen: string|null, tv: boolean}}
+ */
+export function guestScreen() {
+    const s = devicePixelSize();
+    return { screen: s ? s.width + 'x' + s.height : null, tv: IS_TV };
+}
 
 /**
  * The guest's input preferences, kept in this browser. A guest has no account
@@ -64,6 +92,8 @@ function loadPrefs() {
             touchPadMode: raw.touchPadMode === 'always' ? 'always' : 'auto',
             // The box at the bottom of the page: ticked unless they untick it.
             errorReports: raw.errorReports !== false,
+            // The picture's choice: Auto until they pick a rung, kept then.
+            quality: qualityOf(raw.quality),
         };
     } catch (_) {
         return {
@@ -72,6 +102,7 @@ function loadPrefs() {
             padKey: null,
             touchPadMode: 'auto',
             errorReports: true,
+            quality: 'auto',
         };
     }
 }
@@ -103,15 +134,18 @@ export class PlayerJoinView {
     /**
      * @param {HTMLElement} container
      * @param {string} token the share token from the URL
-     * @param {(info: {height: number, gaming: boolean, touchScreen: boolean, padKey: string|null}, transportIndex?: number, codec?: string) => Promise<void>} onJoin
+     * @param {(info: {height: number|'auto', screen: string|null, tv: boolean, gaming: boolean, touchScreen: boolean, padKey: string|null}, transportIndex?: number, codec?: string) => Promise<void>} onJoin
+     *        `height` is a rung or 'auto'; `screen` and `tv` (guestScreen) are
+     *        what Auto is worked out from on the host.
      */
     constructor(container, token, onJoin) {
         this.container = container;
         this.token = token;
         this.onJoin = onJoin;
         this.info = null;
-        this._height = 1080;
         this._prefs = loadPrefs();
+        /** @type {'auto'|number} */
+        this._quality = this._prefs.quality;
         this._padWatch = null;
         this._padSig = '';
         this._joinLabel = '';
@@ -432,7 +466,7 @@ export class PlayerJoinView {
         const fixedHeight = [720, 1080, 1440].includes(Number(this.info.feed_height))
             ? Number(this.info.feed_height)
             : 0;
-        if (fixedHeight) this._height = fixedHeight;
+        if (fixedHeight) this._quality = fixedHeight;
 
         this._shell(`
             <h1>${escapeHtml(t('player.joinTitle', { machine }))}</h1>
@@ -460,13 +494,17 @@ export class PlayerJoinView {
                           >${escapeHtml(t('player.quality'))}</span>
                     <div class="player-quality-choice" role="group"
                          aria-labelledby="player-quality-label">
-                        ${HEIGHTS.map(
-                            (h) => `
-                            <button class="btn player-quality-btn ${h === this._height ? 'is-selected' : ''}"
-                                    type="button" data-height="${h}">${h}p</button>
+                        ${QUALITIES.map(
+                            (q) => `
+                            <button class="btn player-quality-btn ${q === this._quality ? 'is-selected' : ''}"
+                                    type="button" data-quality="${q}">${
+                                        q === 'auto' ? escapeHtml(t('player.qualityAuto')) : q + 'p'
+                                    }</button>
                         `,
                         ).join('')}
                     </div>
+                    <p class="player-hint player-quality-auto-hint"
+                       ${this._quality === 'auto' ? '' : 'hidden'}>${escapeHtml(t('player.qualityAutoHint'))}</p>
                 </div>`
                 }
                 ${this._inputToggles()}
@@ -489,11 +527,19 @@ export class PlayerJoinView {
 
         this.container.querySelectorAll('.player-quality-btn').forEach((b) => {
             b.addEventListener('click', () => {
-                this._height = Number(/** @type {HTMLElement} */ (b).dataset.height);
+                const picked = /** @type {HTMLElement} */ (b).dataset.quality;
+                this._quality = qualityOf(picked === 'auto' ? picked : Number(picked));
+                // Kept for their next visit, as their input choices are.
+                this._prefs.quality = this._quality;
+                savePrefs(this._prefs);
                 this.container
                     .querySelectorAll('.player-quality-btn')
                     .forEach((o) => o.classList.remove('is-selected'));
                 b.classList.add('is-selected');
+                const hint = /** @type {HTMLElement|null} */ (
+                    this.container.querySelector('.player-quality-auto-hint')
+                );
+                if (hint) hint.hidden = this._quality !== 'auto';
             });
         });
 
@@ -531,11 +577,12 @@ export class PlayerJoinView {
                         : undefined;
                 await this.onJoin(
                     {
-                        height: this._height,
+                        height: this._quality,
                         // No aspect: a guest cannot know the host's format, and
-                        // its own monitor is irrelevant — the backend hands it the
-                        // ratio the owner's session already settled on for that
-                        // host.
+                        // the stream is the host's picture — the backend hands it
+                        // the ratio the owner's session already settled on for
+                        // that host. Auto only needs how big this screen is.
+                        ...guestScreen(),
                         gaming: this._prefs.gaming,
                         touchScreen: this._prefs.touchScreen,
                         padKey: this._gamepadAllowed() ? this._selectedPadKey() : null,

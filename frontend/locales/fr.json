@@ -1250,6 +1250,8 @@
         "thisPc": "ce PC",
         "quality": "Résolution du streaming",
         "qualityFixed": "Image : {{height}}p, choisie par l'hôte",
+        "qualityAuto": "Auto",
+        "qualityAutoHint": "Auto suit votre écran et votre connexion.",
         "mouseMode": "Mode souris",
         "desktop": "Bureau",
         "desktopHint": "Pour la bureautique : la souris reste la vôtre et peut sortir du flux pour atteindre le reste de votre écran.",

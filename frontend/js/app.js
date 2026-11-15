@@ -655,7 +655,7 @@ export const MoonlightApp = {
             container,
             token,
             async (
-                { height, gaming, touchScreen, padKey },
+                { height, screen, tv, gaming, touchScreen, padKey },
                 transportIndex = 0,
                 codec,
                 rejoin = {},
@@ -676,6 +676,8 @@ export const MoonlightApp = {
                     codec,
                     udpBlocked,
                     rejoin.reconnectOf,
+                    // What Auto is worked out from on the host (issue #67).
+                    { screen, tv },
                 );
                 // Left from the veil while the rejoin was on its way.
                 if (rejoin.aborted) {
@@ -751,12 +753,14 @@ export const MoonlightApp = {
                         // The guest loses 4:4:4 there as the owner does, and is
                         // told the same way.
                         if (streamView._yuv444) Toast.warning(t('launch.chroma444Fallback'));
-                        view.onJoin({ height, gaming, touchScreen, padKey }, at, 'h264').catch(
-                            (err) => {
-                                console.error('[MW] Guest codec fallback failed:', err);
-                                view.refresh();
-                            },
-                        );
+                        view.onJoin(
+                            { height, screen, tv, gaming, touchScreen, padKey },
+                            at,
+                            'h264',
+                        ).catch((err) => {
+                            console.error('[MW] Guest codec fallback failed:', err);
+                            view.refresh();
+                        });
                         return;
                     }
                     // Back to the join screen: the invitation outlives the stream.
@@ -783,7 +787,11 @@ export const MoonlightApp = {
                     this.streamView = null;
                     await streamView.quit({ silent: true, retire: true });
                     try {
-                        await view.onJoin({ height, gaming, touchScreen, padKey }, next, codec);
+                        await view.onJoin(
+                            { height, screen, tv, gaming, touchScreen, padKey },
+                            next,
+                            codec,
+                        );
                     } catch (err) {
                         console.error('[MW] Guest relaunch failed:', err);
                         view.refresh();
@@ -848,7 +856,7 @@ export const MoonlightApp = {
                     await streamView.quit({ silent: true, retire: true, takenOver: true });
                     try {
                         await view.onJoin(
-                            { height, gaming, touchScreen, padKey },
+                            { height, screen, tv, gaming, touchScreen, padKey },
                             at,
                             codec,
                             again,

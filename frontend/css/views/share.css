@@ -1102,7 +1102,14 @@ body.player-mode {
 
 .player-quality-choice {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 8px;
+}
+
+/* What Auto follows, under the picker while it is the choice (issue #67). */
+.player-quality-auto-hint {
+    margin: 0;
 }
 
 .player-quality-btn {

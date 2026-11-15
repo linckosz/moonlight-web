@@ -21,6 +21,7 @@
 #include "network/LinkAddresses.h"
 #include "network/UPNPClient.h"
 #include "server/AuthManager.h"
+#include "server/GuestProfile.h"
 #include "server/HttpServer.h"
 #include "server/NetClassify.h"
 #include "server/OwnerProof.h"
@@ -673,13 +674,14 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
             // session and launching that app — including telling the guest when
             // the app has since been removed from the host.
 
-            // Only the resolution comes from the player: the height from a fixed
-            // set, plus their screen aspect ("W:H") so the stream fills their
-            // display. Everything else — fps, codec, bitrate — is decided here.
-            // On a native host not even that: its guests watch one picture, at
-            // the height the owner picked.
-            const int requested = body.value(QStringLiteral("height")).toInt(1080);
-            int height = (requested == 720 || requested == 1440) ? requested : 1080;
+            // Only the resolution comes from the player: Auto or a rung of a
+            // fixed set (GuestProfile). Auto is 0 here: its height is worked
+            // out from their screen where the host's shape is known
+            // (startPlayerStream). Everything else — fps, codec, bitrate — is
+            // decided there too. On a native host sharing one feed not even
+            // that: its guests watch one picture, at the height the owner
+            // picked.
+            int height = mw::guestprofile::requestedRung(body);
             if (deps.guestPicture && deps.guestPicture(share.hostForSlot(slot)).ownerHeight)
                 height = share.feedHeight();
             const QString aspect = body.value(QStringLiteral("aspect")).toString();

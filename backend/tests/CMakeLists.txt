@@ -99,6 +99,7 @@ add_executable(run_tests
     test_link_freeze_log.cpp
     test_host_uplink.cpp
     test_host_upload_cap.cpp
+    test_guest_profile.cpp
     test_reference_repairs.cpp
     test_rxbuf_section.cpp
     test_capture_key.cpp
@@ -211,6 +212,8 @@ add_executable(run_tests
     ${_src}/src/streaming/ClipboardSensitivity.cpp
     # The adapter a stream leaves by and its counter: read-only system calls.
     ${_src}/src/streaming/HostUplinkReader.cpp
+    # An invited player's picture (issue #67): pure, from the join request.
+    ${_src}/src/server/GuestProfile.cpp
     # The bench's cap on the host's other uploads: its scripts, built and read.
     ${_src}/src/streaming/HostUploadCap.cpp
     # The HID passthrough's hidattach, read and rebuilt into a descriptor.

@@ -90,12 +90,12 @@ describe('PlayerJoinView on a native host', () => {
 
     it('changes nothing on a host where each guest has a stream of its own', async () => {
         const onJoin = await mount({}, false);
-        // The guest's own choice, as before…
-        expect(container.querySelectorAll('.player-quality-btn').length).toBe(3);
+        // The guest's own choice, Auto first (issue #67)…
+        expect(container.querySelectorAll('.player-quality-btn').length).toBe(4);
         expect(container.querySelector('.player-quality-fixed')).toBeNull();
         // …and the codec the backend's, the fallback coming after a failure.
         const [info, , codec] = await join(onJoin);
-        expect(info.height).toBe(1080);
+        expect(info.height).toBe('auto');
         expect(codec).toBeUndefined();
     });
 });

@@ -70,6 +70,7 @@
 #include "common/DetachedProcess.h"
 #include "server/ClientUniqueId.h"
 #include "server/ErrorReports.h"
+#include "server/GuestProfile.h"
 #include "server/LogArchive.h"
 #include "server/routes/ErrorRoutes.h"
 #include "server/routes/LogRoutes.h"
@@ -6604,8 +6605,11 @@ int main(int argc, char* argv[])
         ShareRoutesDeps::GuestPicture picture;
         NvComputer* host = computerManager.getHost(hostUuid);
         if (host && host->backendType == NativeHostBackend::typeName()) {
-            picture.ownerHeight = true;
             picture.shared = SharedFeed::enabled(appSettings.sharedFeedEnabled());
+            // One feed, one height: the owner's. Without it each guest has an
+            // encoder of their own and picks, as on every other host (issue
+            // #67); the engine never upscales a guest's rung past its display.
+            picture.ownerHeight = picture.shared;
         }
         return picture;
     };
@@ -6890,9 +6894,11 @@ int main(int argc, char* argv[])
         // Fixed profile: 60 fps, SDR, 4:2:0, HEVC→H.264 (Auto never resolves
         // to AV1). The width follows the HOST's screen aspect ("W:H", 16:9
         // fallback), which the owner's session already worked out for this
-        // host — a guest has no way to know it and its own monitor is beside
-        // the point. The bitrate is the standard auto estimate for the
-        // height, halved — a guest should not eat the whole uplink.
+        // host — a guest has no way to know it, and the stream is the host's
+        // picture: a guest's own shape would only add bars inside it. Auto's
+        // height (0 from the join route) is the guest's screen at that shape
+        // (GuestProfile, issue #67). The bitrate, the owner's Auto rule on the
+        // guest's network, is set below with that network.
         if (!aspect.contains(':')) aspect = g_HostAspect.value(hostUuid);
         double aspectRatio = 16.0 / 9.0;
         if (aspect.contains(':')) {
@@ -6900,10 +6906,14 @@ int main(int argc, char* argv[])
             int aw = parts.value(0).toInt(), ah = parts.value(1).toInt();
             if (aw > 0 && ah > 0) aspectRatio = static_cast<double>(aw) / ah;
         }
+        if (height <= 0) {
+            const QJsonObject joinBody = QJsonDocument::fromJson(req.body).object();
+            height =
+                mw::guestprofile::autoHeight(mw::guestprofile::parseScreen(joinBody), aspectRatio,
+                                             mw::guestprofile::requestFromTv(joinBody));
+            qInfo() << "[Session] Player slot" << slot << "Auto:" << height << "lines";
+        }
         const int width = static_cast<int>(height * aspectRatio + 0.5) & ~1;
-        const int autoKbps =
-            qRound(20000.0 * (static_cast<double>(height) * height) / (1080.0 * 1080.0));
-        const int bitrateKbps = qMax(1000, autoKbps / 2);
 
         // H.264 when the guest's browser could not decode what Auto picked —
         // their codec fallback, the only codec choice a guest has.
@@ -6970,6 +6980,23 @@ int main(int argc, char* argv[])
         const NetClassify::Kind clientKind = streamClientKind(req);
         const bool clientSameNetwork =
             streamClientSameNetwork(req, clientKind, {routerPorts.publicIp()});
+        // The owner's Auto bitrate, whole (issue #67, I67-part A): the LAN rule
+        // for a guest on this machine's network — as /api/settings/streaming's
+        // viewer_lan reads it for the owner's page — the Internet one for
+        // everyone else: 10 Mbps at 1080p, what the halved estimate gave every
+        // guest before, and less above it. The native host's shared feed is
+        // one picture for guests on any network, so its first guest's network
+        // cannot set it: it keeps the estimate it had, the standard one for
+        // the height, halved, until its own Auto (I67, step 2).
+        const bool guestOnLan = clientKind == NetClassify::Kind::Loopback ||
+                                clientKind == NetClassify::Kind::Private || clientSameNetwork;
+        const bool onSharedFeed = host->backendType == NativeHostBackend::typeName() &&
+                                  SharedFeed::enabled(appSettings.sharedFeedEnabled());
+        const int halvedKbps =
+            qRound(20000.0 * (static_cast<double>(height) * height) / (1080.0 * 1080.0)) / 2;
+        const int bitrateKbps =
+            onSharedFeed ? qMax(1000, halvedKbps)
+                         : mw::guestprofile::autoBitrateKbps(height, aspectRatio, guestOnLan);
         // As the owner's: its line in the connection history.
         ConnectionHistory::Entry historyLine;
         historyLine.address = AuthManager::cleanClientAddress(req.clientAddress);

@@ -37,10 +37,11 @@ struct ShareRoutesDeps
 {
     /// Start a player's stream on their slot. Answers with the same payload as
     /// POST /api/hosts/:id/start so the frontend reuses its pipeline verbatim.
-    /// @p height is one of 720/1080/1440; @p aspect is the player's "W:H" screen
-    /// ratio (width is derived from it) — everything else (fps, codec, bitrate)
-    /// is decided server-side. @p serverHost is the hostname the player reached
-    /// us on, needed to build the signaling URL they must come back to.
+    /// @p height is one of 720/1080/1440, or 0 for Auto: worked out there from
+    /// the screen @p req describes, at the host's shape (GuestProfile);
+    /// @p aspect is a "W:H" override of that shape (width is derived from it)
+    /// — everything else (fps, codec, bitrate) is decided server-side. @p serverHost is the
+    /// hostname the player reached us on, needed to build the signaling URL they must come back to.
     /// @p transportIndex is the rung of the transport chain to try, walked by the
     /// guest's browser exactly as the owner's walks theirs; @p req is the join
     /// request itself, for where the guest is and how they arrived.
@@ -127,11 +128,11 @@ struct ShareRoutesDeps
     /// says so — they cannot change the answer, but they get to know it.
     std::function<bool()> statsReporting;
 
-    /// How the guests of @p hostUuid get their picture. On a native host its
-    /// height is the owner's pick (ShareManager::feedHeight), not the guest's,
-    /// and — the shared feed switched on — they all watch one encode of it.
-    /// Every other host: neither, each guest picks and gets a stream of their
-    /// own.
+    /// How the guests of @p hostUuid get their picture. On a native host with
+    /// the shared feed switched on they all watch one encode of it, so its
+    /// height is the owner's pick (ShareManager::feedHeight), not the guest's.
+    /// Every other host — a native one without the feed included (issue #67):
+    /// neither, each guest picks and gets a stream of their own.
     struct GuestPicture
     {
         bool ownerHeight = false;

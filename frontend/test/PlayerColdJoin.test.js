@@ -37,7 +37,8 @@ describe('PlayerJoinView cold start', () => {
     let container;
 
     const joinBtn = () => container.querySelector('.player-join-btn');
-    const hint = () => container.querySelector('.player-hint');
+    // The cold-start notice, not the line saying what Auto follows (issue #67).
+    const hint = () => container.querySelector('.player-hint:not(.player-quality-auto-hint)');
     const refreshBtn = () => container.querySelector('.player-refresh');
 
     beforeEach(() => {

@@ -18,6 +18,7 @@ vi.mock('../js/i18n/i18n.js', () => ({
 vi.mock('../js/util/BrowserDetect.js', () => ({
     IS_MOBILE_OR_TABLET: false,
     IS_TOUCH_DEVICE: false,
+    IS_TV: false,
 }));
 
 import { PlayerJoinView } from '../js/ui/PlayerJoinView.js';

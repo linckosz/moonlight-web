@@ -1250,6 +1250,8 @@
         "thisPc": "bu bilgisayar",
         "quality": "Yayın çözünürlüğü",
         "qualityFixed": "Görüntü: {{height}}p, ana bilgisayar tarafından ayarlandı",
+        "qualityAuto": "Otomatik",
+        "qualityAutoHint": "Otomatik, ekranınıza ve bağlantınıza göre ayarlanır.",
         "mouseMode": "Fare modu",
         "desktop": "Masaüstü",
         "desktopHint": "Masaüstü işleri için: fare sizde kalır ve ekranınızın geri kalanına ulaşmak için yayından çıkabilir.",

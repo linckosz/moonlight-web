@@ -335,6 +335,7 @@ add_executable(mw-server
     src/server/HomeScreenShell.cpp
     src/server/RestRouter.cpp
     src/server/ShareManager.cpp
+    src/server/GuestProfile.cpp
     src/server/OwnerProof.cpp
     src/server/SessionPool.cpp
     src/server/routes/AuthRoutes.cpp
