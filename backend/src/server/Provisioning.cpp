@@ -22,7 +22,10 @@
 #include "../backend/NvComputer.h"
 #include "../backend/SunshineRestClient.h"
 #include "../common/Logger.h"
+#include "../common/OwnerAccount.h"
+#include "../common/PrivilegedPlace.h"
 
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -206,6 +209,13 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
     return paired;
 }
 
+QString fingerprint(const QByteArray& content, const QDateTime& modified)
+{
+    return QString::fromLatin1(
+               QCryptographicHash::hash(content, QCryptographicHash::Sha256).toHex()) +
+           QLatin1Char(':') + QString::number(modified.toMSecsSinceEpoch());
+}
+
 bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers)
 {
     // The installer drops provisioning.json next to the executable (Windows +
@@ -219,15 +229,38 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
         dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
         path = dir + QStringLiteral("/provisioning.json");
     }
-    QFile file(path);
-    if (!file.exists()) return false;
-    if (!file.open(QIODevice::ReadOnly)) {
-        Logger::warning(QStringLiteral("Provisioning: cannot read %1").arg(path));
+    if (!QFile::exists(path)) return false;
+
+#ifdef Q_OS_WIN
+    // The installer's answers are for the account that gave them: the one it
+    // recorded (common/OwnerAccount.h). A server of another account of this
+    // machine leaves the file to that one.
+    if (!mw::owneraccount::same(mw::owneraccount::recorded(mw::owneraccount::machineStore()),
+                                mw::place::currentUserSid())) {
+        Logger::debug(QStringLiteral("Provisioning: %1 is for the account the installation was "
+                                     "made by — left to it")
+                          .arg(path));
         return false;
     }
+#endif
 
-    QJsonObject obj = QJsonDocument::fromJson(file.readAll()).object();
-    file.close();
+    // Read as it is, and only when an administrator alone could have written
+    // it (common/PrivilegedPlace.h): the file decides what this server opens.
+    constexpr qint64 kMaxBytes = 64 * 1024;
+    QString why;
+    QDateTime modified;
+    const std::optional<QByteArray> content =
+        mw::place::readInstalledFile(path, kMaxBytes, &why, nullptr, &modified);
+    if (!content) {
+        Logger::warning(QStringLiteral("Provisioning: %1 is not applied (%2)").arg(path, why));
+        return false;
+    }
+    // Applied once. A server without the rights to remove the file (the
+    // install directory is an administrator's) finds it again at every start.
+    const QString applied = fingerprint(*content, modified);
+    if (settings.provisioningApplied() == applied) return false;
+
+    QJsonObject obj = QJsonDocument::fromJson(*content).object();
 
     Logger::info(QStringLiteral("Provisioning: applying %1").arg(path));
 
@@ -290,6 +323,15 @@ bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& co
         consumed.close();
     }
     QFile::remove(path);
+    // Remembered either way; said once when the file stays, which is what a
+    // server with its user's own rights sees under an administrator's
+    // directory. The installer replaces the file at the next install and
+    // removes it at uninstall.
+    settings.setProvisioningApplied(applied);
+    if (QFile::exists(path))
+        Logger::info(QStringLiteral("Provisioning: %1 stays where the installer put it — it is "
+                                    "not applied a second time")
+                         .arg(path));
     return true;
 }
 

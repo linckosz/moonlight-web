@@ -62,6 +62,7 @@ These are started by the server itself, its service, its scheduled tasks or its 
 | `--stream-worker`, `--worker-pipe`, `--worker-data-dir`, `--worker-log-reader`, `--signin-screen` | The server and the launcher service, for each stream's worker process. |
 | `--worker-service`, `--worker-service-install`, `--worker-service-remove` | The installer and Windows, for the stream-worker launcher service. |
 | `--owner-record` | The installer, to record the account the installation is made by. |
+| `--has-user-rights` | The installer, run as the person who started it, to learn whether to start the server as that account (Windows). The answer is the exit code. |
 | `--remove-host-data` (with `--with-logs`) | The uninstaller, to delete the crash dumps kept under the install directory, and its logs when the configuration is removed (Windows). |
 | `--vdisplay-apply` (with `--stage`, `--vdisplay-dir`), `--vdisplay-guard` | The server and its elevated task, for the virtual display. |
 | `--vhid-apply` (with `--vhid-dir`) | The installer, for the HID passthrough driver. |

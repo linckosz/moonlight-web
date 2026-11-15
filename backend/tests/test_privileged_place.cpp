@@ -19,6 +19,8 @@
  * directory in its place is refused, and what it stood for is left as it was.
  * What such a process is about to run is staged where only SYSTEM and
  * Administrators can reach it, and held unchanged from its check to its end.
+ * A file the installer laid down is read only when an administrator alone
+ * could have written it.
  *
  * The TNR runs without the rights the real directories need, so the tests name
  * this process's own account as the one that owns and may write them
@@ -114,6 +116,24 @@ bool makeDir(const QString& path, const QString& sddl)
     const BOOL ok = CreateDirectoryW(QDir::toNativeSeparators(path).toStdWString().c_str(), &sa);
     LocalFree(sd);
     return ok != 0;
+}
+
+/// A file made with a security descriptor of its own.
+bool makeFile(const QString& path, const QString& sddl, const QByteArray& data)
+{
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.toStdWString().c_str(),
+                                                              SDDL_REVISION_1, &sd, nullptr))
+        return false;
+    SECURITY_ATTRIBUTES sa{sizeof(sa), sd, FALSE};
+    const HANDLE h = CreateFileW(QDir::toNativeSeparators(path).toStdWString().c_str(),
+                                 GENERIC_WRITE, 0, &sa, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    LocalFree(sd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD written = 0;
+    const BOOL ok = WriteFile(h, data.constData(), DWORD(data.size()), &written, nullptr);
+    CloseHandle(h);
+    return ok && written == DWORD(data.size());
 }
 
 /// A junction needs no privilege, where a symbolic link does.
@@ -565,6 +585,65 @@ void run_windows(const QString& tmp, const QString& me)
         CHECK(samePath(logDir(), logs)); // made again for what follows
     }
 
+    // ── A file the installer laid down, read as it is ───────────────────────
+    {
+        // A directory and a file only the trusted accounts may write to.
+        const QString installed = tmp + QStringLiteral("/installed");
+        CHECK(makeDir(installed, mine));
+        const QString file = installed + QStringLiteral("/provisioning.json");
+        const QByteArray content("{\"internet_access_authorized\": false}\n");
+        CHECK(writeFile(file, content));
+        QString why;
+        bool missing = true;
+        QDateTime modified;
+        CHECK_EQ(readInstalledFile(file, 1024, &why, &missing, &modified).value_or(QByteArray()),
+                 content);
+        CHECK(!missing);
+        CHECK(qAbs(modified.secsTo(QFileInfo(file).lastModified())) <= 2);
+        // The same answer for a process with its user's own rights.
+        setForTests(app, trusted, /*privileged=*/false);
+        CHECK(readInstalledFile(file, 1024).has_value());
+        setForTests(app, trusted);
+
+        CHECK(!readInstalledFile(installed + QStringLiteral("/absent.json"), 1024, &why, &missing)
+                   .has_value());
+        CHECK(missing);
+        CHECK(!readInstalledFile(file, 8, &why, &missing).has_value());
+        CHECK(!missing);
+        CHECK(why.contains(QStringLiteral("more than")));
+
+        // A second name for it; a directory in its place; reached by a junction.
+        CHECK(makeHardLink(installed + QStringLiteral("/second.json"), file));
+        CHECK(!readInstalledFile(file, 1024, &why).has_value());
+        CHECK(QFile::remove(installed + QStringLiteral("/second.json")));
+        CHECK(readInstalledFile(file, 1024).has_value());
+        CHECK(QDir().mkdir(installed + QStringLiteral("/dir.json")));
+        CHECK(!readInstalledFile(installed + QStringLiteral("/dir.json"), 1024, &why, &missing)
+                   .has_value());
+        CHECK(makeJunction(tmp + QStringLiteral("/installed-link"), installed));
+        CHECK(!readInstalledFile(tmp + QStringLiteral("/installed-link/provisioning.json"), 1024,
+                                 &why)
+                   .has_value());
+        CHECK(removeNoFollow(tmp + QStringLiteral("/installed-link")));
+
+        // A file another account may write to, in a directory that is fine.
+        const QString writable = installed + QStringLiteral("/writable.json");
+        CHECK(makeFile(writable, QStringLiteral("O:%1D:P(A;;FA;;;%1)(A;;FW;;;BU)").arg(me), "{}"));
+        CHECK(!readInstalledFile(writable, 1024, &why).has_value());
+        // A file that is fine, in a directory another account may add to.
+        const QString loose = tmp + QStringLiteral("/installed-loose");
+        CHECK(makeDir(loose, mine + QStringLiteral("(A;;0x4;;;AU)")));
+        CHECK(makeFile(loose + QStringLiteral("/provisioning.json"),
+                       QStringLiteral("O:%1D:P(A;;FA;;;%1)").arg(me), "{}"));
+        CHECK(!readInstalledFile(loose + QStringLiteral("/provisioning.json"), 1024, &why)
+                   .has_value());
+        // Owned by an account that is not one of the trusted ones.
+        setForTests(app, {QStringLiteral("S-1-5-18")});
+        CHECK(!readInstalledFile(file, 1024, &why).has_value());
+        setForTests(app, trusted);
+        CHECK(readInstalledFile(file, 1024).has_value());
+    }
+
     // ── What a privileged process is about to run ───────────────────────────
     {
         const auto sha256 = [](const QByteArray& data) {
@@ -977,6 +1056,22 @@ void run_posix(const QString& tmp)
         // One that has to belong to root: the stand-in's is fine.
         const SharedDir owned(shared, SharedDir::Owner::System);
         CHECK(owned.isOpen());
+    }
+
+    // A file the installer laid down: read whole, within the bound.
+    {
+        const QString file = tmp + QStringLiteral("/provisioning.json");
+        CHECK(writeFile(file, "{}\n"));
+        bool missing = true;
+        QDateTime modified;
+        CHECK_EQ(readInstalledFile(file, 64, nullptr, &missing, &modified).value_or(QByteArray()),
+                 QByteArray("{}\n"));
+        CHECK(!missing);
+        CHECK(modified.isValid());
+        CHECK(!readInstalledFile(file, 2).has_value());
+        CHECK(!readInstalledFile(tmp + QStringLiteral("/absent.json"), 64, nullptr, &missing)
+                   .has_value());
+        CHECK(missing);
     }
 
     // A process with its user's rights: as it always has.

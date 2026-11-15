@@ -131,7 +131,7 @@ On Windows, a process that runs with more rights than its user (the stream worke
 | `host-data\logs\<SID>\` | That account's logs and bench traces: written by SYSTEM and administrators, readable by the account. *Download logs* reads it along with the per-user `logs/`. |
 | `host-data\crashes\` | Minidumps, for administrators only. |
 
-A helper elevated through another administrator's account logs under that administrator's SID, so its logs are not in the user's *Download logs* archive. The uninstaller deletes the minidumps, and the logs when the configuration is removed. On Linux and macOS, a process running as root writes in its data directory only when that directory and every one above it belong to root and nobody else may write to them; otherwise it writes no file and says so on stderr.
+A helper elevated through another administrator's account logs under that administrator's SID, so its logs are not in the user's *Download logs* archive. When the directory the exe runs from is one its user can change, as a build folder is for an elevated `--dev`, there is no `host-data` to use: such a process and its stream workers write no log file and install no minidump handler, and their log lines go to the console only. The uninstaller deletes the minidumps, and the logs when the configuration is removed. On Linux and macOS, a process running as root writes in its data directory only when that directory and every one above it belong to root and nobody else may write to them; otherwise it writes no file and says so on stderr.
 
 ## 3.7 Headless operator CLI
 

@@ -1152,6 +1152,83 @@ void HeldFile::release()
     m_Handle = -1;
 }
 
+std::optional<QByteArray> readInstalledFile(const QString& path, qint64 maxBytes, QString* why,
+                                            bool* missing, QDateTime* modified)
+{
+    QString reason;
+    bool absent = false;
+    auto refuse = [&](const QString& text) -> std::optional<QByteArray> {
+        if (why) *why = text;
+        if (missing) *missing = absent;
+        return std::nullopt;
+    };
+    if (missing) *missing = false;
+    const QFileInfo info(QDir::cleanPath(QFileInfo(path).absoluteFilePath()));
+    const QString clean = info.absoluteFilePath();
+#ifdef Q_OS_WIN
+    // Opened as itself, and read through the handle the checks were made on.
+    Handle h(CreateFileW(native(clean).c_str(), GENERIC_READ | READ_CONTROL,
+                         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                         OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    if (!h.valid()) {
+        const DWORD err = GetLastError();
+        absent = err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
+        return refuse(lastError(err));
+    }
+    const QStringList trusted = trustedSids();
+    QString resolved;
+    const win::Check dir = win::checkInstallDir(info.absolutePath(), trusted, &resolved);
+    if (dir != win::Check::Ok || !win::samePath(resolved, info.absolutePath()))
+        return refuse(
+            QStringLiteral("its directory is %1")
+                .arg(win::describe(dir != win::Check::Ok ? dir : win::Check::ReparsePoint)));
+    BY_HANDLE_FILE_INFORMATION facts{};
+    if (!GetFileInformationByHandle(h.h, &facts)) return refuse(lastError());
+    if ((facts.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) ||
+        facts.nNumberOfLinks != 1 || !win::samePath(win::finalPath(h.h), clean))
+        return refuse(QStringLiteral("it is not a regular file with one link, at its own path"));
+    QStringList owners = trusted;
+    owners << QStringLiteral("S-1-5-18") << QStringLiteral("S-1-5-32-544")
+           << QString::fromWCharArray(win::kTrustedInstaller);
+    const win::Check file = win::checkSecurity(h.h, win::SidSet(owners), /*locked=*/false);
+    if (file != win::Check::Ok) return refuse(win::describe(file));
+    const qint64 size = (qint64(facts.nFileSizeHigh) << 32) | qint64(facts.nFileSizeLow);
+    if (size > maxBytes) return refuse(QStringLiteral("it holds more than %1 bytes").arg(maxBytes));
+
+    QByteArray data;
+    QByteArray buffer(1 << 16, Qt::Uninitialized);
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(h.h, buffer.data(), DWORD(buffer.size()), &got, nullptr))
+            return refuse(lastError());
+        if (got == 0) break;
+        data.append(buffer.constData(), qsizetype(got));
+        if (data.size() > maxBytes)
+            return refuse(QStringLiteral("it holds more than %1 bytes").arg(maxBytes));
+    }
+    if (modified) {
+        // A FILETIME counts 100 ns from 1601; Qt counts milliseconds from 1970.
+        const quint64 ticks = (quint64(facts.ftLastWriteTime.dwHighDateTime) << 32) |
+                              quint64(facts.ftLastWriteTime.dwLowDateTime);
+        *modified = QDateTime::fromMSecsSinceEpoch(qint64(ticks / 10000) - 11644473600000LL);
+    }
+    return data;
+#else
+    QFile file(clean);
+    if (!file.open(QIODevice::ReadOnly)) {
+        absent = !info.exists();
+        return refuse(file.errorString());
+    }
+    if (file.size() > maxBytes)
+        return refuse(QStringLiteral("it holds more than %1 bytes").arg(maxBytes));
+    const QByteArray data = file.read(maxBytes + 1);
+    if (data.size() > maxBytes)
+        return refuse(QStringLiteral("it holds more than %1 bytes").arg(maxBytes));
+    if (modified) *modified = file.fileTime(QFileDevice::FileModificationTime);
+    return data;
+#endif
+}
+
 QStringList readableLogDirs()
 {
     if (isPrivileged()) {

@@ -263,8 +263,9 @@ Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 ; link is on and answering, this machine's own otherwise) and hands it to the
 ; browser. Asked at the click, not before: the link is good once, for ten
 ; minutes, and this page can stay open longer than that. As the person who
-; started Setup (runasoriginaluser), whose browser it is.
-Filename: "{app}\{#MyAppExe}"; Parameters: "--open-link"; WorkingDir: "{app}"; Description: "{cm:RunAdmin}"; Flags: postinstall skipifsilent nowait runasoriginaluser
+; started Setup (runasoriginaluser), whose browser it is. Not offered when this
+; Setup started no server (ServerWasStarted): there is no page to open yet.
+Filename: "{app}\{#MyAppExe}"; Parameters: "--open-link"; WorkingDir: "{app}"; Description: "{cm:RunAdmin}"; Flags: postinstall skipifsilent nowait runasoriginaluser; Check: ServerWasStarted
 
 [Code]
 const
@@ -336,6 +337,9 @@ var
   // The server runs as an NSSM service (session 0): stop/start it around the file
   // copy instead of killing and relaunching a tray process.
   ServiceInstalled: Boolean;
+  // This Setup started no server: nobody with their own rights only started
+  // it, and there is no logon task to go through (RunProvisionChecklist).
+  ServerNotStarted: Boolean;
   // "Start MoonlightWeb at logon" on the Finished page, above the "open the
   // admin page" row. Ticked by default on a first install; on an update it
   // shows whether the logon task is there right now — the tray menu and the
@@ -1471,8 +1475,8 @@ procedure WaitForOwnerLink();
 var
   rc: Integer;
 begin
-  // Nothing to prefer, or nobody to show it to.
-  if WizardSilent then Exit;
+  // Nothing to prefer, or nobody to show it to, or no server to ask.
+  if WizardSilent or ServerNotStarted then Exit;
   if not (InternetAuthorized or SettingsBoolEnabled('internet_access_enabled')) then Exit;
 
   ProgressPage.SetText(ExpandConstant('{cm:ResolveLinkWait}'), '');
@@ -1496,17 +1500,46 @@ begin
   end;
 end;
 
+// Whether the Finished page may offer the server's page.
+function ServerWasStarted(): Boolean;
+begin
+  Result := not ServerNotStarted;
+end;
+
+// The server is the user's: it runs with that person's own rights, never with
+// Setup's. So Setup asks the exe, run as the person who started Setup, what
+// that account is (`--has-user-rights`, common/OwnerAccount.h): 0, their own
+// rights and the account this install is made by; 8, their own rights and
+// another account; anything else, not an account to start the server as (Setup
+// itself was started with an administrator's rights, or the question could
+// not be asked).
+function AskStartAs(): Integer;
+var
+  rc: Integer;
+begin
+  Result := -1;
+  try
+    if ExecAsOriginalUser(ExpandConstant('{app}\{#MyAppExe}'), '--has-user-rights',
+                          ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, rc) then
+      Result := rc;
+  except
+    Result := -1;
+  end;
+end;
+
 // Launch the server (kicks off first-run provisioning) and poll its status file,
 // driving the on-screen checklist until the task is terminal or it times out.
 procedure RunProvisionChecklist();
 var
   statusPath, content, ar, spin: String;
   raw: AnsiString; // LoadStringFromFile requires an AnsiString out-param.
-  i, j, rc: Integer;
+  i, j, rc, startAs: Integer;
   pctAr, itAr: Integer;
   prevAr: String;
-  holdDone: Boolean;
+  holdDone, followFirstRun: Boolean;
 begin
+  ServerNotStarted := False;
+  followFirstRun := True;
   // Bring the server back up. A service install owns its own lifecycle (session
   // 0, no tray) — restarting it is what StopRunningInstance stopped.
   if ServiceInstalled then
@@ -1519,17 +1552,41 @@ begin
   // privileged level.
   else if UpdateMode and LogonTaskExists() then
     Exec('schtasks.exe', '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc)
-  else
-    // Start the windowless tray server now so provisioning.json is consumed and
-    // pairing + A-record run. ewNoWait: it keeps running after setup exits.
-    // --autostart: an automatic launch must not open the browser itself — the
-    // [Run] "open the admin page" checkbox owns that.
-    Exec(ExpandConstant('{app}\{#MyAppExe}'), '--autostart', ExpandConstant('{app}'),
-         SW_HIDE, ewNoWait, rc);
+  else begin
+    // Start the windowless tray server now so provisioning.json is read and
+    // the A-record runs, as the person who started Setup: the server never
+    // gets Setup's rights. What it needs them for was done above, by Setup
+    // (firewall rule, drivers, tasks, service). ewNoWait: it keeps running
+    // after setup exits. --autostart: an automatic launch must not open the
+    // browser itself — the [Run] "open the admin page" checkbox owns that.
+    startAs := AskStartAs();
+    if (startAs = 0) or (startAs = 8) then begin
+      try
+        ExecAsOriginalUser(ExpandConstant('{app}\{#MyAppExe}'), '--autostart',
+                           ExpandConstant('{app}'), SW_HIDE, ewNoWait, rc);
+      except
+        ServerNotStarted := True;
+      end;
+      // Another account than the one this install is made by: its server keeps
+      // its first-run status in its own profile, where this Setup does not
+      // look, so there is nothing to follow here.
+      if startAs = 8 then followFirstRun := False;
+    end else if LogonTaskExists() then
+      // Nobody with their own rights only started Setup: the logon task
+      // starts the server at its least-privileged level.
+      Exec('schtasks.exe', '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc)
+    else begin
+      ServerNotStarted := True;
+      Log('server not started: Setup was started with an administrator''s rights and ' +
+          'there is no logon task. It starts at the next logon, or from the Start menu.');
+    end;
+  end;
 
   // Silent installs have no UI to drive; an update has nothing to provision.
   // Either way the server just restarted with the settings it already had.
   if WizardSilent or UpdateMode then Exit;
+  // No server, or one whose first steps are not this Setup's to follow.
+  if ServerNotStarted or (not followFirstRun) then Exit;
 
   // Qt AppDataLocation on Windows: %AppData%\<Org>\<App> = MoonlightWeb\<MyAppName>.
   statusPath := ExpandConstant('{userappdata}\MoonlightWeb\{#MyAppName}\provisioning.status.json');

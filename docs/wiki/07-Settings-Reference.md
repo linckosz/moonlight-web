@@ -124,6 +124,7 @@ The consent is the master switch: `internet_access_enabled` gates the per-sessio
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `setup_completed` | bool | `false` | First-run wizard done. Windows: set by the installer's provisioning flow; macOS/Linux: by the in-app `/setup` wizard. While false on a GUI launch, the browser opens `/setup`. |
+| `provisioning_applied` | string | *(absent)* | Written by the server: the installer's `provisioning.json` it last applied (its SHA-256 and the date it was written), so that the same file is applied once. |
 
 ### Diagnostics
 

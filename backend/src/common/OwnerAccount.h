@@ -93,4 +93,17 @@ bool isServiceAccount(const QString& sid);
 /// system's own, whatever is recorded.
 bool isOwner(const Store& store, void* token);
 
+/// What the installer is told when it asks, as the person who started it,
+/// whether the server may be started as that account (`--has-user-rights`).
+/// The values are the verb's exit codes: the installer starts the server on
+/// Yes and on OtherAccount, and follows its first steps on Yes alone (another
+/// account's server keeps its files where the installer does not look).
+enum class StartAs
+{
+    Yes = 0,          ///< its user's own rights, and the account the install was made by
+    MoreRights = 1,   ///< more rights than its user: not started this way
+    OtherAccount = 8, ///< its user's own rights, another account than the recorded one
+};
+StartAs startAs(bool privileged, const QString& recordedSid, const QString& accountSid);
+
 } // namespace mw::owneraccount

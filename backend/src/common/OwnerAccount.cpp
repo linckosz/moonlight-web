@@ -193,4 +193,10 @@ bool isOwner(const Store& store, void* token)
     return !isServiceAccount(account) && same(recorded(store), account);
 }
 
+StartAs startAs(bool privileged, const QString& recordedSid, const QString& accountSid)
+{
+    if (privileged || isServiceAccount(accountSid)) return StartAs::MoreRights;
+    return same(recordedSid, accountSid) ? StartAs::Yes : StartAs::OtherAccount;
+}
+
 } // namespace mw::owneraccount

@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QDateTime>
 #include <QFile>
 #include <QString>
 #include <QStringList>
@@ -96,6 +97,18 @@ private:
     bool m_Held = false;
     qintptr m_Handle = -1;
 };
+
+/// A file the installer laid down beside the executable, read only when it is
+/// one an administrator alone could have written. On Windows its directory
+/// passes the install directory's check, and the file is opened as itself: a
+/// regular file with a single link, owned by SYSTEM, Administrators or
+/// TrustedInstaller, with no entry that lets another account write to it, of
+/// at most @p maxBytes. Elsewhere it is read as QFile reads it, with the same
+/// bound. @p missing: there is no such file. @p modified: when it was last
+/// written.
+std::optional<QByteArray> readInstalledFile(const QString& path, qint64 maxBytes,
+                                            QString* why = nullptr, bool* missing = nullptr,
+                                            QDateTime* modified = nullptr);
 
 /// The directories the "Download logs" archive reads, newest file per kind
 /// across them. A privileged process reads its own host-data\logs\<SID>

@@ -812,6 +812,12 @@ public:
     bool setupCompleted() const;
     void setSetupCompleted(bool completed);
 
+    /// The installer's provisioning file this server last applied, as
+    /// Provisioning names it (its digest and its date): the same file is not
+    /// applied twice. Empty when none was.
+    QString provisioningApplied() const;
+    void setProvisioningApplied(const QString& fingerprint);
+
     // ── UPnP NAT traversal ────────────────────────────────────────────────────
 
     /// Whether UPnP port mapping is enabled for WebRTC NAT traversal.

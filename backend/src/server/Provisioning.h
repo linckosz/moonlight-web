@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QDateTime>
 #include <QString>
 
 class AppSettings;
@@ -49,6 +50,11 @@ namespace Provisioning {
 /// wires the asynchronous A-record step via setStepStatus() so the installer's
 /// live checklist can observe it.
 bool applyOnce(const QString& exeDir, AppSettings& settings, ComputerManager& computers);
+
+/// How a provisioning file is named in the settings once applied: the SHA-256
+/// of what it holds and the moment it was written. A file installed again is
+/// another one, and is applied again.
+QString fingerprint(const QByteArray& content, const QDateTime& modified);
 
 /// Update one provisioning step in `<AppData>/provisioning.status.json`, the file
 /// the installer polls to render its live checklist. Steps: "install", "pairing",

@@ -284,6 +284,18 @@ void AppSettings::setSetupCompleted(bool completed)
     writeAll(obj);
 }
 
+QString AppSettings::provisioningApplied() const
+{
+    return readAll().value("provisioning_applied").toString();
+}
+
+void AppSettings::setProvisioningApplied(const QString& fingerprint)
+{
+    QJsonObject obj = readAll();
+    obj["provisioning_applied"] = fingerprint;
+    writeAll(obj);
+}
+
 // ── Audio time-stretch (WSOLA) ─────────────────────────────────────────────────
 
 bool AppSettings::audioTimeStretch() const

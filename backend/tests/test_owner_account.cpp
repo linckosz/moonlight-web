@@ -52,6 +52,26 @@ void run_owner_account_tests()
     CHECK(!same(me + QStringLiteral(" x"), me + QStringLiteral(" x")));
     CHECK(!same(me, me + QStringLiteral("-1")));
 
+    SECTION("OwnerAccount: what the installer is told before it starts the server");
+    // Its own rights and the recorded account: started, and followed.
+    CHECK(startAs(false, me, me) == StartAs::Yes);
+    // More rights than its user, whoever it is: not started this way.
+    CHECK(startAs(true, me, me) == StartAs::MoreRights);
+    CHECK(startAs(true, QString(), me) == StartAs::MoreRights);
+    // One of the system's own accounts is nobody's.
+    CHECK(startAs(false, system, system) == StartAs::MoreRights);
+    CHECK(startAs(false, me, system) == StartAs::MoreRights);
+    // Its own rights, and another account than the recorded one, or none
+    // recorded, or an account that cannot be read.
+    CHECK(startAs(false, system, me) == StartAs::OtherAccount);
+    CHECK(startAs(false, QString(), me) == StartAs::OtherAccount);
+    CHECK(startAs(false, QStringLiteral("bruno"), me) == StartAs::OtherAccount);
+    CHECK(startAs(false, me, QString()) == StartAs::OtherAccount);
+    // The exit codes the installer reads.
+    CHECK_EQ(static_cast<int>(StartAs::Yes), 0);
+    CHECK_EQ(static_cast<int>(StartAs::MoreRights), 1);
+    CHECK_EQ(static_cast<int>(StartAs::OtherAccount), 8);
+
     SECTION("OwnerAccount: the system's own accounts are nobody's");
     CHECK(isServiceAccount(system));
     CHECK(isServiceAccount(QStringLiteral("S-1-5-19")));

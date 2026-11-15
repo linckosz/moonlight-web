@@ -1832,6 +1832,14 @@ int main(int argc, char* argv[])
     // process does on start: no application object, no log file, no crash
     // folder, no settings, no instance lock. Only as the one argument.
     if (mw::quitserver::isTheVerb(argc, argv)) return mw::quitserver::runVerb();
+    // The installer asks, as the person who started it, whether the server
+    // may be started as that account (common/OwnerAccount.h, StartAs). Like
+    // the verb above: only as the one argument, and before anything is made
+    // or written. The answer is the exit code.
+    if (argc == 2 && argv[1] && qstrcmp(argv[1], "--has-user-rights") == 0)
+        return static_cast<int>(mw::owneraccount::startAs(
+            mw::place::isPrivileged(), mw::owneraccount::recorded(mw::owneraccount::machineStore()),
+            mw::place::currentUserSid()));
 #endif
 
     // First, while this is still the only thread: if the Linux launcher handed
@@ -2166,6 +2174,13 @@ int main(int argc, char* argv[])
     parser.addOption(ownerRecordOption);
     // The uninstaller's, elevated: the crash dumps under host-data, and its
     // logs as well with --with-logs (when the configuration goes too).
+    // The installer's question, answered before this point when it is the one
+    // argument (see the top of main); declared so that the parser knows it.
+    QCommandLineOption hasUserRightsOption(
+        "has-user-rights", "Internal: tell the installer whether to start the server as this "
+                           "account");
+    hasUserRightsOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(hasUserRightsOption);
     QCommandLineOption removeHostDataOption("remove-host-data",
                                             "Internal: delete the install directory's crash dumps");
     removeHostDataOption.setFlags(QCommandLineOption::HiddenFromHelp);
