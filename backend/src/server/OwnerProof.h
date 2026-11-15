@@ -58,6 +58,7 @@ public:
         Ok,
         Missing, ///< no proof in the request
         Refused, ///< a proof, and it does not hold
+        NoKey,   ///< checkBooth only: the session has no pairing key to prove
     };
 
     /// A fresh challenge for @p session, or empty when none can be held (no
@@ -75,6 +76,31 @@ public:
     Result check(const QString& session, const QByteArray& spki, const QString& hostId,
                  const QString& action, int slot, const QJsonObject& proof, qint64 nowMs);
 
+    // ── A booth's stream PIN (issue #68) ─────────────────────────────────────
+    //
+    // The same proof for what a booth's stream PIN opens, under a label of its
+    // own and bound to the stream's host rather than to a row: a signature made
+    // for the board never stands for one of these, nor one booth action for
+    // another, nor one host for another. Challenges come from the same issue().
+
+    static constexpr char kBoothLabel[] = "MW-BIND-v1|booth";
+
+    /// What a booth's proof may be made for. Anything else is refused unsigned.
+    static bool isBoothAction(const QString& action);
+
+    /// The bytes the browser signs for @p action on @p hostUuid's stream:
+    /// frontend/js/util/pairingCrypto.js builds the same, field for field.
+    static QByteArray boothMessage(const QString& hostId, const QByteArray& nonce,
+                                   const QString& action, const QString& hostUuid);
+
+    /// Check @p proof for a booth @p action on @p hostUuid's stream. Unlike the
+    /// board's, a session with no pairing key (@p spki empty) is not waved
+    /// through: it is answered NoKey. The challenge is spent whatever the
+    /// outcome.
+    Result checkBooth(const QString& session, const QByteArray& spki, const QString& hostId,
+                      const QString& action, const QString& hostUuid, const QJsonObject& proof,
+                      qint64 nowMs);
+
     int pendingCount() const { return m_Pending.size(); }
 
 private:
@@ -86,6 +112,11 @@ private:
     };
 
     void prune(qint64 nowMs);
+    /// Find and spend @p session's challenge named in @p proof. Missing when the
+    /// proof has no nonce or signature; Refused when the challenge is unknown,
+    /// another session's or expired; Ok with @p nonce and @p sig filled.
+    Result take(const QString& session, const QJsonObject& proof, qint64 nowMs, QByteArray& nonce,
+                QByteArray& sig);
 
     QVector<Pending> m_Pending; ///< oldest first
 };

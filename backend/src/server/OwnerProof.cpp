@@ -53,16 +53,15 @@ QByteArray OwnerProof::message(const QString& hostId, const QByteArray& nonce,
         {QByteArray(kLabel), hostId.toUtf8(), nonce, action.toUtf8(), QByteArray::number(slot)});
 }
 
-OwnerProof::Result OwnerProof::check(const QString& session, const QByteArray& spki,
-                                     const QString& hostId, const QString& action, int slot,
-                                     const QJsonObject& proof, qint64 nowMs)
+OwnerProof::Result OwnerProof::take(const QString& session, const QJsonObject& proof, qint64 nowMs,
+                                    QByteArray& nonce, QByteArray& sig)
 {
     const QString nonceB64 = proof.value(QStringLiteral("nonce")).toString();
     const QString sigB64 = proof.value(QStringLiteral("sig")).toString();
     if (nonceB64.isEmpty() || sigB64.isEmpty()) return Result::Missing;
 
     prune(nowMs);
-    const QByteArray nonce = QByteArray::fromBase64(nonceB64.toLatin1());
+    nonce = QByteArray::fromBase64(nonceB64.toLatin1());
     int found = -1;
     for (int i = 0; i < m_Pending.size(); ++i) {
         const Pending& p = m_Pending.at(i);
@@ -74,9 +73,50 @@ OwnerProof::Result OwnerProof::check(const QString& session, const QByteArray& s
     if (found < 0 || session.isEmpty() || nonce.isEmpty()) return Result::Refused;
     m_Pending.removeAt(found);
 
-    const QByteArray sig = QByteArray::fromBase64(sigB64.toLatin1());
+    sig = QByteArray::fromBase64(sigB64.toLatin1());
+    return Result::Ok;
+}
+
+OwnerProof::Result OwnerProof::check(const QString& session, const QByteArray& spki,
+                                     const QString& hostId, const QString& action, int slot,
+                                     const QJsonObject& proof, qint64 nowMs)
+{
+    QByteArray nonce;
+    QByteArray sig;
+    const Result taken = take(session, proof, nowMs, nonce, sig);
+    if (taken != Result::Ok) return taken;
     return PairingCrypto::verify(spki, message(hostId, nonce, action, slot), sig) ? Result::Ok
                                                                                   : Result::Refused;
+}
+
+bool OwnerProof::isBoothAction(const QString& action)
+{
+    return action == QLatin1String("booth_join") || action == QLatin1String("booth_takeover") ||
+           action == QLatin1String("booth_pin_read") || action == QLatin1String("booth_pin_new");
+}
+
+QByteArray OwnerProof::boothMessage(const QString& hostId, const QByteArray& nonce,
+                                    const QString& action, const QString& hostUuid)
+{
+    return PairingCrypto::buildSignedMessage(
+        {QByteArray(kBoothLabel), hostId.toUtf8(), nonce, action.toUtf8(), hostUuid.toUtf8()});
+}
+
+OwnerProof::Result OwnerProof::checkBooth(const QString& session, const QByteArray& spki,
+                                          const QString& hostId, const QString& action,
+                                          const QString& hostUuid, const QJsonObject& proof,
+                                          qint64 nowMs)
+{
+    // Spent first, whatever comes next: a challenge never verifies twice.
+    QByteArray nonce;
+    QByteArray sig;
+    const Result taken = take(session, proof, nowMs, nonce, sig);
+    if (spki.isEmpty()) return Result::NoKey;
+    if (taken != Result::Ok) return taken;
+    if (!isBoothAction(action) || hostUuid.isEmpty()) return Result::Refused;
+    return PairingCrypto::verify(spki, boothMessage(hostId, nonce, action, hostUuid), sig)
+               ? Result::Ok
+               : Result::Refused;
 }
 
 void OwnerProof::prune(qint64 nowMs)

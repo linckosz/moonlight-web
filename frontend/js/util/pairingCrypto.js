@@ -465,6 +465,45 @@ export async function signShareOwnerProof(hostId, nonceBase64, action, slot) {
     }
 }
 
+/**
+ * The exact bytes a booth's stream PIN request is signed over (issue #68): the
+ * backend's OwnerProof::boothMessage builds the same, field for field (both
+ * pinned to one vector in the TNR). A label of its own, and the stream's host in
+ * place of a row: a board's signature never stands for one of these.
+ */
+export function boothDigestInput(hostId, nonce, action, hostUuid) {
+    return buildSignedMessage([`${PROTOCOL}|booth`, hostId, nonce, action, hostUuid]);
+}
+
+/**
+ * Prove a booth's stream PIN request comes from this browser: sign the host's
+ * single-use challenge for @p action on @p hostUuid's stream with this browser's
+ * pairing key. Returns the base64 signature, or null when there is no key to
+ * sign with — the booth then refuses the request.
+ *
+ * @param {string} hostId       the host's identity, as the challenge named it
+ * @param {string} nonceBase64  the challenge (POST /api/share/owner-proof)
+ * @param {string} action       'booth_join' | 'booth_takeover' | 'booth_pin_read' | 'booth_pin_new'
+ * @param {string} hostUuid     the host whose stream it is about
+ */
+export async function signBoothProof(hostId, nonceBase64, action, hostUuid) {
+    const identity = await loadOrCreateIdentity();
+    if (!identity) return null;
+    try {
+        const signed = boothDigestInput(
+            hostId || '',
+            base64ToBytes(nonceBase64),
+            action,
+            hostUuid || '',
+        );
+        const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
+        return bytesToBase64(new Uint8Array(sig));
+    } catch (e) {
+        console.error('[MW-BIND] Could not sign the booth request:', e.message);
+        return null;
+    }
+}
+
 /** Sign our answer's fingerprint. Returns the base64 signature, or null. */
 export async function signAnswer(identity, hostId, nonceHBase64, fingerprintHost, answerSdp) {
     const fingerprintBrowser = extractFingerprint(answerSdp);

@@ -181,4 +181,112 @@ void run_owner_proof_tests()
         // Room again once they expire.
         CHECK(!full.issue(QStringLiteral("newcomer"), t0 + OwnerProof::kLifetimeMs).isEmpty());
     }
+
+    // ── A booth's stream PIN (issue #68) ────────────────────────────────────
+
+    SECTION("booth proof — the signed bytes, as the page builds them");
+    // The same vector is pinned in frontend/test/shareOwnerProof.test.js.
+    CHECK_EQ(QString::fromLatin1(
+                 OwnerProof::boothMessage(QStringLiteral("H"), QByteArray("\x01\x02\x03", 3),
+                                          QStringLiteral("booth_join"), QStringLiteral("U"))
+                     .toHex()),
+             QStringLiteral("00000010"
+                            "4d572d42494e442d76317c626f6f7468"
+                            "0000000148"
+                            "00000003010203"
+                            "0000000a626f6f74685f6a6f696e"
+                            "0000000155"));
+
+    SECTION("booth proof — one action on one host's stream, once, and never a board's");
+    {
+        OwnerProof proofs;
+        const Browser b = newBrowser();
+        const Browser other = newBrowser();
+        const QString s = QStringLiteral("S");
+        const QString host = QStringLiteral("host-uuid-A");
+        auto fresh = [&]() { return proofs.issue(s, t0); };
+        auto signBooth = [&](const Browser& by, const QByteArray& nonce, const QString& action,
+                             const QString& onHost, const QString& hostId = kHostId) {
+            const QByteArray sig = PairingCrypto::sign(
+                by.pem, OwnerProof::boothMessage(hostId, nonce, action, onHost));
+            QJsonObject p;
+            p[QStringLiteral("nonce")] = QString::fromLatin1(nonce.toBase64());
+            p[QStringLiteral("sig")] = QString::fromLatin1(sig.toBase64());
+            return p;
+        };
+
+        for (const char* action :
+             {"booth_join", "booth_takeover", "booth_pin_read", "booth_pin_new"}) {
+            const QString act = QString::fromLatin1(action);
+            CHECK(OwnerProof::isBoothAction(act));
+            const QJsonObject p = signBooth(b, fresh(), act, host);
+            CHECK(proofs.checkBooth(s, b.spki, kHostId, act, host, p, t0) == R::Ok);
+            // Spent.
+            CHECK(proofs.checkBooth(s, b.spki, kHostId, act, host, p, t0) == R::Refused);
+        }
+        // An action of the board's is no booth action, and the label keeps them
+        // apart both ways: a board proof never opens a booth action, and the
+        // reverse.
+        CHECK(!OwnerProof::isBoothAction(QStringLiteral("activate")));
+        CHECK(!OwnerProof::isBoothAction(QString()));
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("activate"), host,
+                                signBooth(b, fresh(), QStringLiteral("activate"), host),
+                                t0) == R::Refused);
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_join"), host,
+                                proofFor(b, fresh(), QStringLiteral("booth_join"), 0),
+                                t0) == R::Refused);
+        CHECK(proofs.check(s, b.spki, kHostId, QStringLiteral("booth_join"), 0,
+                           signBooth(b, fresh(), QStringLiteral("booth_join"), QStringLiteral("0")),
+                           t0) == R::Refused);
+        // Another action, another host, another host key, another browser.
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_takeover"), host,
+                                signBooth(b, fresh(), QStringLiteral("booth_join"), host),
+                                t0) == R::Refused);
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_join"), host,
+                                signBooth(b, fresh(), QStringLiteral("booth_join"),
+                                          QStringLiteral("host-uuid-B")),
+                                t0) == R::Refused);
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_join"), host,
+                                signBooth(b, fresh(), QStringLiteral("booth_join"), host,
+                                          QStringLiteral("elsewhere")),
+                                t0) == R::Refused);
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_join"), host,
+                                signBooth(other, fresh(), QStringLiteral("booth_join"), host),
+                                t0) == R::Refused);
+        // No host named: nothing to bind to.
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_join"), QString(),
+                                signBooth(b, fresh(), QStringLiteral("booth_join"), QString()),
+                                t0) == R::Refused);
+        // Missing is told as such, and spends nothing.
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_join"), host,
+                                QJsonObject(), t0) == R::Missing);
+        // The right one still works after all that.
+        CHECK(proofs.checkBooth(s, b.spki, kHostId, QStringLiteral("booth_join"), host,
+                                signBooth(b, fresh(), QStringLiteral("booth_join"), host),
+                                t0) == R::Ok);
+    }
+
+    SECTION("booth proof — a session with no pairing key is refused, not waved through");
+    {
+        OwnerProof proofs;
+        const Browser b = newBrowser();
+        const QString s = QStringLiteral("S");
+        const QString host = QStringLiteral("host-uuid-A");
+        // Whatever it sends: nothing, or a proof signed by some key.
+        CHECK(proofs.checkBooth(s, QByteArray(), kHostId, QStringLiteral("booth_join"), host,
+                                QJsonObject(), t0) == R::NoKey);
+        const QByteArray nonce = proofs.issue(s, t0);
+        const QByteArray sig = PairingCrypto::sign(
+            b.pem, OwnerProof::boothMessage(kHostId, nonce, QStringLiteral("booth_join"), host));
+        QJsonObject p;
+        p[QStringLiteral("nonce")] = QString::fromLatin1(nonce.toBase64());
+        p[QStringLiteral("sig")] = QString::fromLatin1(sig.toBase64());
+        CHECK(proofs.checkBooth(s, QByteArray(), kHostId, QStringLiteral("booth_join"), host, p,
+                                t0) == R::NoKey);
+        // ...and the challenge it presented is spent all the same.
+        CHECK_EQ(proofs.pendingCount(), 0);
+        // The board's proof keeps its rule: no key there is the caller's to decide.
+        CHECK(proofs.check(s, QByteArray(), kHostId, QStringLiteral("activate"), 2, QJsonObject(),
+                           t0) == R::Missing);
+    }
 }

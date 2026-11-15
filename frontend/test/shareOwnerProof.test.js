@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BackendClient } from '../js/api/BackendClient.js';
 import * as pairing from '../js/util/pairingCrypto.js';
-import { shareOwnerDigestInput } from '../js/util/pairingCrypto.js';
+import { shareOwnerDigestInput, boothDigestInput } from '../js/util/pairingCrypto.js';
 
 const hex = (bytes) => Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -23,6 +23,27 @@ describe('the bytes a board request is signed over', () => {
                 '00000003010203' +
                 '000000086163746976617465' +
                 '0000000132',
+        );
+    });
+});
+
+describe('the bytes a booth’s stream PIN request is signed over (issue #68)', () => {
+    it('match the host’s, byte for byte', () => {
+        // The same vector is pinned in backend/tests/test_owner_proof.cpp.
+        expect(hex(boothDigestInput('H', new Uint8Array([1, 2, 3]), 'booth_join', 'U'))).toBe(
+            '00000010' +
+                '4d572d42494e442d76317c626f6f7468' +
+                '0000000148' +
+                '00000003010203' +
+                '0000000a626f6f74685f6a6f696e' +
+                '0000000155',
+        );
+    });
+
+    it('never match a board request’s, whatever the fields', () => {
+        const nonce = new Uint8Array([1, 2, 3]);
+        expect(hex(boothDigestInput('H', nonce, 'activate', '2'))).not.toBe(
+            hex(shareOwnerDigestInput('H', nonce, 'activate', 2)),
         );
     });
 });
