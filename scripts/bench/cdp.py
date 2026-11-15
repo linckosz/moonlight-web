@@ -255,6 +255,15 @@ def foreground_problem(kiosk_pid, kiosk_display):
 
 
 def main():
+    # The page's text may hold a character the console's code page has no byte
+    # for (an emoji on the library page): printed as is, it ended the call with
+    # UnicodeEncodeError, and the PowerShell caller only ever saw the first line
+    # of that traceback. Such a character is written as its escape instead; the
+    # ASCII a caller matches on is unchanged.
+    try:
+        sys.stdout.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError):
+        pass
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--port", type=int, default=9333)
     # keys: the kiosk's browser process and screen (keyboard-check.ps1).
