@@ -59,9 +59,10 @@ These are started by the server itself, its service, its scheduled tasks or its 
 
 | Option | Started by |
 |---|---|
-| `--stream-worker`, `--worker-pipe`, `--worker-data-dir`, `--signin-screen` | The server, for each stream's worker process. |
+| `--stream-worker`, `--worker-pipe`, `--worker-data-dir`, `--worker-log-reader`, `--signin-screen` | The server and the launcher service, for each stream's worker process. |
 | `--worker-service`, `--worker-service-install`, `--worker-service-remove` | The installer and Windows, for the stream-worker launcher service. |
 | `--owner-record` | The installer, to record the account the installation is made by. |
+| `--remove-host-data` (with `--with-logs`) | The uninstaller, to delete the crash dumps kept under the install directory, and its logs when the configuration is removed (Windows). |
 | `--vdisplay-apply` (with `--stage`, `--vdisplay-dir`), `--vdisplay-guard` | The server and its elevated task, for the virtual display. |
 | `--vhid-apply` (with `--vhid-dir`) | The installer, for the HID passthrough driver. |
 | `--update-apply` | The elevated task that runs a staged update. |

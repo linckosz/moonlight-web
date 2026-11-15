@@ -17,6 +17,7 @@
 
 #include "CrashHandler.h"
 #include "Logger.h"
+#include "PrivilegedPlace.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -57,8 +58,9 @@ static LONG WINAPI writeDump(EXCEPTION_POINTERS* ex)
               st.wDay, st.wHour, st.wMinute, st.wSecond,
               static_cast<unsigned long>(GetCurrentProcessId()));
 
+    // A new file only: nothing already at that name is opened or replaced.
     HANDLE file =
-        CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file != INVALID_HANDLE_VALUE) {
         MINIDUMP_EXCEPTION_INFORMATION mei;
         mei.ThreadId = GetCurrentThreadId();
@@ -91,7 +93,13 @@ static void pruneOldDumps(const QString& crashDir)
 
 void install(const QString& crashDir)
 {
-    QDir().mkpath(crashDir);
+    if (crashDir.isEmpty()) {
+        Logger::warning("[CrashHandler] No directory for crash dumps — minidump handler not "
+                        "installed");
+        return;
+    }
+    // A privileged process's directory was made by mw::place::crashDir().
+    if (!mw::place::isPrivileged()) QDir().mkpath(crashDir);
     pruneOldDumps(crashDir);
 
 #ifdef Q_OS_WIN

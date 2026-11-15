@@ -125,24 +125,6 @@ QString registeredImage(QString* error = nullptr)
     return image;
 }
 
-/// The console user's roaming AppData, so a SYSTEM worker leaves its log and
-/// its minidumps where the person who installed this will look for them —
-/// beside the server's — rather than under systemprofile. Empty when it cannot
-/// be had, which only costs the worker its diagnostics.
-QString userAppData(HANDLE userToken)
-{
-    PWSTR path = nullptr;
-    if (FAILED(::SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DONT_VERIFY, userToken,
-                                      &path)) ||
-        !path)
-        return {};
-    const QString roaming = QString::fromWCharArray(path);
-    ::CoTaskMemFree(path);
-    // Mirrors QStandardPaths::AppDataLocation on Windows: <Roaming>/<org>/<app>.
-    return roaming + QLatin1Char('/') + QCoreApplication::organizationName() + QLatin1Char('/') +
-           mw::edition::dataName();
-}
-
 // ── The service side ────────────────────────────────────────────────────────
 
 SERVICE_STATUS_HANDLE g_StatusHandle = nullptr;
@@ -276,9 +258,6 @@ struct LaunchSpec
     /// else (platform/SignInScreen.h). Set here, on the command line this
     /// service writes; nothing a caller sends can set or clear it.
     bool signInScreen = false;
-    /// Whose AppData gets the worker's log when the worker's own session has
-    /// nobody signed in: the caller's session. 0xFFFFFFFF: none.
-    DWORD logSession = 0xFFFFFFFF;
     /// Where to keep the worker's process handle (SYNCHRONIZE at least)
     /// instead of closing it.
     HANDLE* process = nullptr;
@@ -329,27 +308,14 @@ bool launchWorker(const QString& base, const std::wstring& callerSid, DWORD* pid
             QStringLiteral("cannot move the token to session %1 (error %2)").arg(console).arg(err));
     }
 
-    // The worker's diagnostics belong with the user's, not under systemprofile.
-    // Built from the console user's token when there is one; a machine sitting
-    // at the login screen has none, and the worker then logs where SYSTEM does.
-    QString dataDir;
-    HANDLE userToken = nullptr;
-    if (::WTSQueryUserToken(console, &userToken)) {
-        dataDir = userAppData(userToken);
-        ::CloseHandle(userToken);
-    } else if (spec.logSession != 0xFFFFFFFF && ::WTSQueryUserToken(spec.logSession, &userToken)) {
-        // The sign-in screen's worker: beside the server that asked for it.
-        dataDir = userAppData(userToken);
-        ::CloseHandle(userToken);
-    }
-
     QString commandLine = QLatin1Char('"') + ownExecutable() +
                           QStringLiteral("\" --stream-worker --worker-pipe ") + base;
     if (mw::edition::devFlag()) commandLine += QStringLiteral(" --dev");
     if (spec.signInScreen) commandLine += QStringLiteral(" --signin-screen");
-    if (!dataDir.isEmpty())
-        commandLine += QStringLiteral(" --worker-data-dir \"") + QDir::toNativeSeparators(dataDir) +
-                       QLatin1Char('"');
+    // The worker logs under the install directory's host-data, in the logs
+    // directory of the account that asked for it, which that account may read
+    // (common/PrivilegedPlace.h).
+    commandLine += QStringLiteral(" --worker-log-reader ") + QString::fromStdWString(callerSid);
 
     LPVOID env = nullptr;
     if (!::CreateEnvironmentBlock(&env, token, FALSE)) env = nullptr;
@@ -635,7 +601,6 @@ void serveSignIn(HANDLE pipe, const QString& base)
     LaunchSpec spec;
     spec.session = facts.consoleSession;
     spec.signInScreen = true;
-    spec.logSession = session;
     HANDLE process = nullptr;
     spec.process = &process;
     DWORD pid = 0;

@@ -358,6 +358,7 @@ add_executable(mw-server
     src/server/LogArchive.cpp
     src/server/LogScrubber.cpp
     src/common/Logger.cpp
+    src/common/PrivilegedPlace.cpp
     src/common/RunFlags.cpp
     src/common/ZipWriter.cpp
     src/common/CrashHandler.cpp
@@ -704,8 +705,9 @@ if(WIN32)
     # setupapi + newdev + cfgmgr32: the virtual display's and the virtual HID's
     # device nodes, created and removed by the --vdisplay-apply and --vhid-apply
     # helpers (VirtualDisplayApply.cpp, VirtualHidApply.cpp).
-    # advapi32 + shell32: the LocalSystem launcher service — the SCM, the pipe
-    # DACLs and the console user's AppData (WorkerService.cpp).
+    # advapi32 + shell32: the LocalSystem launcher service — the SCM and the
+    # pipe DACLs (WorkerService.cpp) — and the host-data directories' DACLs
+    # (PrivilegedPlace.cpp).
     # wintrust: the update installer's Authenticode check (UpdateApply.cpp).
     target_link_libraries(mw-server PRIVATE ws2_32 winmm Bcrypt Crypt32 iphlpapi Dbghelp avrt
                                             wtsapi32 userenv taskschd ole32 oleaut32
@@ -856,6 +858,7 @@ if(MW_BUILD_TESTS)
         tests/test_pin_binding.cpp
         src/common/PinBinding.cpp
         src/common/Logger.cpp
+        src/common/PrivilegedPlace.cpp
     )
     set_target_properties(mw-security-tests PROPERTIES AUTOMOC ON)
     target_include_directories(mw-security-tests PRIVATE src tests)

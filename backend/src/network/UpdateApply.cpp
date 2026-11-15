@@ -19,6 +19,7 @@
 
 #include "common/Edition.h"
 #include "common/Logger.h"
+#include "common/PrivilegedPlace.h"
 
 #ifdef Q_OS_WIN
 #include "network/AddressRace.h"
@@ -79,37 +80,6 @@ QString lastError(DWORD err = GetLastError())
     return QStringLiteral("%1 (%2)").arg(text).arg(err);
 }
 
-// Delete `path` without ever following a reparse point: a junction or a
-// symbolic link is removed as itself, never walked into. An elevated recursive
-// delete that followed one would delete wherever it pointed.
-bool removeNoFollow(const std::wstring& path)
-{
-    const DWORD attrs = GetFileAttributesW(path.c_str());
-    if (attrs == INVALID_FILE_ATTRIBUTES) return GetLastError() == ERROR_FILE_NOT_FOUND;
-    if (attrs & FILE_ATTRIBUTE_READONLY)
-        SetFileAttributesW(path.c_str(), attrs & ~DWORD(FILE_ATTRIBUTE_READONLY));
-    if (attrs & FILE_ATTRIBUTE_REPARSE_POINT)
-        return (attrs & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryW(path.c_str())
-                                                  : DeleteFileW(path.c_str());
-    if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return DeleteFileW(path.c_str());
-
-    WIN32_FIND_DATAW fd;
-    HANDLE find = FindFirstFileExW((path + L"\\*").c_str(), FindExInfoBasic, &fd,
-                                   FindExSearchNameMatch, nullptr, 0);
-    if (find != INVALID_HANDLE_VALUE) {
-        do {
-            const std::wstring name = fd.cFileName;
-            if (name == L"." || name == L"..") continue;
-            if (!removeNoFollow(path + L"\\" + name)) {
-                FindClose(find);
-                return false;
-            }
-        } while (FindNextFileW(find, &fd));
-        FindClose(find);
-    }
-    return RemoveDirectoryW(path.c_str());
-}
-
 // The directory the installer is copied to, judged and run from. Created anew
 // on every run, by us: CreateDirectoryW failing on an existing entry is what
 // guarantees the directory is the one carrying our DACL, and not something
@@ -117,18 +87,20 @@ bool removeNoFollow(const std::wstring& path)
 QString makeLockedDir(QString* error)
 {
     const QString dir = QCoreApplication::applicationDirPath() + QStringLiteral("/update-staging");
-    if (!removeNoFollow(native(dir))) {
+    // Deleted without following a reparse point (common/PrivilegedPlace.h).
+    if (!mw::place::removeNoFollow(dir)) {
         *error =
             QStringLiteral("cannot clear %1: %2").arg(QDir::toNativeSeparators(dir), lastError());
         return {};
     }
-    // Protected (no inheritance from {app}), full control for SYSTEM and
-    // Administrators, nothing at all for anyone else — not even read: the copy
-    // is made with our rights, so a staged "file" that is really a link to
-    // something only an administrator may read must not become readable here.
+    // Owned by Administrators, protected (no inheritance from {app}), full
+    // control for SYSTEM and Administrators, nothing at all for anyone else —
+    // not even read: the copy is made with our rights, so a staged "file" that
+    // is really a link to something only an administrator may read must not
+    // become readable here.
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", SDDL_REVISION_1, &sd, nullptr)) {
+            L"O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", SDDL_REVISION_1, &sd, nullptr)) {
         *error = QStringLiteral("cannot build the directory's DACL: %1").arg(lastError());
         return {};
     }

@@ -1164,6 +1164,26 @@ begin
        ewWaitUntilTerminated, rc);
 end;
 
+// What the processes that run with more rights than their user keep under
+// {app}\host-data: their crash dumps, which always go with the program, and
+// their logs, which go with the configuration. The exe deletes them itself
+// (PrivilegedPlace.cpp). Asked again for a few seconds: a process that was
+// just ended can still hold one of the files.
+procedure RemoveHostData(withLogs: Boolean);
+var
+  rc, i: Integer;
+  params: String;
+begin
+  params := '--remove-host-data';
+  if withLogs then params := params + ' --with-logs';
+  for i := 1 to 10 do begin
+    if Exec(ExpandConstant('{app}\{#MyAppExe}'), params, '', SW_HIDE,
+            ewWaitUntilTerminated, rc) and (rc = 0) then
+      Break;
+    Sleep(300);
+  end;
+end;
+
 // --- The account this installation is made by ------------------------------
 //
 // A server that runs as a service starts its stream worker as whoever sits at
@@ -1885,6 +1905,9 @@ begin
     ReleaseSasPolicy();
     Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
+    // The crash dumps under {app}\host-data, and its logs when the
+    // configuration goes too. After the taskkill: nothing writes there any more.
+    RemoveHostData(removeConfig);
     // Remove the firewall rule added at install time.
     Exec(ExpandConstant('{sys}\netsh.exe'),
          'advfirewall firewall delete rule name="{#MyAppName}"', '', SW_HIDE,

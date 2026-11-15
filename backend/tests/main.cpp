@@ -112,6 +112,7 @@ void run_router_holes_tests();
 void run_socket_tables_tests();
 void run_port_identity_tests();
 void run_logger_rotation_tests();
+void run_privileged_place_tests();
 void run_control_channel_tests();
 void run_feed_ipc_tests();
 void run_cert_manager_tests();
@@ -286,7 +287,8 @@ int main(int argc, char** argv)
     run_connection_history_tests();
     run_lan_http_routes_tests();
     run_input_policy_tests();
-    // Last: it repoints the Logger singleton at its own temp files.
+    // Last, both: they repoint the Logger singleton at their own temp files.
+    run_privileged_place_tests();
     run_logger_rotation_tests();
 
     const int total = g_stats.passed + g_stats.failed;

@@ -174,8 +174,11 @@ private:
     QStringList archivePathsOldestFirst() const;
     /// logFootprintBytes without taking the lock. Caller holds m_Mutex.
     qint64 footprintLocked() const;
-    /// Open m_File for appending. Caller holds m_Mutex.
+    /// Open m_File for appending, through mw::place::openForAppend(): every
+    /// open of the log by its path goes through here. Caller holds m_Mutex.
     bool openLocked();
+    /// Why the last openLocked() failed. Caller holds m_Mutex.
+    QString openErrorLocked() const;
     /// Write one finished line and flush it; false when the file refused it.
     /// Straight to the QFile, no QTextStream: a stream that fails once stays
     /// failed and drops every later line without a word. Caller holds m_Mutex.
@@ -187,6 +190,11 @@ private:
     void tryReopenLocked();
 
     QFile m_File;
+    /// The file set by setLogFile(). Kept here: m_File does not keep its name
+    /// once opened from a descriptor.
+    QString m_Path;
+    /// What openLocked() last refused, when it refused before QFile tried.
+    QString m_OpenRefusal;
     mutable QMutex m_Mutex;
     bool m_FileOpen;
     bool m_ForceStderr = false;

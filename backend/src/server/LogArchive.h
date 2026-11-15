@@ -23,6 +23,7 @@
 #include <QList>
 #include <QMutex>
 #include <QString>
+#include <QStringList>
 
 #include "server/LogScrubber.h"
 
@@ -68,9 +69,13 @@ public:
     LogArchive(const LogArchive&) = delete; // owns its build thread
     LogArchive& operator=(const LogArchive&) = delete;
 
-    /// Start building from @p logDir, plus @p extraFile (the server's own log
-    /// when --log put it elsewhere; may be empty), every file and @p about
-    /// through @p scrubber. False while one is running.
+    /// Start building from @p logDirs, the newest files of each kind across
+    /// them all, plus @p extraFile (the server's own log when --log put it
+    /// elsewhere; may be empty), every file and @p about through @p scrubber.
+    /// False while one is running.
+    bool start(const QStringList& logDirs, const QString& extraFile, const QByteArray& about,
+               const QString& fileName, const LogScrubber& scrubber = LogScrubber());
+    /// The same, from one directory.
     bool start(const QString& logDir, const QString& extraFile, const QByteArray& about,
                const QString& fileName, const LogScrubber& scrubber = LogScrubber());
     Status status() const;

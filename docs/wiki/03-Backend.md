@@ -124,6 +124,15 @@ All under `QStandardPaths::AppDataLocation` (e.g. `%APPDATA%\MoonlightWeb\Moonli
 | `moonlightweb.lock` | Single-instance lock |
 | `moonlightweb-tray.lock` | Tray-client lock — one tray per desktop session, whoever owns the server |
 
+On Windows, a process that runs with more rights than its user (the stream worker the launcher service starts as SYSTEM, the service itself, the elevated helpers, a server started as administrator) keeps its logs and minidumps under the install directory instead (`common/PrivilegedPlace`):
+
+| Directory | Content |
+|---|---|
+| `host-data\logs\<SID>\` | That account's logs and bench traces: written by SYSTEM and administrators, readable by the account. *Download logs* reads it along with the per-user `logs/`. |
+| `host-data\crashes\` | Minidumps, for administrators only. |
+
+A helper elevated through another administrator's account logs under that administrator's SID, so its logs are not in the user's *Download logs* archive. The uninstaller deletes the minidumps, and the logs when the configuration is removed. On Linux and macOS, a process running as root writes in its data directory only when that directory and every one above it belong to root and nobody else may write to them; otherwise it writes no file and says so on stderr.
+
 ## 3.7 Headless operator CLI
 
 On a server there is no browser on the machine, and the admin API is localhost-only — so the two ends never meet. A few flags close the gap by driving the **already-running** instance through the very endpoints the admin page calls, printing the result as text and exiting. They branch **before** the single-instance `QLockFile` (they are queries against another process, not a second server) and route the log echo to stderr so stdout carries only the report.

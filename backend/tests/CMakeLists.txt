@@ -144,6 +144,7 @@ add_executable(run_tests
     test_ice_mux_handles.cpp
     test_owner_account.cpp
     test_logger_rotation.cpp
+    test_privileged_place.cpp
     test_control_channel.cpp
     test_feed_ipc.cpp
     test_cert_manager.cpp
@@ -302,6 +303,8 @@ add_executable(run_tests
     ${_src}/src/streaming/FeedPublisher.cpp
     ${_src}/src/streaming/FeedSubscriber.cpp
     ${_src}/src/common/Logger.cpp
+    # Where a process with more rights than its user writes its own files.
+    ${_src}/src/common/PrivilegedPlace.cpp
     # The "Download logs" archive: which files go in, and the .zip they go in.
     ${_src}/src/common/ZipWriter.cpp
     ${_src}/src/server/LogArchive.cpp

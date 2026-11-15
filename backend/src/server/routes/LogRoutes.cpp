@@ -18,6 +18,7 @@
 #include "server/routes/LogRoutes.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
+#include "common/PrivilegedPlace.h"
 #include "common/RunFlags.h"
 #include "server/AppSettings.h"
 #include "server/HttpServer.h"
@@ -42,12 +43,6 @@ namespace {
 constexpr qsizetype kMaxBody = 512 * 1024;
 constexpr qsizetype kMaxLines = 2000;
 constexpr qsizetype kMaxLineChars = 8 * 1024;
-
-QString logDir()
-{
-    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-           QStringLiteral("/logs");
-}
 
 Logger::Level levelOf(const QString& l)
 {
@@ -119,11 +114,15 @@ HttpResponse writeClientLog(const HttpRequest& req, const QString& who)
     if (lines.size() > kMaxLines) return HttpResponse::error(413, "Too many lines");
 
     Logger* log = Logger::client();
-    if (!log->hasLogFile()) {
-        QDir().mkpath(logDir());
-        // Every level the page sent: the page already chose what to print.
-        log->setMinLevel(Logger::Debug);
-        log->setLogFile(logDir() + QStringLiteral("/moonlightweb-client.log"));
+    // Set once: a file that breaks later is reopened by the logger itself.
+    if (log->logFilePath().isEmpty()) {
+        // This process's log directory (common/PrivilegedPlace.h); none means
+        // the lines are not kept.
+        if (const QString dir = mw::place::logDir(); !dir.isEmpty()) {
+            // Every level the page sent: the page already chose what to print.
+            log->setMinLevel(Logger::Debug);
+            log->setLogFile(dir + QStringLiteral("/moonlightweb-client.log"));
+        }
     }
 
     // Who, in every line: the page's own id (two tabs are two pages), the kind
@@ -182,7 +181,8 @@ void registerLogRoutes(HttpServer& server, LogArchive& archive,
 
     router->post(QStringLiteral("/api/logs/archive"), [&archive, names](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Admin only");
-        if (!archive.start(logDir(), Logger::instance()->logFilePath(), aboutText(), archiveName(),
+        if (!archive.start(mw::place::readableLogDirs(), Logger::instance()->logFilePath(),
+                           aboutText(), archiveName(),
                            LogScrubber(names ? names() : LogScrubber::Names())))
             return HttpResponse::error(409, "An archive is already being built");
         Logger::info(QStringLiteral("[Logs] Archive requested from %1").arg(req.clientAddress));

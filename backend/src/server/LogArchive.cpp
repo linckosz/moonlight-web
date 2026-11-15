@@ -79,7 +79,18 @@ QList<QFileInfo> LogArchive::latestPerKind(const QList<QFileInfo>& files)
         // other runs, not earlier parts of this one: only the last.
         const QString& name = kind.first().fileName();
         const bool generations = name == it.key() || name.startsWith(it.key() + QLatin1Char('.'));
-        out.append(kind.mid(0, generations ? kGenerationsKept : 1));
+        // Files from several directories can share a name (the server's log,
+        // from a run with its user's rights and from an elevated one): the
+        // newest is the one that goes in, an archive holds each name once.
+        QList<QFileInfo> kept;
+        for (const QFileInfo& f : kind) {
+            if (kept.size() >= (generations ? kGenerationsKept : 1)) break;
+            const bool named = std::any_of(kept.cbegin(), kept.cend(), [&f](const QFileInfo& k) {
+                return k.fileName() == f.fileName();
+            });
+            if (!named) kept.append(f);
+        }
+        out.append(kept);
     }
     std::sort(out.begin(), out.end(), [](const QFileInfo& a, const QFileInfo& b) {
         return a.lastModified() < b.lastModified();
@@ -90,6 +101,13 @@ QList<QFileInfo> LogArchive::latestPerKind(const QList<QFileInfo>& files)
 bool LogArchive::start(const QString& logDir, const QString& extraFile, const QByteArray& about,
                        const QString& fileName, const LogScrubber& scrubber)
 {
+    return start(QStringList{logDir}, extraFile, about, fileName, scrubber);
+}
+
+bool LogArchive::start(const QStringList& logDirs, const QString& extraFile,
+                       const QByteArray& about, const QString& fileName,
+                       const LogScrubber& scrubber)
+{
     QMutexLocker lock(&m_Mutex);
     if (m_Status.state == QLatin1String("running")) return false;
     if (m_Thread) {
@@ -98,13 +116,19 @@ bool LogArchive::start(const QString& logDir, const QString& extraFile, const QB
         m_Thread = nullptr;
     }
 
-    QList<QFileInfo> files =
-        latestPerKind(QDir(logDir).entryInfoList(QDir::Files | QDir::NoDotAndDotDot));
+    // One list across the directories: a kind found in two of them (a worker
+    // run with its user's rights, and one run as SYSTEM) is judged as one.
+    QList<QFileInfo> listed;
+    bool extraListed = false;
+    const QFileInfo extra(extraFile);
+    for (const QString& dir : logDirs) {
+        listed += QDir(dir).entryInfoList(QDir::Files | QDir::NoDotAndDotDot);
+        if (extra.absolutePath() == QDir(dir).absolutePath()) extraListed = true;
+    }
+    QList<QFileInfo> files = latestPerKind(listed);
     // A server logging elsewhere (--log) has its own log in the archive, in
     // place of the directory's, which an earlier run wrote.
-    const QFileInfo extra(extraFile);
-    if (!extraFile.isEmpty() && extra.isFile() && extra.size() > 0 &&
-        extra.absolutePath() != QDir(logDir).absolutePath()) {
+    if (!extraFile.isEmpty() && extra.isFile() && extra.size() > 0 && !extraListed) {
         files.removeIf([](const QFileInfo& f) {
             return LogArchive::kindOf(f.fileName()) == QLatin1String("moonlightweb.log");
         });

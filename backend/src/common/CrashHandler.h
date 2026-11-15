@@ -33,6 +33,7 @@ namespace CrashHandler {
 
 // Install the handler and remember where dumps go. Also prunes old dumps,
 // keeping only the most recent kMaxDumps. Safe to call once, early in main().
+// An empty crashDir installs nothing (and says so in the log).
 void install(const QString& crashDir);
 
 } // namespace CrashHandler

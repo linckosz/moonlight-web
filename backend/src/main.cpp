@@ -68,6 +68,7 @@
 #include <utility>
 #include "server/AppSettings.h"
 #include "common/DetachedProcess.h"
+#include "common/PrivilegedPlace.h"
 #include "server/ClientUniqueId.h"
 #include "server/ErrorReports.h"
 #include "server/GuestProfile.h"
@@ -1962,17 +1963,21 @@ int main(int argc, char* argv[])
     // its own file (two processes appending to one file interleave), an
     // operator command that prints and exits gets none, and an explicit --log
     // wins over all of it.
+    //
+    // Where: a process with its user's own rights writes in its AppData, as it
+    // always has. One that runs with more (the SYSTEM stream worker, the
+    // elevated helpers) writes under the install directory's host-data and
+    // takes no directory from its command line (common/PrivilegedPlace.h).
     QString workerCrashDir;
+    // --remove-host-data deletes the crash directory: it does not make one.
+    bool removesHostData = false;
     {
-        const QString logDir =
-            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/logs";
-        QDir().mkpath(logDir);
-
         QString explicitLog;
-        // The SYSTEM worker's own AppData is systemprofile's; the launcher
-        // service passes the console user's instead, and it has to be read here
-        // with the rest, before the first line is written.
+        // A worker that runs with its user's rights (the Linux launcher's) is
+        // told where that user keeps its logs; the SYSTEM worker is told whose
+        // logs it writes, so that account can read them.
         QString workerDataDir;
+        QString workerLogReader;
         bool probe = false, worker = false, transient = false, vdisplay = false, vhid = false;
         bool service = false;
         for (int i = 1; i < argc; ++i) {
@@ -1998,6 +2003,10 @@ int main(int argc, char* argv[])
                 workerDataDir = QString::fromLocal8Bit(argv[++i]);
             else if (qstrncmp(argv[i], "--worker-data-dir=", 18) == 0)
                 workerDataDir = QString::fromLocal8Bit(argv[i] + 18);
+            else if (qstrcmp(argv[i], "--worker-log-reader") == 0 && i + 1 < argc)
+                workerLogReader = QString::fromLocal8Bit(argv[++i]);
+            else if (qstrncmp(argv[i], "--worker-log-reader=", 20) == 0)
+                workerLogReader = QString::fromLocal8Bit(argv[i] + 20);
             else {
                 // Commands that print and exit. Both spellings again: --status
                 // and --native-bench=<spec>. Matching the bare prefix would also
@@ -2007,22 +2016,35 @@ int main(int argc, char* argv[])
                 for (const char* flag :
                      {"--native-bench", "--status", "--new-pin", "--set-admin-password",
                       "--clear-admin-password", "--enable-internet", "--update-apply",
-                      "--open-on-desktop", "--owner-record"}) {
+                      "--open-on-desktop", "--owner-record", "--remove-host-data"}) {
                     const size_t n = qstrlen(flag);
                     if (qstrncmp(argv[i], flag, int(n)) == 0 &&
                         (argv[i][n] == '\0' || argv[i][n] == '='))
                         transient = true;
                 }
+                if (qstrcmp(argv[i], "--remove-host-data") == 0) removesHostData = true;
             }
         }
 
-        // Where the worker writes, when it was told: the same per-PID file as
-        // below, under the directory the launcher chose for it.
-        const QString workerLogDir =
-            workerDataDir.isEmpty() ? logDir : workerDataDir + QStringLiteral("/logs");
-        if (worker && !workerDataDir.isEmpty()) {
-            QDir().mkpath(workerLogDir);
-            workerCrashDir = workerDataDir;
+        const bool privileged = mw::place::isPrivileged();
+        QString logDir;
+        QString workerLogDir;
+        if (privileged) {
+            // Made only when a file goes in it. Empty when no place could be
+            // had: the process then writes no file, said once on stderr.
+            if (explicitLog.isEmpty() && !transient)
+                logDir = mw::place::logDir(worker ? workerLogReader : QString());
+            workerLogDir = logDir;
+        } else {
+            logDir = mw::place::logDir();
+            // Where the worker writes, when it was told: the same per-PID file
+            // as below, under the directory the launcher chose for it.
+            workerLogDir =
+                workerDataDir.isEmpty() ? logDir : workerDataDir + QStringLiteral("/logs");
+            if (worker && !workerDataDir.isEmpty()) {
+                QDir().mkpath(workerLogDir);
+                workerCrashDir = workerDataDir + QStringLiteral("/crashes");
+            }
         }
 
         if (!explicitLog.isEmpty()) {
@@ -2030,14 +2052,20 @@ int main(int argc, char* argv[])
             // capture they asked for could lose its own beginning.
             Logger::instance()->setLogFile(explicitLog, /*rotating=*/false);
         } else if (worker) {
-            Logger::instance()->setLogFile(workerLogDir +
-                                               QStringLiteral("/moonlightweb-worker-%1.log")
-                                                   .arg(QCoreApplication::applicationPid()),
-                                           /*rotating=*/false); // dies with the session
+            if (!workerLogDir.isEmpty()) {
+                Logger::instance()->setLogFile(workerLogDir +
+                                                   QStringLiteral("/moonlightweb-worker-%1.log")
+                                                       .arg(QCoreApplication::applicationPid()),
+                                               /*rotating=*/false); // dies with the session
+                // Each run names its files after itself and nothing rolls them:
+                // the privileged worker drops its own older than a week.
+                if (privileged) mw::place::pruneWorkerFiles(workerLogDir);
+            }
+        } else if (logDir.isEmpty()) {
+            // No place for a file (said on stderr): the console only.
         } else if (service) {
             // The launcher service outlives every server run and says one line
-            // per worker: its own file, rolled, under SYSTEM's AppData — which
-            // is the one place a LocalSystem process is sure it may write.
+            // per worker: its own file, rolled.
             Logger::instance()->setLogFile(logDir +
                                            QStringLiteral("/moonlightweb-worker-service.log"));
         } else if (probe) {
@@ -2058,14 +2086,13 @@ int main(int argc, char* argv[])
     if (!capabilityNote.isEmpty()) qInfo().noquote() << "[caps]" << capabilityNote;
 
     // Install the crash handler before anything can crash: on Windows it writes a
-    // minidump (call stacks + modules) next to the log so a hard C++ crash leaves
-    // a post-mortem the .pdb can symbolize. Free until an actual crash → safe in
-    // production. Dumps land in the per-user data dir (writable under an admin
-    // install), same rationale as the log path above.
-    CrashHandler::install(workerCrashDir.isEmpty()
-                              ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-                                    "/crashes"
-                              : workerCrashDir + "/crashes");
+    // minidump (call stacks + modules) so a hard C++ crash leaves a post-mortem
+    // the .pdb can symbolize. Free until an actual crash → safe in production.
+    // Dumps land where the log rule above puts this process's files: the
+    // per-user data dir, or host-data for a process with more rights than its
+    // user (empty when no place could be had: no handler then).
+    if (!removesHostData)
+        CrashHandler::install(workerCrashDir.isEmpty() ? mw::place::crashDir() : workerCrashDir);
 
     // Load .env file before anything reads environment variables, then fall back
     // to any values baked in at build time (CI secrets) for vars still unset.
@@ -2134,13 +2161,20 @@ int main(int argc, char* argv[])
         "worker-pipe", "Internal: attach the stream worker to these named pipes", "name");
     workerPipeOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(workerPipeOption);
-    // Internal: where a SYSTEM worker writes its log and its minidumps. Its own
-    // AppData is systemprofile's, which is not where anybody looks; the
-    // launcher service passes the console user's, beside the server's own.
+    // Internal: where a worker run with its user's rights writes its log and
+    // its minidumps (the Linux launcher's). Read from raw argv above; a process
+    // with more rights than its user does not take it.
     QCommandLineOption workerDataDirOption(
         "worker-data-dir", "Internal: the stream worker's log and crash directory", "dir");
     workerDataDirOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(workerDataDirOption);
+    // Internal: the account whose host-data logs directory a SYSTEM worker
+    // writes to, as a SID, given read access to it. Written by the launcher
+    // service; read from raw argv above.
+    QCommandLineOption workerLogReaderOption(
+        "worker-log-reader", "Internal: the account that reads the stream worker's log", "sid");
+    workerLogReaderOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(workerLogReaderOption);
     // Internal: the worker streams the console's sign-in screen and nothing
     // else (mw::native::NativeHost::enterSignInScreenOnly). Written by the
     // launcher service alone, on the command line of the worker it starts on
@@ -2169,6 +2203,16 @@ int main(int argc, char* argv[])
         "owner-record", "Internal: record the account this installation is made by");
     ownerRecordOption.setFlags(QCommandLineOption::HiddenFromHelp);
     parser.addOption(ownerRecordOption);
+    // The uninstaller's, elevated: the crash dumps under host-data, and its
+    // logs as well with --with-logs (when the configuration goes too).
+    QCommandLineOption removeHostDataOption("remove-host-data",
+                                            "Internal: delete the install directory's crash dumps");
+    removeHostDataOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(removeHostDataOption);
+    QCommandLineOption withLogsOption("with-logs",
+                                      "Internal: with --remove-host-data, delete its logs as well");
+    withLogsOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(withLogsOption);
 
     // Headless operator commands: query / configure the RUNNING instance from a
     // terminal, then exit. No server is started and no lock is taken.
@@ -2420,6 +2464,8 @@ int main(int argc, char* argv[])
     if (parser.isSet(workerServiceOption)) return WorkerService::runService();
     if (parser.isSet(workerServiceInstallOption)) return WorkerService::installService();
     if (parser.isSet(workerServiceRemoveOption)) return WorkerService::removeService();
+    if (parser.isSet(removeHostDataOption))
+        return mw::place::removeHostData(parser.isSet(withLogsOption));
     // The installer's as well, elevated, as the account that installs: the one
     // a server run as a service treats as its own (common/OwnerAccount.h).
     if (parser.isSet(ownerRecordOption)) {

@@ -16,6 +16,7 @@
  */
 
 #include "NativeMediaEngine.h"
+#include "common/PrivilegedPlace.h"
 #include "AudioPathLog.h"
 #include "FeedInfo.h"
 #include "FeedPublisher.h"
@@ -906,8 +907,12 @@ void NativeMediaEngine::writeClickTrace()
     // where the bench picks it up.
     const std::string csv = m_Session ? m_Session->clickTraceCsv() : std::string();
     if (csv.empty()) return;
-    const QString logFile = Logger::instance()->logFilePath();
-    const QString dir = logFile.isEmpty() ? QDir::tempPath() : QFileInfo(logFile).absolutePath();
+    const QString dir = mw::place::traceDir(Logger::instance()->logFilePath());
+    if (dir.isEmpty()) {
+        qInfo() << "[NativeMediaEngine] click trace not written: this process has no log "
+                   "directory";
+        return;
+    }
     const QString path = dir + QStringLiteral("/click-trace-%1-%2.csv")
                                    .arg(QCoreApplication::applicationPid())
                                    .arg(QDateTime::currentMSecsSinceEpoch());

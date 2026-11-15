@@ -321,6 +321,67 @@ void run_log_archive_tests()
         writer.close();
     }
 
+    // Two directories read as one: the server's own, and the one a worker run
+    // as SYSTEM (or a server run elevated) writes to. A kind is judged across
+    // both, a name goes in once (the newest), and --log's file is left out of
+    // neither.
+    {
+        QTemporaryDir own, host;
+        CHECK(own.isValid() && host.isValid());
+        const QString a = own.path();
+        const QString b = host.path();
+        touch(a + "/moonlightweb.log", "user run\n", now.addSecs(-10));
+        touch(a + "/moonlightweb.log.20261114-090000", "user gen 1\n", now.addSecs(-500));
+        touch(a + "/moonlightweb-worker-100.log", "user worker\n", now.addSecs(-300));
+        touch(a + "/moonlightweb-client.log", "client\n", now.addSecs(-20));
+        touch(b + "/moonlightweb.log", "elevated run\n", now.addSecs(-400));
+        touch(b + "/moonlightweb-worker-200.log", "system worker\n", now.addSecs(-100));
+        touch(b + "/click-trace-200-1700000000000.csv", "t,ms\n", now.addSecs(-90));
+
+        QList<QFileInfo> listed = QDir(a).entryInfoList(QDir::Files);
+        listed += QDir(b).entryInfoList(QDir::Files);
+        QStringList names;
+        for (const QFileInfo& f : LogArchive::latestPerKind(listed))
+            names << f.fileName();
+        names.sort();
+        CHECK_EQ(names, QStringList({"click-trace-200-1700000000000.csv", "moonlightweb-client.log",
+                                     "moonlightweb-worker-200.log", "moonlightweb.log",
+                                     "moonlightweb.log.20261114-090000"}));
+
+        LogArchive archive;
+        CHECK(archive.start(QStringList{a, b}, QString(), "about\n", "logs.zip"));
+        QElapsedTimer t;
+        t.start();
+        while (archive.status().state == QLatin1String("running") && t.elapsed() < 10000)
+            QThread::msleep(10);
+        CHECK_EQ(archive.status().state, QString("done"));
+        CHECK_EQ(archive.status().files, 5);
+        const QMap<QString, Entry> entries = readZip(archive.result());
+        CHECK_EQ(entries.size(), qsizetype(6)); // about.txt and those five
+        CHECK(holds(entries.value("moonlightweb.log"), "user run\n"));
+        CHECK(holds(entries.value("moonlightweb-worker-200.log"), "system worker\n"));
+        CHECK(holds(entries.value("click-trace-200-1700000000000.csv"), "t,ms\n"));
+
+        // The server's own log in the second directory (an elevated run):
+        // it is one of the listed files, not an extra one.
+        LogArchive again;
+        CHECK(again.start(QStringList{a, b}, b + "/moonlightweb.log", "about\n", "logs.zip"));
+        t.restart();
+        while (again.status().state == QLatin1String("running") && t.elapsed() < 10000)
+            QThread::msleep(10);
+        CHECK_EQ(again.status().files, 5);
+        CHECK(holds(readZip(again.result()).value("moonlightweb.log"), "user run\n"));
+
+        // No directory at all (a process that could have none): about.txt alone.
+        LogArchive none;
+        CHECK(none.start(QStringList(), QString(), "about\n", "logs.zip"));
+        t.restart();
+        while (none.status().state == QLatin1String("running") && t.elapsed() < 10000)
+            QThread::msleep(10);
+        CHECK_EQ(none.status().state, QString("done"));
+        CHECK_EQ(none.status().files, 0);
+    }
+
     // The Logger's threshold: DEBUG dropped unless asked for.
     {
         Logger* log = Logger::client();

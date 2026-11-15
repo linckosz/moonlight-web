@@ -16,6 +16,7 @@
  */
 
 #include "DataChannelRelay.h"
+#include "common/PrivilegedPlace.h"
 #include "AudioPathLog.h"
 #include "ClipboardBridge.h"
 #include "InputMessageCodec.h"
@@ -773,29 +774,35 @@ DataChannelRelay::~DataChannelRelay()
     }
     // The bench's frame log (`relaylog=1`): next to this process's log.
     if (m_FrameLog) {
-        const QString logFile = Logger::instance()->logFilePath();
-        const QString dir =
-            logFile.isEmpty() ? QDir::tempPath() : QFileInfo(logFile).absolutePath();
-        const QString path = dir + QStringLiteral("/relay-frames-%1-%2.csv")
-                                       .arg(QCoreApplication::applicationPid())
-                                       .arg(QDateTime::currentMSecsSinceEpoch());
-        const bool ok = m_FrameLog->writeCsv(path.toStdString());
-        qInfo() << "[DataChannelRelay] frame log:" << m_FrameLog->summary().c_str()
-                << (ok ? "— written to" : "— could NOT be written to") << path;
+        const QString dir = mw::place::traceDir(Logger::instance()->logFilePath());
+        if (dir.isEmpty()) {
+            qInfo() << "[DataChannelRelay] frame log:" << m_FrameLog->summary().c_str()
+                    << "— not written: this process has no log directory";
+        } else {
+            const QString path = dir + QStringLiteral("/relay-frames-%1-%2.csv")
+                                           .arg(QCoreApplication::applicationPid())
+                                           .arg(QDateTime::currentMSecsSinceEpoch());
+            const bool ok = m_FrameLog->writeCsv(path.toStdString());
+            qInfo() << "[DataChannelRelay] frame log:" << m_FrameLog->summary().c_str()
+                    << (ok ? "— written to" : "— could NOT be written to") << path;
+        }
     }
     // The bench's audio log (`audiolog=1`): the same place, the same way.
     if (m_AudioLog) {
         AudioPathLog& audioLog = AudioPathLog::instance();
         audioLog.stop();
-        const QString logFile = Logger::instance()->logFilePath();
-        const QString dir =
-            logFile.isEmpty() ? QDir::tempPath() : QFileInfo(logFile).absolutePath();
-        const QString path = dir + QStringLiteral("/relay-audio-%1-%2.csv")
-                                       .arg(QCoreApplication::applicationPid())
-                                       .arg(QDateTime::currentMSecsSinceEpoch());
-        const bool ok = audioLog.writeCsv(path.toStdString());
-        qInfo() << "[DataChannelRelay] audio log:" << audioLog.summary().c_str()
-                << (ok ? "— written to" : "— could NOT be written to") << path;
+        const QString dir = mw::place::traceDir(Logger::instance()->logFilePath());
+        if (dir.isEmpty()) {
+            qInfo() << "[DataChannelRelay] audio log:" << audioLog.summary().c_str()
+                    << "— not written: this process has no log directory";
+        } else {
+            const QString path = dir + QStringLiteral("/relay-audio-%1-%2.csv")
+                                           .arg(QCoreApplication::applicationPid())
+                                           .arg(QDateTime::currentMSecsSinceEpoch());
+            const bool ok = audioLog.writeCsv(path.toStdString());
+            qInfo() << "[DataChannelRelay] audio log:" << audioLog.summary().c_str()
+                    << (ok ? "— written to" : "— could NOT be written to") << path;
+        }
     }
     // Static call: dynamic dispatch is meaningless in a destructor.
     DataChannelRelay::stop();

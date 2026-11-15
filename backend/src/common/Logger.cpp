@@ -16,6 +16,7 @@
  */
 
 #include "Logger.h"
+#include "PrivilegedPlace.h"
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
@@ -54,7 +55,7 @@ bool Logger::hasLogFile() const
 QString Logger::logFilePath() const
 {
     QMutexLocker lock(&m_Mutex);
-    return m_File.fileName();
+    return m_Path;
 }
 
 void Logger::setLogFile(const QString& path, bool rotating)
@@ -62,6 +63,7 @@ void Logger::setLogFile(const QString& path, bool rotating)
     QMutexLocker lock(&m_Mutex);
     if (m_File.isOpen()) m_File.close();
 
+    m_Path = path;
     m_File.setFileName(path);
     m_Rotating = rotating;
     m_BytesSinceCheck = 0;
@@ -71,7 +73,12 @@ void Logger::setLogFile(const QString& path, bool rotating)
     // Roll BEFORE opening, not after the first oversized write: a host that is
     // started and stopped often would otherwise keep appending to a file that
     // was already over the ceiling and never cross it again mid-run.
-    if (m_Rotating && QFileInfo(path).size() >= m_MaxFileBytes) rollOver();
+    //
+    // Rolled and pruned by path only in a directory this process keeps its
+    // files in (PrivilegedPlace.h): any directory, for a process with its
+    // user's own rights.
+    const bool rolls = m_Rotating && mw::place::isWritablePlace(QFileInfo(path).absolutePath());
+    if (rolls && QFileInfo(path).size() >= m_MaxFileBytes) rollOver();
 
     m_FileOpen = openLocked();
     if (!m_FileOpen) {
@@ -80,7 +87,7 @@ void Logger::setLogFile(const QString& path, bool rotating)
         // postinstall → every log write silently vanished. Tried again later,
         // like a log that breaks while running.
         fprintf(stderr, "[Logger] Cannot open log file '%s': %s\n", qPrintable(path),
-                qPrintable(m_File.errorString()));
+                qPrintable(openErrorLocked()));
         m_BrokenSince = QDateTime::currentDateTime();
         m_RetryClock.start();
     }
@@ -89,7 +96,7 @@ void Logger::setLogFile(const QString& path, bool rotating)
     // the old file was just rolled into .1 whole, so the very first check after
     // opening sees hundreds of megabytes and gives the disk back at once,
     // without anyone having to ask for it.
-    if (m_Rotating) pruneArchives();
+    if (rolls) pruneArchives();
 }
 
 void Logger::log(Level level, const QString& message)
@@ -116,7 +123,7 @@ void Logger::log(Level level, const QString& message)
     // Write to file if configured. A file that was set but is not open broke
     // (or never opened): it is tried again before this line, so the line lands
     // in the file whenever it can.
-    if (!m_FileOpen && !m_File.fileName().isEmpty()) tryReopenLocked();
+    if (!m_FileOpen && !m_Path.isEmpty()) tryReopenLocked();
     if (m_FileOpen) {
         if (!writeLocked(line)) {
             markBrokenLocked("write");
@@ -132,7 +139,7 @@ void Logger::log(Level level, const QString& message)
                 rotateIfNeeded();
             }
         }
-    } else if (!m_File.fileName().isEmpty()) {
+    } else if (!m_Path.isEmpty()) {
         ++m_LostLines;
     }
 }
@@ -167,11 +174,23 @@ void Logger::failNextForTests(int opens, int writes)
 
 bool Logger::openLocked()
 {
+    m_OpenRefusal.clear();
     if (m_FailOpensForTests > 0) {
         --m_FailOpensForTests;
+        m_OpenRefusal = QStringLiteral("refused by the TNR");
         return false;
     }
-    return m_File.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    // In a process that runs with more rights than its user, the file must be
+    // a regular file in a directory made for this process's files
+    // (PrivilegedPlace.h); any other process opens it as QFile does. Named
+    // again each time: a QFile opened from a descriptor forgets its name.
+    m_File.setFileName(m_Path);
+    return mw::place::openForAppend(m_File, &m_OpenRefusal);
+}
+
+QString Logger::openErrorLocked() const
+{
+    return m_OpenRefusal.isEmpty() ? m_File.errorString() : m_OpenRefusal;
 }
 
 bool Logger::writeLocked(const QString& line)
@@ -189,7 +208,7 @@ bool Logger::writeLocked(const QString& line)
 void Logger::markBrokenLocked(const char* what)
 {
     fprintf(stderr, "[Logger] Log file '%s' refused a %s (%s): trying again every %lld ms\n",
-            qPrintable(m_File.fileName()), what, qPrintable(m_File.errorString()),
+            qPrintable(m_Path), what, qPrintable(m_File.errorString()),
             static_cast<long long>(m_ReopenRetryMs));
     m_File.close();
     m_FileOpen = false;
@@ -226,7 +245,7 @@ void Logger::rotateIfNeeded()
 {
     if (!m_FileOpen || m_File.size() < m_MaxFileBytes) return;
 
-    const QString path = m_File.fileName();
+    const QString path = m_Path;
     m_File.close();
     m_FileOpen = false;
 
@@ -244,7 +263,7 @@ void Logger::rotateIfNeeded()
         // Say so on stderr; losing the log must never take the server with
         // it. Tried again like any log that broke.
         fprintf(stderr, "[Logger] Cannot reopen log file '%s' after rotation: %s\n",
-                qPrintable(path), qPrintable(m_File.errorString()));
+                qPrintable(path), qPrintable(openErrorLocked()));
         m_BrokenSince = QDateTime::currentDateTime();
         m_RetryClock.start();
         return;
@@ -257,7 +276,7 @@ void Logger::rotateIfNeeded()
 
 QString Logger::rollOver()
 {
-    const QString path = m_File.fileName();
+    const QString path = m_Path;
     if (path.isEmpty()) return {};
 
     // The archive's name is when it was closed, and its modification time is
@@ -276,7 +295,7 @@ QString Logger::rollOver()
 
 QStringList Logger::archivePathsOldestFirst() const
 {
-    const QString path = m_File.fileName();
+    const QString path = m_Path;
     if (path.isEmpty()) return {};
 
     const QFileInfo live(path);
@@ -304,7 +323,7 @@ QStringList Logger::archivePathsOldestFirst() const
 
 void Logger::pruneArchives()
 {
-    if (m_File.fileName().isEmpty()) return;
+    if (m_Path.isEmpty()) return;
 
     const QDateTime cutoff = QDateTime::currentDateTime().addSecs(-m_RetentionSecs);
     qint64 expired = 0;
@@ -357,7 +376,7 @@ void Logger::pruneArchives()
 
 qint64 Logger::footprintLocked() const
 {
-    const QString path = m_File.fileName();
+    const QString path = m_Path;
     if (path.isEmpty()) return 0;
 
     qint64 total = QFileInfo(path).size();
