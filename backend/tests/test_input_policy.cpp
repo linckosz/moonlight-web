@@ -7,6 +7,7 @@
  */
 
 #include "test_framework.h"
+#include "../src/streaming/InputActivity.h"
 #include "../src/streaming/InputPolicy.h"
 #include "../src/streaming/MicUplink.h"
 #include "platform/SignInScreen.h"
@@ -85,6 +86,36 @@ void run_input_policy_tests()
     CHECK(!allowed("hidattach", guest));
     CHECK(allowed("ping", guest));
     CHECK(allowed("inputstate", guest));
+
+    SECTION("InputActivity — somebody using the stream, for a booth's idle take-over");
+
+    // A person: keys, the mouse (a finger comes as the mouse), a pad.
+    for (const char* t :
+         {"keydown", "keyup", "textinput", "secureattention", "clipboardpaste", "mousemove",
+          "mousedown", "mouseup", "mousewheel", "mousehwheel", "gamepad", "gamepadconnect"})
+        CHECK(InputActivity::isActivity(QString::fromLatin1(t)));
+    // What a page sends on its own, and the held-input state it repeats while
+    // something is down: never somebody using the stream.
+    for (const char* t :
+         {"ping",         "inputstate",    "locksync",   "cursormode",        "requestidr",
+          "request_idr",  "invalidateref", "framefloor", "clientrefresh",     "clientbitrate",
+          "clientfpscap", "clientstats",   "linkstats",  "decodequeue",       "vsyncgrid",
+          "fpsstep",      "aroadnack",     "aroadack",   "gamepaddisconnect", "hidattach",
+          "hiddetach",    "hidreply",      "uprobe",     "unblockinput",      "",
+          "KEYDOWN",      "keydown "})
+        CHECK(!InputActivity::isActivity(QString::fromLatin1(t)));
+
+    // Noted, then read once: the worker's beat says it, then nothing until
+    // somebody acts again.
+    InputActivity::take();
+    CHECK(!InputActivity::take());
+    InputActivity::noteIfActivity(QStringLiteral("ping"));
+    CHECK(!InputActivity::take());
+    InputActivity::noteIfActivity(QStringLiteral("mousemove"));
+    InputActivity::noteIfActivity(QStringLiteral("keydown"));
+    CHECK(InputActivity::take());
+    CHECK(!InputActivity::take());
+    CHECK(InputActivity::kReportMs <= 60 * 1000);
 
     SECTION("SignInScreen — the user's own desktop");
 

@@ -19,6 +19,7 @@
 #include "common/PrivilegedPlace.h"
 #include "AudioPathLog.h"
 #include "ClipboardBridge.h"
+#include "InputActivity.h"
 #include "InputMessageCodec.h"
 #include "PacketMarking.h"
 #include "RxBufSection.h"
@@ -1945,6 +1946,8 @@ void DataChannelRelay::onInputMessage(const std::string& message, int64_t recvUs
 
     // An invited player only gets what the owner ticked. Dropped in silence.
     if (!InputMsg::allowed(type, m_InputPolicy)) return;
+    // Somebody using the stream, for a booth's idle take-over (InputActivity).
+    InputActivity::noteIfActivity(type);
 
     // A message the client stamped (the click → flag probe, the uplink bench)
     // is answered once handled, whatever its type: when it arrived, and, by the

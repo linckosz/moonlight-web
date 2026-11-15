@@ -728,6 +728,8 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
             m_ReportedAudioFocus = true;
         } else if (type == QLatin1String("iceMux")) {
             onMuxEvent(event);
+        } else if (type == QLatin1String("inputSeen")) {
+            m_LastInputMs = QDateTime::currentMSecsSinceEpoch();
         } else if (type == QLatin1String("mouseKeys")) {
             m_MouseKeysHeld = event["on"].toBool();
             m_MouseKeysSaved = m_MouseKeysHeld ? event["saved"].toObject() : QJsonObject();

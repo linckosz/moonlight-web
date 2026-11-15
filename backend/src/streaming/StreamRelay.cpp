@@ -18,6 +18,7 @@
 #include "StreamRelay.h"
 #include "ClipboardBridge.h"
 #include "common/LoopbackKey.h"
+#include "InputActivity.h"
 #include "InputMessageCodec.h"
 #include "IMediaEngine.h"
 #include "MicUplink.h"
@@ -678,6 +679,8 @@ void StreamRelay::onWsTextMessage(const QString& message)
 
     // An invited player only gets what the owner ticked. Dropped in silence.
     if (!InputMsg::allowed(type, m_InputPolicy)) return;
+    // Somebody using the stream, for a booth's idle take-over (InputActivity).
+    InputActivity::noteIfActivity(type);
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");

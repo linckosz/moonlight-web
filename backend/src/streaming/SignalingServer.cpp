@@ -27,6 +27,7 @@ extern "C" {
 #include "IMediaEngine.h"
 #include "IceMuxClient.h"
 #include "IceUdpDrop.h"
+#include "InputActivity.h"
 #include "InputMessageCodec.h"
 #include "SdpFingerprint.h"
 #include "SignalingWait.h"
@@ -989,6 +990,8 @@ void SignalingServer::handleWsFallbackInput(const QString& message)
     // The fallback path bypasses the relay's own switch, so it has to apply the
     // same policy — read from the relay so the two can never drift apart.
     if (m_Relay && !InputMsg::allowed(type, m_Relay->inputPolicy())) return;
+    // Somebody using the stream, for a booth's idle take-over (InputActivity).
+    InputActivity::noteIfActivity(type);
 
     // Same input handling as DataChannelRelay::onInputMessage
     if (type == "keydown" || type == "keyup") {

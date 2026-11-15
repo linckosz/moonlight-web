@@ -20,6 +20,7 @@
 #include "../Session.h"
 #include "../../common/LoopbackKey.h"
 #include "../IceMuxClient.h"
+#include "../InputActivity.h"
 #include "../InputMessageCodec.h"
 #include "../../server/AppSettings.h"
 #include "mw/native/FeedArbiter.h"
@@ -928,6 +929,16 @@ int runStreamWorker(QCoreApplication& app)
         QObject::connect(r, &StreamRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
         relayMouseKeys(r->mediaEngine());
     });
+    // Somebody used the stream since the last beat: the server keeps when, for
+    // a booth whose streams have PINs (its idle take-over). One line per beat
+    // at most, and none while nobody touches anything.
+    auto* activityBeat = new QTimer(qApp);
+    activityBeat->setInterval(InputActivity::kReportMs);
+    QObject::connect(activityBeat, &QTimer::timeout, qApp, []() {
+        if (InputActivity::take())
+            emitEvent({{QStringLiteral("event"), QStringLiteral("inputSeen")}});
+    });
+    activityBeat->start();
     // Session failed before any relay existed (Sunshine rejection, bind failure):
     // the response event already carried the error — just exit.
     QObject::connect(session, &StreamSession::sessionFailed, qApp, [](const QString& err) {

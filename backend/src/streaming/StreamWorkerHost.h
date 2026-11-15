@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QDateTime>
 #include <QObject>
 #include <QProcess>
 #include <QJsonObject>
@@ -207,6 +208,14 @@ public:
     void setStreamId(const QString& id) { m_StreamId = id; }
     const QString& streamId() const { return m_StreamId; }
 
+    /// When somebody last used this stream (a key, the mouse, a finger, a
+    /// pad its policy let through), as its worker reported it, give or take
+    /// InputActivity::kReportMs; 0 until somebody does. For a booth's idle
+    /// take-over (booth_stream_pin).
+    qint64 lastInputMs() const { return m_LastInputMs; }
+    /// When this stream's worker was made, in ms since the epoch.
+    qint64 createdMs() const { return m_CreatedMs; }
+
     /// The app whose sound a running stream carries under "Stream audio from"
     /// ("huntgame.exe"), as its worker last reported it (an
     /// `audioFocus` event); empty when no worker reports one. For Settings.
@@ -290,6 +299,8 @@ private:
     bool m_StopAsked = false;
     bool m_Crashed = false;
     QString m_StreamId;
+    const qint64 m_CreatedMs = QDateTime::currentMSecsSinceEpoch();
+    qint64 m_LastInputMs = 0;
     /// The kept wheels handed to this worker (HidParkingTransfer), until it
     /// says it took them; 0 when none are out.
     uint64_t m_HidBatch = 0;

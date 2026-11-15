@@ -17,6 +17,7 @@
 
 #include "MediaTrackRelay.h"
 #include "ClipboardBridge.h"
+#include "InputActivity.h"
 #include "InputMessageCodec.h"
 #include "PacketMarking.h"
 #include "IMediaEngine.h"
@@ -854,6 +855,8 @@ void MediaTrackRelay::onInputMessage(const std::string& message)
 
     // An invited player only gets what the owner ticked. Dropped in silence.
     if (!InputMsg::allowed(type, m_InputPolicy)) return;
+    // Somebody using the stream, for a booth's idle take-over (InputActivity).
+    InputActivity::noteIfActivity(type);
 
     if (type == "keydown" || type == "keyup") {
         bool down = (type == "keydown");
