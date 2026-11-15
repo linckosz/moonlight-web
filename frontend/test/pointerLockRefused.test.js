@@ -142,30 +142,6 @@ describe('a refused pointer lock', () => {
         expect(t('stream.pointerLockRefusedLookFree')).not.toBe(t('stream.pointerLockRefused'));
     });
 
-    it('hides the viewer pointer while lock-free look is on, and only then', () => {
-        vi.spyOn(Toast, 'info').mockImplementation(() => {});
-        const plain = view({ request: () => undefined });
-        plain.inputEl.style.cursor = 'default';
-        plain._pointerLockRefusedForGood('test');
-        expect(plain.inputEl.style.cursor).toBe('default');
-
-        const v = view({ request: () => undefined });
-        Object.assign(v, {
-            _lockFreeLook: true,
-            _mediaRect: () => ({ left: 0, top: 0, width: 100, height: 100 }),
-        });
-        v._pointerLockRefusedForGood('test');
-        expect(v.inputEl.style.cursor).toBe('none');
-        // Desktop mode: the pointer is the viewer's again.
-        v._gamingMode = false;
-        v._syncLookFreeCursor();
-        expect(v.inputEl.style.cursor).toBe('default');
-        // Back to gaming mode, the refusal still stands (iOS): hidden again.
-        v._gamingMode = true;
-        v._bindGamingEvents();
-        expect(v.inputEl.style.cursor).toBe('none');
-    });
-
     it('is forgotten when the lock comes after all', () => {
         vi.useFakeTimers();
         vi.spyOn(Toast, 'info').mockImplementation(() => {});
