@@ -9591,6 +9591,11 @@ export class StreamView {
                 if (e.movementX || e.movementY) {
                     this._sendRelativeMouse(e.movementX, e.movementY);
                     this._noteMouseSent(e);
+                    // Where the page draws the host's pointer (a tablet), that
+                    // drawing is the only thing to aim with: move it by the
+                    // same motion the host was sent (IPADAIM, 15/11/2026).
+                    const s = this._mouseSensitivity;
+                    this._clientCursorMoved(e.movementX * s, e.movementY * s);
                 }
             } else {
                 this._lastMouseClientX = e.clientX;
@@ -9619,6 +9624,9 @@ export class StreamView {
                     referenceHeight: refH,
                 });
                 this._noteMouseSent(e);
+                // The page-drawn pointer goes where the host's was just put,
+                // so lock-free look later starts from the same point.
+                if (refW > 0 && refH > 0) this._clientCursorPlacedAt(x / refW, y / refH);
             }
         };
         this.inputEl.addEventListener('mousemove', this._onGamingMouseMove);
@@ -9648,6 +9656,7 @@ export class StreamView {
                 referenceWidth: refW,
                 referenceHeight: refH,
             });
+            if (refW > 0 && refH > 0) this._clientCursorPlacedAt(x / refW, y / refH);
             this._lockPointerOnClick();
         };
         this.inputEl.addEventListener('click', this._onGamingClick);
