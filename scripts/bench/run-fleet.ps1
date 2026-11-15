@@ -204,10 +204,15 @@ try {
             # stays Auto, the client resolves 1080 against the host's display and
             # writes the host's own height back, and every fleet pass runs at
             # whatever that machine's screen happens to be instead of 1080p.
+            # "show_performance_stats":true neither: the overlay is off by default,
+            # and without it the page shows no stats rows and logs no [perf] line,
+            # so a pass streams and comes back with "rows":{} and an empty perf -
+            # a fresh profile measured nothing at all that way (15/11/2026).
             $settings = '{"video_codec":"' + $codec + '","stream_resolution":"fixed",' +
                         '"stream_height":1080,"stream_fps":60,' +
                         '"video_enhancement":"' + $algo + '","chroma_444_enabled":false,' +
-                        '"hdr_enabled":false,"mute_host_audio":true,"stream_aspect":"auto"}'
+                        '"hdr_enabled":false,"mute_host_audio":true,"stream_aspect":"auto",' +
+                        '"show_performance_stats":true}'
             # Through a FILE, never inline. PowerShell strips the double quotes of an
             # inline argument before python sees them, so {"video_codec":"hevc"} arrives
             # as {video_codec:hevc}: the patch throws, the page reloads with the settings
