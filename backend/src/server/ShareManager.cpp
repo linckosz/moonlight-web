@@ -67,7 +67,7 @@ bool ShareManager::isValidTtl(qint64 secs)
 
 bool ShareManager::isValidFeedHeight(int height)
 {
-    return height == 720 || height == 1080 || height == 1440;
+    return height == kFeedAuto || height == 720 || height == 1080 || height == 1440;
 }
 
 QString ShareManager::sanitizeName(const QString& name)
@@ -763,6 +763,22 @@ QString ShareManager::joinIdentity(int slot, const QString& cookie)
     return s->activation.id + QLatin1Char('/') + hash(cookie);
 }
 
+bool ShareManager::takeLadderStep(int slot, const QString& cookie, qint64 nowMs)
+{
+    const QString joiner = joinIdentity(slot, cookie);
+    if (joiner.isEmpty()) return false;
+    // Steps older than the gap decide nothing any more.
+    for (auto it = m_LadderSteps.begin(); it != m_LadderSteps.end();) {
+        if (nowMs - it.value() >= kLadderStepGapMs)
+            it = m_LadderSteps.erase(it);
+        else
+            ++it;
+    }
+    if (m_LadderSteps.contains(joiner)) return false;
+    m_LadderSteps.insert(joiner, nowMs);
+    return true;
+}
+
 int ShareManager::appForSlot(int slot)
 {
     pruneExpired();
@@ -882,7 +898,10 @@ void ShareManager::save()
 
     QJsonObject root;
     root[QStringLiteral("slots")] = slotArray;
-    root[QStringLiteral("feedHeight")] = m_FeedHeight;
+    // Auto as its own key: a build from before it reads feedHeight alone, and
+    // takes the 1080 it finds there for Auto as it always took it.
+    root[QStringLiteral("feedHeight")] = m_FeedHeight == kFeedAuto ? 1080 : m_FeedHeight;
+    root[QStringLiteral("feedAuto")] = m_FeedHeight == kFeedAuto;
     QJsonObject linkAddress;
     for (auto it = m_LinkAddress.cbegin(); it != m_LinkAddress.cend(); ++it)
         linkAddress[it.key()] = it.value();
@@ -907,8 +926,15 @@ void ShareManager::load()
 
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     const QJsonObject root = doc.object();
-    const int feedHeight = root.value(QStringLiteral("feedHeight")).toInt(kFeedHeight);
-    m_FeedHeight = isValidFeedHeight(feedHeight) ? feedHeight : kFeedHeight;
+    // A file from before Auto (no feedAuto) wrote 1080 whether the owner had
+    // picked it or never touched the choice, its default: that one becomes
+    // Auto, the new default. 720 and 1440 were always the owner's pick, and
+    // stay it.
+    const int feedHeight = root.value(QStringLiteral("feedHeight")).toInt(1080);
+    const bool feedAuto = root.contains(QStringLiteral("feedAuto"))
+                              ? root.value(QStringLiteral("feedAuto")).toBool(true)
+                              : feedHeight != 720 && feedHeight != 1440;
+    m_FeedHeight = feedAuto || !isValidFeedHeight(feedHeight) ? kFeedAuto : feedHeight;
     const QJsonObject linkAddress = root.value(QStringLiteral("linkAddress")).toObject();
     for (auto it = linkAddress.begin(); it != linkAddress.end(); ++it) {
         const QString id = it.value().toString();

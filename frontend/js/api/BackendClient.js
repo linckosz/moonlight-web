@@ -772,8 +772,10 @@ export class BackendClient {
      *  codec the backend picked; omitted, the backend picks.
      *  @param {boolean} [udpBlocked] this browser's STUN probe got no answer:
      *  the backend skips the UDP rungs for an internet guest.
-     *  @param {{screen?: string|null, tv?: boolean}} [screen] for Auto: this
-     *  screen's "WxH" in device pixels and whether it is a TV's (guestScreen). */
+     *  @param {{screen?: string|null, tv?: boolean, degrade?: number}} [screen]
+     *  for Auto: this screen's "WxH" in device pixels and whether it is a TV's
+     *  (guestScreen); and, for a step of the guest's congestion ladder
+     *  (stream/GuestLadder.js), the step its leg relaunches at, 0 to 8. */
     static async playerJoin(
         token,
         height,
@@ -797,6 +799,8 @@ export class BackendClient {
         if (udpBlocked) body.udp_blocked = true;
         // Back after the worker of that stream crashed (stream/CrashRelaunch.js).
         if (reconnectOf) body.reconnect_of = reconnectOf;
+        // A step of the ladder, on any rung: the backend works the picture out.
+        if (screen && Number.isInteger(screen.degrade)) body.degrade = screen.degrade;
         // As launchApp's: a guest's browser decodes through a gap too, and a
         // native host then gives their stream the owner's refresh wave.
         body.ride_out_loss = RIDE_OUT_LOSS && decoderRidesOutGaps();

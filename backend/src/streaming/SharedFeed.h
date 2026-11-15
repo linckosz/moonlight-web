@@ -21,6 +21,7 @@
 
 #include <QByteArray>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QSet>
@@ -68,10 +69,26 @@ public:
         QString videoPipeline;
         QString tuning;
         QString portalToken;
+        /// The owner left the height to Auto (issue #67, step 2): the feed
+        /// follows its guests' screens, and @p height is this guest's wish.
+        bool autoHeight = false;
+        /// This guest's own Auto height, whatever the owner picked: what it
+        /// weighs once the feed is in Auto.
+        int wantHeight = 1080;
+        /// The host's shape (width / height) and this guest's network, which
+        /// the feed's width and Auto bitrate follow.
+        double aspectRatio = 16.0 / 9.0;
+        bool lan = true;
+        /// The host's own screen, which Auto never goes above; 0 unknown.
+        int hostScreenHeight = 0;
 
+        /// In Auto, every guest of the display shares the feed whatever its
+        /// own height; on a rung, those at that height do.
         bool sameFeed(const Spec& o) const
         {
-            return hostUuid == o.hostUuid && appId == o.appId && height == o.height;
+            if (hostUuid != o.hostUuid || appId != o.appId || autoHeight != o.autoHeight)
+                return false;
+            return autoHeight || height == o.height;
         }
     };
 
@@ -118,7 +135,13 @@ public:
     /// as for a relaunch after a death, and their decoders take the new size
     /// on its first keyframe — the width and the rate following, as the guest
     /// profile's do. An idle feed simply stops: the next guest starts it anew.
+    /// 0 is Auto (ShareManager::kFeedAuto): the feed goes to its connected
+    /// guests' Auto height, lower included, and follows them from then on.
     void resize(int height);
+
+    /// The browser of the guest of @p slot has its stream: in Auto, its
+    /// screen counts from now on (issue #67, G1), and the feed may go up.
+    void guestConnected(int slot);
 
     bool running() const { return !m_Worker.isNull(); }
     /// The host the current feed is of, empty when none was ever asked for.
@@ -141,6 +164,22 @@ private:
     /// rejoin the way a codec fallback does) and ends itself.
     void retireForCodec(const QString& codec);
     void onEnded(StreamWorkerHost* worker);
+    /// Rebuild a feed with guests on it at m_Spec (already set) under the same
+    /// pipe; an idle one stops. @p why is the log's.
+    void rebuild(const char* why);
+    /// In Auto: where the connected guests want the feed (feedAutoTarget), and
+    /// a rebuild there when it is not — at most one a minute (G2), the next
+    /// one waiting on m_AutoTimer. @p ownerPick: the owner has just picked
+    /// Auto, which may lower it and does not wait.
+    void reconsider(bool ownerPick = false);
+
+    /// What a guest on the feed would like, as Auto weighs it.
+    struct Want
+    {
+        int height = 1080;
+        bool lan = true;
+        bool connected = false;
+    };
 
     QString m_Edition;
     Spec m_Spec;
@@ -149,6 +188,12 @@ private:
     QPointer<StreamWorkerHost> m_Worker;
     StreamWorkerHost::Launch m_Launch = StreamWorkerHost::Launch::Plain;
     QSet<int> m_Guests;
+    /// slot → that guest's wish; kept for every guest, so that the owner
+    /// picking Auto under a running feed knows them already.
+    QHash<int, Want> m_Wants;
+    /// The last rebuild Auto did (G2), and the one waiting for its minute.
+    QElapsedTimer m_LastAutoRebuild;
+    QTimer m_AutoTimer;
     QTimer m_IdleTimer;
     QTimer m_RestartTimer;
     QElapsedTimer m_RunningFor;

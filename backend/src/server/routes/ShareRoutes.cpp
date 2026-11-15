@@ -672,7 +672,24 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
             // this invitation's alone, and the cookie above proves the device).
             const int transportIndex =
                 qMax(0, body.value(QStringLiteral("transport_index")).toInt(0));
-            if (share.isStreaming(slot) && transportIndex == 0) {
+            // So is a step of the guest's own congestion ladder (issue #67,
+            // step 2): the same browser relaunching its leg one step lower or
+            // higher, which the next worker replaces as a rung does. Each one
+            // restarts the guest's stream: once a minute at most, per device of
+            // the invitation, whatever the page asks.
+            const bool ladderStep = mw::guestprofile::asksLadderStep(body);
+            if (ladderStep &&
+                !share.takeLadderStep(slot, HttpServer::cookieFromRequest(req, kPlayerCookie),
+                                      QDateTime::currentMSecsSinceEpoch())) {
+                Logger::info(
+                    QStringLiteral("[Share] Slot %1: a ladder step under a minute after the last")
+                        .arg(slot));
+                QJsonObject obj;
+                obj[QStringLiteral("error")] = QStringLiteral("ladder_too_soon");
+                respond(HttpResponse::json(obj, 429));
+                return;
+            }
+            if (share.isStreaming(slot) && transportIndex == 0 && !ladderStep) {
                 // Never steal a running stream: the other device has to leave.
                 QJsonObject obj;
                 obj[QStringLiteral("error")] = QStringLiteral("stream_in_progress");

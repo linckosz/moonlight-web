@@ -122,4 +122,114 @@ void run_guest_profile_tests()
     CHECK_EQ(autoHeight(Screen{1080, 1920}, 9.0 / 16.0, false), 1440);
     CHECK_EQ(autoHeight(Screen{1920, 1080}, 9.0 / 16.0, false), 1440);
     CHECK_EQ(autoHeight(Screen{720, 1280}, 9.0 / 16.0, false), 1080);
+
+    SECTION("GuestProfile — Auto is never taller than the host's screen");
+    CHECK_EQ(capToHost(1440, 1080), 1080);
+    CHECK_EQ(capToHost(1440, 1200), 1080);
+    CHECK_EQ(capToHost(1440, 1440), 1440);
+    CHECK_EQ(capToHost(1080, 2160), 1080);
+    CHECK_EQ(capToHost(1080, 600), 720);
+    CHECK_EQ(capToHost(1440, 0), 1440);
+    CHECK_EQ(capToHost(1440, -1), 1440);
+
+    SECTION("GuestProfile — the ladder's steps, from the shared table");
+    CHECK(cases.value(QStringLiteral("degrade")).toArray().size() >= 10);
+    for (const QJsonValue& v : cases.value(QStringLiteral("degrade")).toArray()) {
+        const QJsonObject c = v.toObject();
+        const Picture base{c.value("height").toInt(), c.value("kbps").toInt()};
+        const Picture got = degraded(base, ratioOf(c.value("aspect").toString()),
+                                     c.value("lan").toBool(), c.value("n").toInt());
+        const QJsonArray want = c.value("want").toArray();
+        if (got.height != want.at(0).toInt() || got.bitrateKbps != want.at(1).toInt())
+            std::fprintf(stderr, "  %dp %d kbps lan %d step %d: %dp %d kbps, not %dp %d kbps\n",
+                         base.height, base.bitrateKbps, c.value("lan").toBool(),
+                         c.value("n").toInt(), got.height, got.bitrateKbps, want.at(0).toInt(),
+                         want.at(1).toInt());
+        CHECK_EQ(got.height, want.at(0).toInt());
+        CHECK_EQ(got.bitrateKbps, want.at(1).toInt());
+    }
+
+    SECTION("GuestProfile — a step is only ever an integer from 0 to 8");
+    CHECK(cases.value(QStringLiteral("degradeRead")).toArray().size() >= 10);
+    for (const QJsonValue& v : cases.value(QStringLiteral("degradeRead")).toArray()) {
+        const QJsonObject c = v.toObject();
+        const QJsonObject body = c.value("body").toObject();
+        const int got = readDegrade(body);
+        if (got != c.value("n").toInt())
+            std::fprintf(stderr, "  %s: %d, not %d\n",
+                         QJsonDocument(body).toJson(QJsonDocument::Compact).constData(), got,
+                         c.value("n").toInt());
+        CHECK_EQ(got, c.value("n").toInt());
+    }
+    CHECK(asksLadderStep(QJsonObject{{"degrade", 0}}));
+    CHECK(asksLadderStep(QJsonObject{{"degrade", 8}}));
+    CHECK(asksLadderStep(QJsonObject{{"degrade", 1000000}}));
+    // Anything readDegrade would not read as a step is an ordinary join.
+    CHECK(!asksLadderStep(QJsonObject{{"degrade", "x"}}));
+    CHECK(!asksLadderStep(QJsonObject{{"degrade", "3"}}));
+    CHECK(!asksLadderStep(QJsonObject{{"degrade", -1}}));
+    CHECK(!asksLadderStep(QJsonObject{{"degrade", 2.5}}));
+    CHECK(!asksLadderStep(QJsonObject{{"degrade", true}}));
+    CHECK(!asksLadderStep(QJsonObject{{"degrade", QJsonValue::Null}}));
+    CHECK(!asksLadderStep(QJsonObject{{"auto", true}}));
+
+    SECTION("GuestProfile — the ladder only lowers, whatever the step");
+    for (const int h : kRungs)
+        for (const bool lan : {false, true}) {
+            const Picture base{h, autoBitrateKbps(h, 16.0 / 9.0, lan)};
+            Picture prev = base;
+            for (int n = 0; n <= kDegradeMax + 3; ++n) {
+                const Picture p = degraded(base, 16.0 / 9.0, lan, n);
+                CHECK(p.height <= prev.height);
+                CHECK(p.bitrateKbps <= prev.bitrateKbps);
+                CHECK(p.height >= kDegradeFloorHeight);
+                CHECK(p.bitrateKbps >= kDegradeFloorKbps);
+                prev = p;
+            }
+            CHECK(degraded(base, 16.0 / 9.0, lan, -4) == base);
+        }
+
+    SECTION("GuestProfile — the shared feed in Auto: the tallest connected guest's");
+    {
+        const FeedTarget at1080{1080, true, 0};
+        const FeedGuest small{1080, true, true};
+        const FeedGuest big{1440, true, true};
+        // Joined, never connected: it raises nothing (G1).
+        const FeedGuest bigJoining{1440, true, false};
+        const FeedGuest farAway{1080, false, true};
+
+        FeedTarget t = feedAutoTarget(at1080, {small, big}, 0, false);
+        CHECK_EQ(t.height, 1440);
+        CHECK(t.lan);
+        CHECK_EQ(t.counted, 2);
+
+        t = feedAutoTarget(at1080, {small, bigJoining}, 0, false);
+        CHECK_EQ(t.height, 1080);
+        CHECK_EQ(t.counted, 1);
+
+        // Never above the host's screen (G3).
+        t = feedAutoTarget(at1080, {big}, 1200, false);
+        CHECK_EQ(t.height, 1080);
+
+        // Never down while guests watch (I67-baisse B): the big one left.
+        t = feedAutoTarget(FeedTarget{1440, true, 0}, {small}, 0, false);
+        CHECK_EQ(t.height, 1440);
+
+        // One guest away from the LAN: the Internet rule, and it stays.
+        t = feedAutoTarget(at1080, {small, farAway}, 0, false);
+        CHECK(!t.lan);
+        t = feedAutoTarget(FeedTarget{1080, false, 0}, {small}, 0, false);
+        CHECK(!t.lan);
+
+        // Nobody connected: as it is.
+        t = feedAutoTarget(FeedTarget{720, false, 0}, {bigJoining}, 0, false);
+        CHECK_EQ(t.height, 720);
+        CHECK(!t.lan);
+        CHECK_EQ(t.counted, 0);
+
+        // The owner has just picked Auto: the guests' own, lower included.
+        t = feedAutoTarget(FeedTarget{1440, false, 0}, {small}, 0, true);
+        CHECK_EQ(t.height, 1080);
+        CHECK(t.lan);
+    }
 }

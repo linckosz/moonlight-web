@@ -113,4 +113,77 @@ int autoBitrateKbps(int height, double aspectRatio, bool lan)
     return static_cast<int>(rounded * 1000.0 + 0.5);
 }
 
+int capToHost(int height, int hostScreenHeight)
+{
+    if (hostScreenHeight <= 0) return height;
+    int cap = kRungs[0];
+    for (const int rung : kRungs)
+        if (rung <= hostScreenHeight) cap = rung;
+    return std::min(height, cap);
+}
+
+int readDegrade(const QJsonObject& body)
+{
+    const QJsonValue value = body.value(QStringLiteral("degrade"));
+    // A JSON number is a double: an integer is one with nothing after the point.
+    if (!value.isDouble()) return 0;
+    const double n = value.toDouble();
+    if (!std::isfinite(n) || n < 0.0 || std::floor(n) != n) return 0;
+    return n > kDegradeMax ? kDegradeMax : static_cast<int>(n);
+}
+
+bool asksLadderStep(const QJsonObject& body)
+{
+    // Only a step readDegrade would read as one: anything else is no step at
+    // all, and the join an ordinary one.
+    const QJsonValue value = body.value(QStringLiteral("degrade"));
+    if (!value.isDouble()) return false;
+    const double n = value.toDouble();
+    return std::isfinite(n) && n >= 0.0 && std::floor(n) == n;
+}
+
+Picture degraded(const Picture& base, double aspectRatio, bool lan, int n)
+{
+    Picture p = base;
+    const int steps = std::clamp(n, 0, kDegradeMax);
+    for (int step = 1; step <= steps; ++step) {
+        const double factor = step == 1 ? 0.5 : 0.7;
+        int kbps =
+            std::max(kDegradeFloorKbps, static_cast<int>(std::lround(p.bitrateKbps * factor)));
+        if (p.height > kDegradeFloorHeight) {
+            int lower = kDegradeFloorHeight;
+            for (const int rung : kRungs)
+                if (rung < p.height) lower = rung;
+            p.height = lower;
+            kbps = std::max(kDegradeFloorKbps,
+                            std::min(kbps, autoBitrateKbps(lower, aspectRatio, lan)));
+        }
+        // A base already under the floor is not raised to it.
+        p.bitrateKbps = std::min(p.bitrateKbps, kbps);
+    }
+    return p;
+}
+
+FeedTarget feedAutoTarget(const FeedTarget& current, const QList<FeedGuest>& guests,
+                          int hostScreenHeight, bool mayLower)
+{
+    int tallest = 0;
+    bool allLan = true;
+    int counted = 0;
+    for (const FeedGuest& g : guests) {
+        if (!g.connected) continue;
+        ++counted;
+        tallest = std::max(tallest, g.wantHeight);
+        allLan = allLan && g.lan;
+    }
+    if (counted == 0) return FeedTarget{current.height, current.lan, 0};
+    // A rung of the guests' own, held to 1440 and to the host's screen.
+    int height = kRungs[0];
+    for (const int rung : kRungs)
+        if (rung <= tallest) height = rung;
+    height = capToHost(height, hostScreenHeight);
+    if (mayLower) return FeedTarget{height, allLan, counted};
+    return FeedTarget{std::max(height, current.height), current.lan && allLan, counted};
+}
+
 } // namespace mw::guestprofile

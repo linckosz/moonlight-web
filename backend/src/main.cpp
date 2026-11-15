@@ -7252,14 +7252,24 @@ int main(int argc, char* argv[])
             int aw = parts.value(0).toInt(), ah = parts.value(1).toInt();
             if (aw > 0 && ah > 0) aspectRatio = static_cast<double>(aw) / ah;
         }
+        // Auto's height for this guest, never taller than the host's own
+        // screen where the host says which it is (its tallest mode): a
+        // picture scaled up there is only more of the same pixels to carry
+        // (issue #67, G3). Worked out on a rung too: a shared feed the owner
+        // later leaves to Auto weighs it (SharedFeed::Spec::wantHeight).
+        const QJsonObject joinBody = QJsonDocument::fromJson(req.body).object();
+        // The tallest mode it names, whatever their order.
+        int hostScreenHeight = 0;
+        for (const NvDisplayMode& mode : host->displayModes)
+            hostScreenHeight = qMax(hostScreenHeight, mode.height);
+        const int guestAutoHeight = mw::guestprofile::capToHost(
+            mw::guestprofile::autoHeight(mw::guestprofile::parseScreen(joinBody), aspectRatio,
+                                         mw::guestprofile::requestFromTv(joinBody)),
+            hostScreenHeight);
         if (height <= 0) {
-            const QJsonObject joinBody = QJsonDocument::fromJson(req.body).object();
-            height =
-                mw::guestprofile::autoHeight(mw::guestprofile::parseScreen(joinBody), aspectRatio,
-                                             mw::guestprofile::requestFromTv(joinBody));
+            height = guestAutoHeight;
             qInfo() << "[Session] Player slot" << slot << "Auto:" << height << "lines";
         }
-        const int width = static_cast<int>(height * aspectRatio + 0.5) & ~1;
 
         // H.264 when the guest's browser could not decode what Auto picked —
         // their codec fallback, the only codec choice a guest has.
@@ -7304,12 +7314,14 @@ int main(int argc, char* argv[])
         // guest on a row the owner closed and reopened, or another device of
         // the invitation, joining within the grace, would otherwise call off
         // the last guest's /cancel and pick up their app.
-        const bool reconnect =
-            !QJsonDocument::fromJson(req.body).object().value("reconnect_of").toString().isEmpty();
+        // A step of the guest's congestion ladder is a fourth (issue #67, step
+        // 2): the same stream one step lower or higher.
+        const bool reconnect = !joinBody.value("reconnect_of").toString().isEmpty();
+        const bool ladderStep = mw::guestprofile::asksLadderStep(joinBody);
         const QString joiner = shareManager.joinIdentity(
             slot, HttpServer::cookieFromRequest(req, QLatin1String(ShareManager::kPlayerCookie)));
         const bool sameJoiner = !joiner.isEmpty() && g_PlayerJoiners.value(slot) == joiner;
-        QString uid = (transportIndex > 0 || h264 || reconnect) && sameJoiner
+        QString uid = (transportIndex > 0 || h264 || reconnect || ladderStep) && sameJoiner
                           ? g_PlayerUids.value(slot)
                           : QString();
         const bool chainRelaunch = !uid.isEmpty();
@@ -7333,16 +7345,46 @@ int main(int argc, char* argv[])
         // guest before, and less above it. The native host's shared feed is
         // one picture for guests on any network, so its first guest's network
         // cannot set it: it keeps the estimate it had, the standard one for
-        // the height, halved, until its own Auto (I67, step 2).
+        // the height, halved — on a rung the owner picked. In Auto the feed
+        // takes the owner's Auto rule too, on its guests' networks together
+        // (SharedFeed, issue #67 step 2): this is this guest's part of it.
         const bool guestOnLan = clientKind == NetClassify::Kind::Loopback ||
                                 clientKind == NetClassify::Kind::Private || clientSameNetwork;
         const bool onSharedFeed = host->backendType == NativeHostBackend::typeName() &&
                                   SharedFeed::enabled(appSettings.sharedFeedEnabled());
+        const bool feedAuto = onSharedFeed && shareManager.feedHeight() == ShareManager::kFeedAuto;
         const int halvedKbps =
             qRound(20000.0 * (static_cast<double>(height) * height) / (1080.0 * 1080.0)) / 2;
-        const int bitrateKbps =
-            onSharedFeed ? qMax(1000, halvedKbps)
-                         : mw::guestprofile::autoBitrateKbps(height, aspectRatio, guestOnLan);
+        int bitrateKbps = onSharedFeed && !feedAuto
+                              ? qMax(1000, halvedKbps)
+                              : mw::guestprofile::autoBitrateKbps(height, aspectRatio, guestOnLan);
+        // The guest's congestion ladder (issue #67, step 2): the picture at
+        // each step from this one, worked out here and sent to the page, which
+        // only ever names a step back. Not on the shared feed: one picture for
+        // every guest, which the host's governor already holds to the slowest.
+        QJsonArray ladderSteps;
+        if (!onSharedFeed) {
+            const mw::guestprofile::Picture base{height, bitrateKbps};
+            const int degrade = mw::guestprofile::readDegrade(joinBody);
+            for (int n = 0; n <= mw::guestprofile::kDegradeMax; ++n) {
+                const mw::guestprofile::Picture p =
+                    mw::guestprofile::degraded(base, aspectRatio, guestOnLan, n);
+                ladderSteps.append(QJsonObject{{QStringLiteral("height"), p.height},
+                                               {QStringLiteral("bitrate_kbps"), p.bitrateKbps}});
+            }
+            if (degrade > 0) {
+                const mw::guestprofile::Picture p =
+                    mw::guestprofile::degraded(base, aspectRatio, guestOnLan, degrade);
+                qInfo() << "[Session] Player slot" << slot << "ladder step" << degrade << ":"
+                        << p.height << "lines," << p.bitrateKbps << "kbps";
+                height = p.height;
+                bitrateKbps = p.bitrateKbps;
+            }
+        }
+        const QJsonObject guestLadder{
+            {QStringLiteral("degrade"), onSharedFeed ? 0 : mw::guestprofile::readDegrade(joinBody)},
+            {QStringLiteral("steps"), ladderSteps}};
+        const int width = static_cast<int>(height * aspectRatio + 0.5) & ~1;
         // As the owner's: its line in the connection history.
         ConnectionHistory::Entry historyLine;
         historyLine.address = AuthManager::cleanClientAddress(req.clientAddress);
@@ -7518,6 +7560,13 @@ int main(int argc, char* argv[])
             feedSpec.height = height;
             feedSpec.width = width;
             feedSpec.bitrateKbps = bitrateKbps;
+            // Auto (issue #67, step 2): this guest's height is what it would
+            // like, and the feed follows its guests (SharedFeed::acquire).
+            feedSpec.autoHeight = feedAuto;
+            feedSpec.wantHeight = guestAutoHeight;
+            feedSpec.aspectRatio = aspectRatio;
+            feedSpec.lan = guestOnLan;
+            feedSpec.hostScreenHeight = hostScreenHeight;
             feedSpec.h264 = h264;
             feedSpec.videoPipeline = appSettings.nativeVideoPipeline();
             feedSpec.tuning = appSettings.nativeTuning();
@@ -7534,6 +7583,17 @@ int main(int argc, char* argv[])
         // As the owner's: what the guest's page asks about once its link goes.
         const QString streamId = StreamEnds::newId();
         worker->setStreamId(streamId);
+
+        // The guest's browser has its picture's channels open: on a feed in
+        // Auto, only now does this guest's screen count (issue #67, G1) — a
+        // join that never connects raises nothing.
+        // Only for the leg the slot holds: a worker the next join replaced
+        // speaks for nobody.
+        QObject::connect(worker, &StreamWorkerHost::viewerConnected, &sharedFeed,
+                         [&sharedFeed, &g_Pool, onFeed, slot, worker]() {
+                             if (*onFeed && g_Pool.at(slot).worker == worker)
+                                 sharedFeed.guestConnected(slot);
+                         });
 
         auto coopSessionId = std::make_shared<QString>();
         QObject::connect(worker, &StreamWorkerHost::coopSessionResolved, qApp,
@@ -7559,33 +7619,36 @@ int main(int argc, char* argv[])
                                         "machine will not ask again";
                          });
 
-        QObject::connect(worker, &StreamWorkerHost::responseReady, qApp,
-                         [respond, &g_LiveSunshineUids, &g_StreamEnds, &shareManager,
-                          &sessionMetrics, sessionFacts, sessionStartedAt, slot, uid, hostUuid,
-                          streamId, historyLine, &historyBegin](int code, QJsonObject bodyObj) {
-                             const bool ok = code == 200 && bodyObj["status"].toString() ==
-                                                                QLatin1String("streaming");
-                             sessionFacts->codec = bodyObj["videoCodec"].toString();
-                             sessionFacts->transport = bodyObj["transport_mode"].toString();
-                             if (ok) {
-                                 *sessionStartedAt = QDateTime::currentMSecsSinceEpoch();
-                                 sessionMetrics.reportStart(*sessionFacts);
-                             } else {
-                                 sessionMetrics.reportFailure(*sessionFacts, code);
-                             }
-                             if (ok) {
-                                 bodyObj["slot"] = slot;
-                                 bodyObj["stream_id"] = streamId;
-                                 g_StreamEnds.begin(streamId, hostUuid, slot, uid, QString(),
-                                                    QDateTime::currentMSecsSinceEpoch());
-                                 g_LiveSunshineUids.insert(uid);
-                                 shareManager.setStreaming(slot, true);
-                                 if (hostUuid == NativeHostBackend::hostUuid())
-                                     historyBegin(streamId, historyLine, QString(),
-                                                  shareManager.name(slot));
-                             }
-                             respond(HttpResponse::json(bodyObj, ok ? 200 : code));
-                         });
+        QObject::connect(
+            worker, &StreamWorkerHost::responseReady, qApp,
+            [respond, &g_LiveSunshineUids, &g_StreamEnds, &shareManager, &sessionMetrics,
+             sessionFacts, sessionStartedAt, slot, uid, hostUuid, streamId, historyLine,
+             &historyBegin, guestLadder](int code, QJsonObject bodyObj) {
+                const bool ok =
+                    code == 200 && bodyObj["status"].toString() == QLatin1String("streaming");
+                sessionFacts->codec = bodyObj["videoCodec"].toString();
+                sessionFacts->transport = bodyObj["transport_mode"].toString();
+                if (ok) {
+                    *sessionStartedAt = QDateTime::currentMSecsSinceEpoch();
+                    sessionMetrics.reportStart(*sessionFacts);
+                } else {
+                    sessionMetrics.reportFailure(*sessionFacts, code);
+                }
+                if (ok) {
+                    bodyObj["slot"] = slot;
+                    bodyObj["stream_id"] = streamId;
+                    // The guest's ladder and the step it is on (issue #67,
+                    // step 2); no steps on the shared feed, which has none.
+                    bodyObj["guest_ladder"] = guestLadder;
+                    g_StreamEnds.begin(streamId, hostUuid, slot, uid, QString(),
+                                       QDateTime::currentMSecsSinceEpoch());
+                    g_LiveSunshineUids.insert(uid);
+                    shareManager.setStreaming(slot, true);
+                    if (hostUuid == NativeHostBackend::hostUuid())
+                        historyBegin(streamId, historyLine, QString(), shareManager.name(slot));
+                }
+                respond(HttpResponse::json(bodyObj, ok ? 200 : code));
+            });
 
         QObject::connect(
             worker, &StreamWorkerHost::ended, qApp,

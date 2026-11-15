@@ -916,22 +916,37 @@ int runStreamWorker(QCoreApplication& app)
 
     // ── Relay tracking: unexpected end → "ended" event + teardown + exit ─────
     // (The parent owns the Sunshine /cancel, keyed by this session's uniqueid.)
-    QObject::connect(session, &StreamSession::relayCreated, qApp, [&state](DataChannelRelay* r) {
-        state.relay = r;
-        QObject::connect(r, &DataChannelRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
-        relayMouseKeys(r->mediaEngine());
-    });
+    // The browser's end is up: told once, whichever relay carries the stream
+    // (StreamWorkerHost::viewerConnected).
+    static bool viewerUpSent = false;
+    const auto viewerUp = []() {
+        if (viewerUpSent) return;
+        viewerUpSent = true;
+        emitEvent({{QStringLiteral("event"), QStringLiteral("viewerUp")}});
+    };
+    QObject::connect(session, &StreamSession::relayCreated, qApp,
+                     [&state, viewerUp](DataChannelRelay* r) {
+                         state.relay = r;
+                         QObject::connect(r, &DataChannelRelay::sessionEnded, qApp,
+                                          []() { teardownAndExit(0); });
+                         QObject::connect(r, &RelayBase::dataChannelsOpen, qApp, viewerUp);
+                         relayMouseKeys(r->mediaEngine());
+                     });
+    QObject::connect(session, &StreamSession::mediaTrackRelayCreated, qApp,
+                     [&state, viewerUp](MediaTrackRelay* r) {
+                         state.mediaRelay = r;
+                         QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp,
+                                          []() { teardownAndExit(0); });
+                         QObject::connect(r, &RelayBase::dataChannelsOpen, qApp, viewerUp);
+                         relayMouseKeys(r->mediaEngine());
+                     });
     QObject::connect(
-        session, &StreamSession::mediaTrackRelayCreated, qApp, [&state](MediaTrackRelay* r) {
-            state.mediaRelay = r;
-            QObject::connect(r, &MediaTrackRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
+        session, &StreamSession::streamRelayCreated, qApp, [&state, viewerUp](StreamRelay* r) {
+            state.streamRelay = r;
+            QObject::connect(r, &StreamRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
+            QObject::connect(r, &StreamRelay::clientConnected, qApp, viewerUp);
             relayMouseKeys(r->mediaEngine());
         });
-    QObject::connect(session, &StreamSession::streamRelayCreated, qApp, [&state](StreamRelay* r) {
-        state.streamRelay = r;
-        QObject::connect(r, &StreamRelay::sessionEnded, qApp, []() { teardownAndExit(0); });
-        relayMouseKeys(r->mediaEngine());
-    });
     // Somebody used the stream since the last beat: the server keeps when, for
     // a booth whose streams have PINs (its idle take-over). One line per beat
     // at most, and none while nobody touches anything.

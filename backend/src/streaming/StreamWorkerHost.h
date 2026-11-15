@@ -244,6 +244,10 @@ signals:
     /// to read the scanout — an AppImage). Persisted by the supervisor: the
     /// worker has no settings file of its own.
     void portalGrantReceived(const QString& token);
+    /// The browser's end of the stream is up: its channels (or its WebSocket,
+    /// on wss) are open. At most once. What a guest on the shared feed in Auto
+    /// waits for before its screen counts (issue #67, G1).
+    void viewerConnected();
     /// The capture's verdict on the display it held over the session (the
     /// native engine's CaptureHold: `held`, `display_mhz`, `gpu`, `why` and the
     /// figures), for `vddmatch`. At most once, just before ended(), and only
@@ -297,6 +301,7 @@ private:
     QByteArray m_Buf;
     bool m_ResponseEmitted = false;
     bool m_EndedEmitted = false;
+    bool m_ViewerConnectedEmitted = false;
     /// A quit or one of the notices was sent: whatever follows is no crash.
     bool m_StopAsked = false;
     bool m_Crashed = false;

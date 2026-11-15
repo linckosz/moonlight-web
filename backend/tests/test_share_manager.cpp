@@ -14,6 +14,8 @@
 
 #include <QDateTime>
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QObject>
 #include <QStandardPaths>
@@ -656,15 +658,17 @@ void test_guests_picture_height()
 {
     SECTION("share: one picture height for every guest, the owner's pick, kept");
     ShareManager* mgr = freshManager();
-    CHECK_EQ(mgr->feedHeight(), 1080); // the default
+    // Auto, the default (issue #67, I67-défaut A).
+    CHECK_EQ(mgr->feedHeight(), ShareManager::kFeedAuto);
 
     QVector<int> told;
     QObject::connect(mgr, &ShareManager::feedHeightChanged, [&told](int h) { told.append(h); });
     // Only the heights the board offers: it arrives from a browser.
     CHECK(!mgr->setFeedHeight(2160));
-    CHECK(!mgr->setFeedHeight(0));
-    CHECK_EQ(mgr->feedHeight(), 1080);
-    CHECK(mgr->setFeedHeight(1080)); // the same: accepted, nothing to rebuild
+    CHECK(!mgr->setFeedHeight(-1));
+    CHECK(!mgr->setFeedHeight(1081));
+    CHECK_EQ(mgr->feedHeight(), ShareManager::kFeedAuto);
+    CHECK(mgr->setFeedHeight(ShareManager::kFeedAuto)); // the same: nothing to rebuild
     CHECK(told.isEmpty());
     CHECK(mgr->setFeedHeight(720));
     CHECK_EQ(mgr->feedHeight(), 720);
@@ -675,7 +679,96 @@ void test_guests_picture_height()
     // The owner's pick outlives a restart, like the rows' own labels.
     auto* restarted = new ShareManager();
     CHECK_EQ(restarted->feedHeight(), 720);
+    // Auto too, and a 1080 picked by hand stays 1080.
+    CHECK(restarted->setFeedHeight(ShareManager::kFeedAuto));
     delete restarted;
+    restarted = new ShareManager();
+    CHECK_EQ(restarted->feedHeight(), ShareManager::kFeedAuto);
+    CHECK(restarted->setFeedHeight(1080));
+    delete restarted;
+    restarted = new ShareManager();
+    CHECK_EQ(restarted->feedHeight(), 1080);
+    delete restarted;
+}
+
+void test_guests_picture_height_from_before_auto()
+{
+    SECTION("share: a file from before Auto keeps 720 and 1440, and its 1080 is Auto");
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                         QStringLiteral("/share.json");
+    const auto written = [&path](int height) {
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+        f.write(QJsonDocument(QJsonObject{{QStringLiteral("slots"), QJsonArray()},
+                                          {QStringLiteral("feedHeight"), height}})
+                    .toJson());
+        return true;
+    };
+    for (const int h : {720, 1440}) {
+        CHECK(written(h));
+        auto* mgr = new ShareManager();
+        CHECK_EQ(mgr->feedHeight(), h);
+        delete mgr;
+    }
+    // 1080 was written whether the owner picked it or never touched the
+    // choice: the new default it is.
+    for (const int h : {1080, 2160, 0}) {
+        CHECK(written(h));
+        auto* mgr = new ShareManager();
+        CHECK_EQ(mgr->feedHeight(), ShareManager::kFeedAuto);
+        delete mgr;
+    }
+    QFile::remove(path);
+}
+
+void test_guest_ladder_steps_once_a_minute()
+{
+    SECTION("share: a guest's ladder relaunches its leg once a minute at most");
+    ShareManager* mgr = freshManager();
+    const qint64 t0 = 1000000;
+    // Off: no joiner, no step.
+    CHECK(!mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"), t0));
+    QString token, pin;
+    ShareManager::SlotStatus st;
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token, pin, st));
+    CHECK(mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"), t0));
+    CHECK(!mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"), t0 + 1));
+    CHECK(!mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"),
+                               t0 + ShareManager::kLadderStepGapMs - 1));
+    // Another device of the invitation is another joiner.
+    CHECK(mgr->takeLadderStep(kSlot, QStringLiteral("cookie-2"), t0 + 5));
+    CHECK(mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"),
+                              t0 + ShareManager::kLadderStepGapMs));
+    CHECK(!mgr->takeLadderStep(kSlot, QString(), t0 + 10 * ShareManager::kLadderStepGapMs));
+    delete mgr;
+}
+
+void test_guest_ladder_steps_stay_in_their_row()
+{
+    SECTION("share: a guest's ladder step counts for its own row only, never an owner's");
+    ShareManager* mgr = freshManager();
+    const qint64 t0 = 2000000;
+    QString token2, pin2, token3, pin3;
+    ShareManager::SlotStatus st2, st3;
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st2));
+    CHECK(mgr->activate(kSlot + 1, kHost, kApp, kTtl, token3, pin3, st3));
+    // The owner's slots are no guest's: no joiner there, no step.
+    for (int owner = 0; owner < ShareManager::kFirstSlot; ++owner)
+        CHECK(!mgr->takeLadderStep(owner, QStringLiteral("cookie-1"), t0));
+    // Past the rows, and a row that is not open: none either.
+    CHECK(!mgr->takeLadderStep(ShareManager::kLastSlot + 1, QStringLiteral("cookie-1"), t0));
+    CHECK(!mgr->takeLadderStep(kSlot + 2, QStringLiteral("cookie-1"), t0));
+    // One guest's step leaves the next row's guest its own, even under the
+    // same cookie value: the joiner is the row's activation and the cookie.
+    CHECK(mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"), t0));
+    CHECK(mgr->takeLadderStep(kSlot + 1, QStringLiteral("cookie-1"), t0 + 1));
+    CHECK(!mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"), t0 + 2));
+    // The row closed and opened again is a new activation: a new joiner.
+    mgr->deactivate(kSlot, ShareManager::EndReason::OwnerToggle);
+    CHECK(!mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"), t0 + 3));
+    CHECK(mgr->activate(kSlot, kHost, kApp, kTtl, token2, pin2, st2));
+    CHECK(mgr->takeLadderStep(kSlot, QStringLiteral("cookie-1"), t0 + 4));
+    delete mgr;
 }
 
 void test_link_address_is_per_host_and_kept()
@@ -947,6 +1040,9 @@ void run_share_manager_tests()
     test_clear_secrets_are_memory_only();
     test_share_is_bound_to_its_host();
     test_guests_picture_height();
+    test_guests_picture_height_from_before_auto();
+    test_guest_ladder_steps_once_a_minute();
+    test_guest_ladder_steps_stay_in_their_row();
     test_link_address_is_per_host_and_kept();
     test_each_opening_is_named();
     test_revoking_one_hosts_guests();

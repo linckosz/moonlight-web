@@ -49,8 +49,12 @@ const POLL_MS = 5000;
 /** The lifetimes the backend accepts, in the order the slider walks them. */
 const TTL_CHOICES = [3600, 4 * 3600, 8 * 3600, 24 * 3600, 48 * 3600, 0];
 
-/** The guests' picture heights the backend accepts (ShareManager::feedHeight). */
-const FEED_HEIGHTS = [720, 1080, 1440];
+/**
+ * The guests' picture heights the backend accepts (ShareManager::feedHeight):
+ * 0 is Auto, the default, which follows the guests' screens (issue #67).
+ */
+const FEED_AUTO = 0;
+const FEED_HEIGHTS = [FEED_AUTO, 720, 1080, 1440];
 
 const ROW_ICON = {
     off: Icons.userPlus,
@@ -145,9 +149,10 @@ export class ShareBoard {
         /**
          * The guests' picture height. Only the owner's to pick on a host whose
          * guests all watch one picture (a native host: `_ownerHeight`), where
-         * it is one choice for the whole board rather than a row's own.
+         * it is one choice for the whole board rather than a row's own. Auto
+         * (FEED_AUTO) until the owner picks a rung.
          */
-        this._feedHeight = 1080;
+        this._feedHeight = FEED_AUTO;
         this._ownerHeight = false;
         /** Those guests share one stream of it: a change resizes it live. */
         this._sharedFeed = false;
@@ -484,8 +489,18 @@ export class ShareBoard {
             (h) =>
                 `<button class="btn share-feed-btn ${h === this._feedHeight ? 'is-selected' : ''}"
                          type="button" data-height="${h}"
-                         aria-pressed="${h === this._feedHeight}">${h}p</button>`,
+                         aria-pressed="${h === this._feedHeight}">${
+                             h === FEED_AUTO ? escapeHtml(t('sharing.feedAuto')) : `${h}p`
+                         }</button>`,
         ).join('');
+        // Auto says what it follows, and what changing it costs those
+        // watching; a rung keeps the line it always had.
+        const hint =
+            this._feedHeight === FEED_AUTO
+                ? 'sharing.feedHintAuto'
+                : this._sharedFeed
+                  ? 'sharing.feedHintShared'
+                  : 'sharing.feedHint';
         return `
             <div class="share-board-feed">
                 <span class="share-field-label" id="share-feed-label">${escapeHtml(
@@ -493,9 +508,7 @@ export class ShareBoard {
                 )}</span>
                 <div class="share-feed-choice" role="group"
                      aria-labelledby="share-feed-label">${buttons}</div>
-                <p class="share-board-note">${escapeHtml(
-                    t(this._sharedFeed ? 'sharing.feedHintShared' : 'sharing.feedHint'),
-                )}</p>
+                <p class="share-board-note">${escapeHtml(t(hint))}</p>
             </div>
         `;
     }

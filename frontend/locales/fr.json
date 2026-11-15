@@ -1240,6 +1240,8 @@
         "feedLabel": "Image des invités",
         "feedHint": "Une seule hauteur pour tous les invités, jamais au-dessus de l'écran de l'hôte.",
         "feedHintShared": "Tes invités regardent un seul flux partagé à cette hauteur, jamais au-dessus de l'écran de l'hôte. La changer le redimensionne aussi pour ceux qui regardent déjà.",
+        "feedAuto": "Auto",
+        "feedHintAuto": "Auto : la hauteur suit l'écran des invités. La changer coupe l'image une ou deux secondes pour ceux qui regardent.",
         "noApps": "Cet hôte n'a encore aucune application à partager.",
         "unavailable": "Le partage de session n'est pas disponible sur ce serveur.",
         "openFailed": "Impossible d'ouvrir cette invitation."

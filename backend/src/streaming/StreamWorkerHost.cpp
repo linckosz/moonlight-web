@@ -719,6 +719,11 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
             if (!token.isEmpty()) emit portalGrantReceived(token);
         } else if (type == QLatin1String("captureHold")) {
             if (event["display_mhz"].toInt() > 0) emit captureHoldReceived(event);
+        } else if (type == QLatin1String("viewerUp")) {
+            if (!m_ViewerConnectedEmitted) {
+                m_ViewerConnectedEmitted = true;
+                emit viewerConnected();
+            }
         } else if (type == QLatin1String("hidAdopted")) {
             // The worker holds its copies of the kept devices: ours go.
             if (m_HidBatch) HidParkingTransfer::settle(m_HidBatch, true);

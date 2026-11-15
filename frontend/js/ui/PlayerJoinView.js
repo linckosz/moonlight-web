@@ -466,7 +466,11 @@ export class PlayerJoinView {
         const fixedHeight = [720, 1080, 1440].includes(Number(this.info.feed_height))
             ? Number(this.info.feed_height)
             : 0;
+        // Or left to Auto, which follows the guests' screens (issue #67): this
+        // one's screen goes along with the join, and still nothing to choose.
+        const feedAuto = this.info.feed_height === 0 && this.info.shared_feed === true;
         if (fixedHeight) this._quality = fixedHeight;
+        if (feedAuto) this._quality = 'auto';
 
         this._shell(`
             <h1>${escapeHtml(t('player.joinTitle', { machine }))}</h1>
@@ -484,9 +488,11 @@ export class PlayerJoinView {
                         : ''
                 }
                 ${
-                    fixedHeight
+                    fixedHeight || feedAuto
                         ? `<p class="player-hint player-quality-fixed">${escapeHtml(
-                              t('player.qualityFixed', { height: fixedHeight }),
+                              feedAuto
+                                  ? t('player.qualityAutoHint')
+                                  : t('player.qualityFixed', { height: fixedHeight }),
                           )}</p>`
                         : `
                 <div class="player-quality">

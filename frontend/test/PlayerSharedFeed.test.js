@@ -82,6 +82,19 @@ describe('PlayerJoinView on a native host', () => {
         expect(codec).toBeUndefined();
     });
 
+    // The owner left the shared picture to Auto (issue #67, step 2): still
+    // nothing to choose, and the guest's screen goes along with the join.
+    it('joins in Auto when the owner left the shared picture to it', async () => {
+        const onJoin = await mount({ feed_height: 0, shared_feed: true }, true);
+        expect(container.querySelector('.player-quality-btn')).toBeNull();
+        const fixed = container.querySelector('.player-quality-fixed');
+        expect(fixed.textContent).toContain('text:player.qualityAutoHint');
+        const [info] = await join(onJoin);
+        expect(info.height).toBe('auto');
+        expect(info).toHaveProperty('screen');
+        expect(info).toHaveProperty('tv');
+    });
+
     it('asks for H.264 at once when this browser decodes no HEVC', async () => {
         const onJoin = await mount({ feed_height: 1080, shared_feed: true }, false);
         const [, , codec] = await join(onJoin);

@@ -739,7 +739,13 @@ describe('ShareBoard', () => {
         });
         expect(BackendClient.getShareStatus).toHaveBeenCalledWith('h');
         const buttons = document.querySelectorAll('.share-board-feed .share-feed-btn');
-        expect([...buttons].map((b) => b.textContent)).toEqual(['720p', '1080p', '1440p']);
+        // Auto first (issue #67), then the rungs.
+        expect([...buttons].map((b) => b.textContent)).toEqual([
+            'sharing.feedAuto',
+            '720p',
+            '1080p',
+            '1440p',
+        ]);
         expect(document.querySelector('.share-feed-btn.is-selected').textContent).toBe('1080p');
         // Only one, above the rows: no row carries a height of its own.
         expect(document.querySelectorAll('.share-board-feed').length).toBe(1);
@@ -748,7 +754,7 @@ describe('ShareBoard', () => {
             'sharing.feedHintShared',
         );
 
-        buttons[0].dispatchEvent(new Event('click'));
+        buttons[1].dispatchEvent(new Event('click'));
         await vi.waitFor(() => expect(BackendClient.shareFeedHeight).toHaveBeenCalledWith(720));
         await vi.waitFor(() =>
             expect(document.querySelector('.share-feed-btn.is-selected').textContent).toBe('720p'),
@@ -761,10 +767,41 @@ describe('ShareBoard', () => {
             owner_height: true,
         });
         BackendClient.shareFeedHeight.mockRejectedValueOnce(new Error('400'));
-        document.querySelectorAll('.share-feed-btn')[2].dispatchEvent(new Event('click'));
+        document.querySelectorAll('.share-feed-btn')[3].dispatchEvent(new Event('click'));
         await vi.waitFor(() => expect(BackendClient.shareFeedHeight).toHaveBeenCalledWith(1440));
         await vi.waitFor(() =>
             expect(document.querySelector('.share-feed-btn.is-selected').textContent).toBe('1080p'),
+        );
+    });
+
+    // Auto, the default (issue #67, I67-défaut A): the board says what it
+    // follows and what changing it costs those watching.
+    it('offers Auto first, picked by default, with its own line', async () => {
+        await openBoard([slot(2), slot(3), slot(4)], undefined, {
+            feed_height: 0,
+            owner_height: true,
+            shared_feed: true,
+        });
+        const selected = document.querySelector('.share-feed-btn.is-selected');
+        expect(selected.textContent).toBe('sharing.feedAuto');
+        expect(selected.getAttribute('aria-pressed')).toBe('true');
+        const note = document.querySelector('.share-board-feed .share-board-note').textContent;
+        expect(note).toContain('sharing.feedHintAuto');
+        expect(note).not.toContain('sharing.feedHintShared');
+
+        document.querySelectorAll('.share-feed-btn')[2].dispatchEvent(new Event('click'));
+        await vi.waitFor(() => expect(BackendClient.shareFeedHeight).toHaveBeenCalledWith(1080));
+        await vi.waitFor(() =>
+            expect(document.querySelector('.share-board-feed').textContent).toContain(
+                'sharing.feedHintShared',
+            ),
+        );
+        document.querySelectorAll('.share-feed-btn')[0].dispatchEvent(new Event('click'));
+        await vi.waitFor(() => expect(BackendClient.shareFeedHeight).toHaveBeenCalledWith(0));
+        await vi.waitFor(() =>
+            expect(document.querySelector('.share-feed-btn.is-selected').textContent).toBe(
+                'sharing.feedAuto',
+            ),
         );
     });
 

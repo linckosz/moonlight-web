@@ -149,6 +149,7 @@ import {
     settledStreamState,
     shouldRelaunchAfterCrash,
 } from './stream/CrashRelaunch.js';
+import { GuestLadder } from './stream/GuestLadder.js';
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
@@ -663,6 +664,10 @@ export const MoonlightApp = {
             /** @type {HTMLElement} */ (el).style.display = 'none';
         });
 
+        // The guest's congestion ladder (issue #67, step 2), across the
+        // relaunches of its leg: see stream/GuestLadder.js.
+        const ladder = new GuestLadder();
+
         const view = new PlayerJoinView(
             container,
             token,
@@ -673,9 +678,11 @@ export const MoonlightApp = {
                 rejoin = {},
             ) => {
                 // The guest's own Join starts the count of restarts after a
-                // crash again (stream/CrashRelaunch.js), as the owner's launch.
-                if (!rejoin.reconnectOf && transportIndex === 0 && !codec) {
+                // crash again (stream/CrashRelaunch.js), as the owner's launch,
+                // and its ladder from the top.
+                if (!rejoin.reconnectOf && !rejoin.ladder && transportIndex === 0 && !codec) {
                     this._crashRelaunches = [];
+                    ladder.reset();
                 }
                 // Same question as the owner's launch, same one-minute memory:
                 // a guest on a network that blocks UDP skips the UDP rungs.
@@ -688,8 +695,9 @@ export const MoonlightApp = {
                     codec,
                     udpBlocked,
                     rejoin.reconnectOf,
-                    // What Auto is worked out from on the host (issue #67).
-                    { screen, tv },
+                    // What Auto is worked out from on the host (issue #67),
+                    // and the ladder's step when this is one.
+                    rejoin.ladder ? { screen, tv, degrade: rejoin.degrade } : { screen, tv },
                 );
                 // Left from the veil while the rejoin was on its way.
                 if (rejoin.aborted) {
@@ -699,10 +707,12 @@ export const MoonlightApp = {
 
                 // StreamView renders (and connects) from its constructor, so the
                 // join screen has to be gone first. The veil of a rejoin after a
-                // crash stays over the new stream until its first frame.
-                const veil = rejoin.reconnectOf
-                    ? document.getElementById('stream-relaunch-loader')
-                    : null;
+                // crash, or of a ladder's step, stays over the new stream until
+                // its first frame.
+                const veil =
+                    rejoin.reconnectOf || rejoin.ladder
+                        ? document.getElementById('stream-relaunch-loader')
+                        : null;
                 container.innerHTML = '';
 
                 // The launch payload is the same shape as the owner's, so the whole
@@ -749,6 +759,76 @@ export const MoonlightApp = {
                     typeof result.transport_index === 'number'
                         ? result.transport_index
                         : transportIndex;
+
+                // The ladder the host sent, and the step this stream is on. A
+                // native host has none: its governor follows the link itself.
+                ladder.adopt(result.native === true ? null : result.guest_ladder);
+                if (ladder.usable) {
+                    // One step to @p move: the toast first, as the owner's, then
+                    // this leg relaunched behind its last picture, on the same
+                    // rung and with the same cookie.
+                    const stepTo = async (move) => {
+                        const down = move.level > ladder.level;
+                        (down ? Toast.warning : Toast.info)(t(move.toast.key, move.toast.params));
+                        const again = { ladder: true, degrade: move.level, aborted: false };
+                        const frame = await streamView.captureLastFrameAsync();
+                        if (this.streamView !== streamView || streamView._quitting) return;
+                        this._showRelaunchLoader(frame, {
+                            stopLabel: t('player.leave'),
+                            onStop: () => {
+                                again.aborted = true;
+                                this._hideRelaunchLoader();
+                                if (this.streamView) {
+                                    this.streamView.quit();
+                                    return;
+                                }
+                                BackendClient.playerLeave().catch(() => {});
+                                view.refresh();
+                            },
+                        });
+                        streamView.onQuit = null;
+                        streamView.onConnectionFailed = null;
+                        streamView.onLinkLost = null;
+                        this.streamView = null;
+                        // Retired, not left: the next join replaces this worker.
+                        await streamView.quit({ silent: true, retire: true });
+                        try {
+                            await view.onJoin(
+                                { height, screen, tv, gaming, touchScreen, padKey },
+                                at,
+                                codec,
+                                again,
+                            );
+                        } catch (err) {
+                            console.error('[MW] Guest ladder step failed:', err);
+                            this._hideRelaunchLoader();
+                            if (again.aborted) return;
+                            // Its worker is still there: leaving frees the slot.
+                            BackendClient.playerLeave().catch(() => {});
+                            Toast.error(t('stream.streamDisconnected'));
+                            view.refresh();
+                        }
+                    };
+                    streamView.onCongestionSignal = () => ladder.noteSignal(performance.now());
+                    streamView.onCongestion = () => {
+                        const move = ladder.down(performance.now());
+                        if (move) stepTo(move);
+                    };
+                    // Back up once the link has been quiet long enough. Ends
+                    // with the view it was armed for.
+                    const climb = setInterval(() => {
+                        if (this.streamView !== streamView || streamView._quitting) {
+                            clearInterval(climb);
+                            return;
+                        }
+                        if (!streamView._firstFrameRendered) return;
+                        const move = ladder.up(performance.now());
+                        if (move) {
+                            clearInterval(climb);
+                            stepTo(move);
+                        }
+                    }, 5000);
+                }
 
                 streamView.onQuit = () => {
                     this.streamView = null;

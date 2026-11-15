@@ -1240,6 +1240,8 @@
         "feedLabel": "Guests' picture",
         "feedHint": "One height for every guest, never above the host's screen.",
         "feedHintShared": "Your guests watch one shared stream at this height, never above the host's screen. Changing it resizes it for those already watching too.",
+        "feedAuto": "Auto",
+        "feedHintAuto": "Auto: the height follows your guests' screens. Changing it cuts the picture for a second or two for those watching.",
         "noApps": "This host has no apps to share yet.",
         "unavailable": "Session sharing is not available on this server.",
         "openFailed": "Could not open this invitation."

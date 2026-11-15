@@ -52,6 +52,7 @@ export default defineConfig({
                 'js/net/linkKey.js',
                 'js/stream/DecodeRateGovernor.js',
                 'js/stream/CrashRelaunch.js',
+                'js/stream/GuestLadder.js',
                 'js/stream/GamepadManager.js',
                 'js/stream/TouchPadState.js',
                 'js/stream/WheelSource.js',

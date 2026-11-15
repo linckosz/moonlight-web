@@ -19,6 +19,7 @@
 #include "FeedPublisher.h"
 
 #include "../backend/streambackend/NativeHostBackend.h"
+#include "../server/GuestProfile.h"
 
 #include <QDebug>
 #include <QJsonObject>
@@ -38,6 +39,8 @@ SharedFeed::SharedFeed(QString edition, QObject* parent)
         if (m_Guests.isEmpty() || m_Worker) return;
         launch(true);
     });
+    m_AutoTimer.setSingleShot(true);
+    connect(&m_AutoTimer, &QTimer::timeout, this, [this]() { reconsider(); });
 }
 
 SharedFeed::~SharedFeed()
@@ -60,6 +63,10 @@ bool SharedFeed::enabled(bool setting)
 bool SharedFeed::acquire(const Spec& spec, int slot, Ticket& out)
 {
     if (m_Failed) return false;
+    // Its wish, not yet weighed: only once its browser has the stream (G1).
+    const auto noteWant = [this, &spec, slot]() {
+        m_Wants.insert(slot, Want{spec.wantHeight, spec.lan, false});
+    };
     // A relaunch is due under the same pipe, and the guests on the feed wait
     // for it there. One arriving meanwhile waits with them when it wants that
     // feed as it will come back; any other encodes on its own rather than
@@ -72,6 +79,7 @@ bool SharedFeed::acquire(const Spec& spec, int slot, Ticket& out)
             return false;
         }
         m_Guests.insert(slot);
+        noteWant();
         out.pipe = m_Pipe;
         out.token = m_Token;
         out.launch = m_Launch;
@@ -112,9 +120,14 @@ bool SharedFeed::acquire(const Spec& spec, int slot, Ticket& out)
         m_Pipe = feedpipe::newName(m_Edition);
         m_Token = feedpipe::newToken();
         m_Failures = 0;
+        // A new feed in Auto starts at its first guest's height, the first
+        // rebuild free of the minute's wait.
+        m_LastAutoRebuild.invalidate();
+        m_AutoTimer.stop();
         if (!launch(false)) return false;
     }
     m_Guests.insert(slot);
+    noteWant();
     out.pipe = m_Pipe;
     out.token = m_Token;
     out.launch = m_Launch;
@@ -123,16 +136,31 @@ bool SharedFeed::acquire(const Spec& spec, int slot, Ticket& out)
 
 void SharedFeed::release(int slot)
 {
+    m_Wants.remove(slot);
     if (!m_Guests.remove(slot)) return;
+    // Auto does not go down for a guest leaving (I67-baisse B): the feed keeps
+    // its height until the last one goes, and then stops.
+    if (m_Guests.isEmpty()) m_AutoTimer.stop();
     if (m_Guests.isEmpty() && m_Worker) m_IdleTimer.start(kIdleStopMs);
+}
+
+void SharedFeed::guestConnected(int slot)
+{
+    auto it = m_Wants.find(slot);
+    if (it == m_Wants.end() || !m_Guests.contains(slot) || it->connected) return;
+    it->connected = true;
+    reconsider();
 }
 
 void SharedFeed::reset()
 {
     m_Guests.clear();
+    m_Wants.clear();
     m_Resizing = false;
     m_IdleTimer.stop();
     m_RestartTimer.stop();
+    m_AutoTimer.stop();
+    m_LastAutoRebuild.invalidate();
     m_Failed = false;
     m_Failures = 0;
     stopWorker();
@@ -195,16 +223,73 @@ bool SharedFeed::launch(bool relaunch)
 
 void SharedFeed::resize(int height)
 {
-    if (height <= 0 || height == m_Spec.height) return;
-    // The same shape, and the rate following the pixel count, as the guest
-    // profile's does (main.cpp: the auto estimate for the height, halved).
-    const qint64 was = m_Spec.height;
-    if (m_Spec.width > 0 && was > 0)
-        m_Spec.width = static_cast<int>(m_Spec.width * height / was) & ~1;
-    if (was > 0)
-        m_Spec.bitrateKbps = qMax(
-            1000, static_cast<int>(m_Spec.bitrateKbps * qint64(height) * height / (was * was)));
+    if (height < 0) return;
+    if (height == 0) {
+        // Auto: the feed goes where its connected guests' screens want it.
+        if (m_Spec.autoHeight) return;
+        m_Spec.autoHeight = true;
+        reconsider(true);
+        return;
+    }
+    if (height == m_Spec.height && !m_Spec.autoHeight) return;
+    // A rung of the owner's beats Auto, whatever the guests' screens (G3).
+    m_Spec.autoHeight = false;
+    m_AutoTimer.stop();
+    // The same shape, and the rate the guest profile gives a rung (main.cpp:
+    // the standard estimate for the height, halved).
+    const int was = m_Spec.height;
     m_Spec.height = height;
+    m_Spec.width = static_cast<int>(height * m_Spec.aspectRatio + 0.5) & ~1;
+    m_Spec.bitrateKbps = qMax(
+        1000, qRound(20000.0 * (static_cast<double>(height) * height) / (1080.0 * 1080.0)) / 2);
+    if (height == was) {
+        // Back from Auto at the same height: only the rate changes, and it
+        // is not worth a cut for the guests watching; the next launch takes it.
+        return;
+    }
+    qInfo() << "[SharedFeed] the owner picked" << height << "p";
+    rebuild("the owner's pick");
+}
+
+void SharedFeed::reconsider(bool ownerPick)
+{
+    m_AutoTimer.stop();
+    if (!m_Spec.autoHeight || m_Failed) return;
+    QList<mw::guestprofile::FeedGuest> guests;
+    for (const int slot : m_Guests) {
+        const Want w = m_Wants.value(slot);
+        guests.append({w.height, w.lan, w.connected});
+    }
+    const mw::guestprofile::FeedTarget now{m_Spec.height, m_Spec.lan, 0};
+    const mw::guestprofile::FeedTarget target =
+        mw::guestprofile::feedAutoTarget(now, guests, m_Spec.hostScreenHeight, ownerPick);
+    const int kbps =
+        mw::guestprofile::autoBitrateKbps(target.height, m_Spec.aspectRatio, target.lan);
+    if (target.height == m_Spec.height && target.lan == m_Spec.lan && kbps == m_Spec.bitrateKbps)
+        return;
+    // Not running, or a relaunch already due: that one takes the new spec.
+    const bool live = m_Worker && !relaunchDue();
+    // One rebuild a minute at most for the whole feed (G2); the owner's own
+    // pick of Auto does not wait.
+    if (live && !ownerPick && m_LastAutoRebuild.isValid() &&
+        m_LastAutoRebuild.elapsed() < mw::guestprofile::kFeedAutoRebuildGapMs) {
+        m_AutoTimer.start(static_cast<int>(mw::guestprofile::kFeedAutoRebuildGapMs -
+                                           m_LastAutoRebuild.elapsed()));
+        return;
+    }
+    m_Spec.height = target.height;
+    m_Spec.width = static_cast<int>(target.height * m_Spec.aspectRatio + 0.5) & ~1;
+    m_Spec.lan = target.lan;
+    m_Spec.bitrateKbps = kbps;
+    // The height and how many guests decided it, nothing about them (G3).
+    qInfo() << "[SharedFeed] Auto:" << target.height << "lines for" << target.counted << "guest(s)";
+    if (!live) return;
+    m_LastAutoRebuild.start();
+    rebuild("Auto");
+}
+
+void SharedFeed::rebuild(const char* why)
+{
     // Not running, or a death's relaunch already due: that one takes the new
     // spec. A feed nobody watches stops; the next guest starts it anew.
     if (!m_Worker) return;
@@ -212,9 +297,8 @@ void SharedFeed::resize(int height)
         stopWorker();
         return;
     }
-    qInfo() << "[SharedFeed] the owner picked" << height << "p — the feed is rebuilt at"
-            << m_Spec.width << "x" << height << "under the same pipe, its" << m_Guests.size()
-            << "guest(s) follow";
+    qInfo() << "[SharedFeed]" << why << "— the feed is rebuilt at" << m_Spec.width << "x"
+            << m_Spec.height << "under the same pipe, its" << m_Guests.size() << "guest(s) follow";
     StreamWorkerHost* worker = m_Worker.data();
     m_Worker.clear();
     m_IdleTimer.stop();
@@ -254,6 +338,8 @@ void SharedFeed::stopWorker()
 {
     m_IdleTimer.stop();
     m_RestartTimer.stop();
+    // A rebuild waiting for its minute dies with the feed.
+    m_AutoTimer.stop();
     StreamWorkerHost* worker = m_Worker.data();
     m_Worker.clear();
     if (!worker) return;

@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QList>
 
 #include <optional>
 
@@ -78,5 +79,94 @@ bool requestFromTv(const QJsonObject& body);
 /// The owner's Auto bitrate (AutoBitrate.js computeAutoBitrate, SDR), in kbps:
 /// the LAN rule when @p lan, the Internet one otherwise.
 int autoBitrateKbps(int height, double aspectRatio, bool lan);
+
+/// Auto's height held to the host's own screen (G3 of issue #67's second
+/// step): the tallest rung no taller than @p hostScreenHeight, 720 at the
+/// least. Unchanged when the host's screen is unknown (0 or less).
+int capToHost(int height, int hostScreenHeight);
+
+// ── The guest's congestion ladder (issue #67, step 2) ──────────────────────
+//
+// A guest of a GameStream host (Sunshine, Wolf, Apollo) has the owner's ladder
+// for a stream that keeps choking: its page relaunches its own leg one step
+// lower ("degrade": n), and one step higher again once the link has been quiet
+// a while. The page names a step, never a height or a bitrate: step n is
+// worked out here from the picture the guest would have at step 0, and only
+// ever lowers it. A native host needs none of it: its rate governor follows
+// the guest's link between two frames.
+
+/// The lowest step: past it, nothing is left to lower.
+constexpr int kDegradeMax = 8;
+/// Where the ladder stops lowering each knob.
+constexpr int kDegradeFloorHeight = 720;
+constexpr int kDegradeFloorKbps = 2000;
+
+/// The step a join request asks for. Only a JSON integer counts: 0 to
+/// kDegradeMax as it is, kDegradeMax above it; a string, a fraction, a
+/// negative number, anything else, 0.
+int readDegrade(const QJsonObject& body);
+
+/// Whether a join request is the guest's own ladder relaunching its leg: it
+/// carries a "degrade" readDegrade reads as a step (a JSON integer, 0 or
+/// more). Any other "degrade" makes it an ordinary join.
+bool asksLadderStep(const QJsonObject& body);
+
+/// A guest's picture: its height and its bitrate.
+struct Picture
+{
+    int height = kDefaultHeight;
+    int bitrateKbps = 0;
+    bool operator==(const Picture& o) const
+    {
+        return height == o.height && bitrateKbps == o.bitrateKbps;
+    }
+};
+
+/// The picture at step @p n (readDegrade's bounds) from @p base, the guest's
+/// at step 0, at @p aspectRatio on the guest's network (@p lan). As the
+/// owner's ladder (app.js _onStreamCongested), one step at a time: the bitrate
+/// halved at the first, cut by 30 % at each next one, never under
+/// kDegradeFloorKbps; the height one rung down at each while above 720, the
+/// bitrate then no more than Auto's for the new height. Never above @p base.
+Picture degraded(const Picture& base, double aspectRatio, bool lan, int n);
+
+// ── Auto on the native host's shared feed (issue #67, step 2) ──────────────
+//
+// One picture for every guest: in Auto, the tallest of the guests' own Auto
+// heights (I67-flux A), so the largest screen sees it sharp and the others
+// scale it down. Only a guest whose browser is connected counts (G1); the
+// feed never goes down while guests watch it (I67-baisse B: one cut fewer for
+// everyone), never above the host's screen nor 1440 (G3); and it is rebuilt
+// up at most once a minute, all guests together (G2, SharedFeed).
+
+/// Between two rebuilds of the feed in Auto (G2).
+constexpr qint64 kFeedAutoRebuildGapMs = 60000;
+
+/// A guest on the feed, as Auto weighs it.
+struct FeedGuest
+{
+    int wantHeight = kDefaultHeight; ///< its own Auto height (autoHeight, capToHost)
+    bool lan = true;                 ///< on this machine's network
+    bool connected = false;          ///< its browser has the stream (G1)
+};
+
+/// What the feed in Auto should be.
+struct FeedTarget
+{
+    int height = kDefaultHeight;
+    /// Every connected guest on the LAN: the LAN rule's bitrate, else the
+    /// Internet one (autoBitrateKbps).
+    bool lan = true;
+    /// The guests that counted: the connected ones.
+    int counted = 0;
+};
+
+/// The feed's Auto target from @p current (its height and rule now) and its
+/// @p guests. With @p mayLower false — the feed already in Auto — it never
+/// goes below current.height, nor from the Internet rule back to the LAN one;
+/// true — the owner has just picked Auto — it is the connected guests' alone.
+/// No connected guest: current, as it is.
+FeedTarget feedAutoTarget(const FeedTarget& current, const QList<FeedGuest>& guests,
+                          int hostScreenHeight, bool mayLower);
 
 } // namespace mw::guestprofile

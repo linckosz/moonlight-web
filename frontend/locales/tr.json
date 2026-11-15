@@ -1240,6 +1240,8 @@
         "feedLabel": "Konukların görüntüsü",
         "feedHint": "Her konuk için tek yükseklik, asla ana bilgisayarın ekranının üzerinde değil.",
         "feedHintShared": "Konuklarınız bu yükseklikte tek bir paylaşılan yayın izler, asla ana bilgisayarın ekranının üzerinde değil. Değiştirmek, hâlihazırda izleyenler için de yeniden boyutlandırır.",
+        "feedAuto": "Otomatik",
+        "feedHintAuto": "Otomatik: yükseklik konukların ekranlarına göre ayarlanır. Değiştirmek, izleyenler için görüntüyü bir iki saniye keser.",
         "noApps": "Bu ana bilgisayarda henüz paylaşılacak uygulama yok.",
         "unavailable": "Oturum paylaşımı bu sunucuda kullanılamıyor.",
         "openFailed": "Bu davet açılamadı."

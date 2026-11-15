@@ -78,10 +78,18 @@ public:
 
     /// The height of the picture a native host's guests watch, chosen by the
     /// owner on the board: one for every guest, since they share one feed
-    /// (plan « flux commun des invités »). 720, 1080 or 1440 — never above the
-    /// host's own display, which the engine sees to (it never upscales).
-    static constexpr int kFeedHeight = 1080;
+    /// (plan « flux commun des invités »). Auto (kFeedAuto) or 720, 1080 or
+    /// 1440 — never above the host's own display, which the engine sees to (it
+    /// never upscales). Auto, the default (issue #67, I67-défaut A), follows
+    /// the guests' screens (SharedFeed).
+    static constexpr int kFeedAuto = 0;
+    static constexpr int kFeedHeight = kFeedAuto;
     static bool isValidFeedHeight(int height);
+
+    /// Between two relaunches of one guest's ladder (issue #67, step 2): the
+    /// page waits longer than this between its own steps, so only a page that
+    /// does not is ever refused.
+    static constexpr qint64 kLadderStepGapMs = 60000;
 
     /// Wrong PINs before the activation is destroyed outright. Whoever holds a
     /// leaked link can therefore kill the share, never brute-force into it.
@@ -261,7 +269,7 @@ public:
     /// False for a slot outside the player range.
     bool setName(int slot, const QString& name);
 
-    /// The guests' picture height (kFeedHeight until the owner picks one).
+    /// The guests' picture height: kFeedAuto until the owner picks a rung.
     int feedHeight() const { return m_FeedHeight; }
     /// Pick it, for every guest at once — those already watching included:
     /// feedHeightChanged() rebuilds their feed at the new size. False for a
@@ -369,6 +377,13 @@ public:
     /// another device of the invitation, starts a session of its own instead
     /// of picking up the last guest's app. Empty when the slot is Off.
     QString joinIdentity(int slot, const QString& cookie);
+
+    /// A step of the guest's ladder (issue #67, step 2) relaunching the leg of
+    /// @p slot, from the device of @p cookie, at @p nowMs: true and noted when
+    /// that joiner's last step is kLadderStepGapMs old or more, false
+    /// otherwise — and always for a slot that is Off. Each step restarts the
+    /// guest's stream; this is what keeps a page from restarting it faster.
+    bool takeLadderStep(int slot, const QString& cookie, qint64 nowMs);
 
     /// The cookie a player's browser keeps once it has entered the PIN.
     static constexpr const char* kPlayerCookie = "mw_player";
@@ -492,6 +507,9 @@ private:
 
     QHash<int, Slot> m_Slots;
     int m_FeedHeight = kFeedHeight;
+    /// joinIdentity → the time of that joiner's last ladder step. Not saved:
+    /// a restart ends every stream anyway.
+    QHash<QString, qint64> m_LadderSteps;
     QHash<QString, QString> m_LinkAddress; ///< host uuid → LinkAddresses id
     QHash<QString, RateEntry> m_RateLimits;
     QTimer* m_SweepTimer = nullptr;

@@ -579,6 +579,31 @@ describe('BackendClient request shaping', () => {
         });
     });
 
+    // A step of the guest's ladder (issue #67, step 2): the step alone, 0
+    // included (a climb back to the top), never a height or a bitrate of its own.
+    it('playerJoin sends a ladder step, and only an integer one', async () => {
+        const step = mockFetch(jsonResponse({ ok: true }));
+        await BackendClient.playerJoin('tok', 'auto', undefined, 1, undefined, false, undefined, {
+            screen: '1920x1080',
+            tv: false,
+            degrade: 0,
+        });
+        expect(JSON.parse(step.apiCalls()[0][1].body)).toEqual({
+            token: 'tok',
+            auto: true,
+            screen: '1920x1080',
+            transport_index: 1,
+            degrade: 0,
+            ride_out_loss: true,
+        });
+
+        const none = mockFetch(jsonResponse({ ok: true }));
+        await BackendClient.playerJoin('tok', 720, undefined, 0, undefined, false, undefined, {
+            degrade: '2',
+        });
+        expect(JSON.parse(none.apiCalls()[0][1].body)).not.toHaveProperty('degrade');
+    });
+
     // A guest of a Linux host encodes on its own: without the wish, its stream
     // had no refresh wave and every lost frame cost a keyframe (01/10/2026).
     it('playerJoin asks to ride out a gap, except from an Apple platform', async () => {
