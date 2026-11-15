@@ -66,6 +66,25 @@ void run_viewer_notices_tests()
             CHECK(!ViewerNotices::windowsShows(false, state));
     }
 
+    SECTION("ViewerNotices: Do not disturb is believed only from a clean 4-byte read");
+    {
+        using Q = ViewerNotices::QuietHours;
+        // 0 nothing held back; 1 priority only and 2 alarms only both hold a balloon.
+        CHECK(ViewerNotices::quietHours(true, 4, 0) == Q::Off);
+        CHECK(ViewerNotices::quietHours(true, 4, 1) == Q::On);
+        CHECK(ViewerNotices::quietHours(true, 4, 2) == Q::On);
+        // A profile never heard of is not guessed at.
+        CHECK(ViewerNotices::quietHours(true, 4, 3) == Q::Unknown);
+        CHECK(ViewerNotices::quietHours(true, 4, 0xFFFFFFFFu) == Q::Unknown);
+        // Any other size: nothing written yet (0), a shorter or a longer record.
+        for (quint32 size : {0u, 1u, 2u, 3u, 5u, 8u, 16u})
+            for (quint32 profile : {0u, 1u, 2u})
+                CHECK(ViewerNotices::quietHours(true, size, profile) == Q::Unknown);
+        // A failed read, whatever it left behind.
+        for (quint32 profile : {0u, 1u, 2u})
+            CHECK(ViewerNotices::quietHours(false, 4, profile) == Q::Unknown);
+    }
+
     SECTION("ViewerNotices: the first poll is adopted, not announced");
     {
         ViewerNotices n;

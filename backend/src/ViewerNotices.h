@@ -68,6 +68,25 @@ public:
     /// waits a little too long is the cheaper of the two mistakes.
     static bool windowsShows(bool callSucceeded, int state);
 
+    /// Do not disturb, as the quiet-hours profile Windows publishes for its
+    /// shell (A137). Under it SHQueryUserNotificationState still answers
+    /// "accepts notifications", and the shell even reports the balloon it
+    /// swallows as shown (NIN_BALLOONSHOW, seen on the N95): this profile is the
+    /// one place it shows.
+    enum class QuietHours
+    {
+        Off,
+        On,
+        Unknown
+    };
+
+    /// The profile is a 4-byte number: 0 nothing held back, 1 priority only,
+    /// 2 alarms only — a tray balloon is neither, so both hold it. Only a read
+    /// that succeeded with exactly 4 bytes is believed. A failed read, any other
+    /// size and a profile this code has never heard of are Unknown, which leaves
+    /// the notice to windowsShows() alone, as before this was read.
+    static QuietHours quietHours(bool readSucceeded, quint32 size, quint32 profile);
+
     /// A device's name is cut to this many characters (an ellipsis follows).
     static constexpr int kMaxNameLength = 48;
 

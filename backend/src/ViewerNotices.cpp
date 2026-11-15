@@ -62,6 +62,18 @@ bool ViewerNotices::windowsShows(bool callSucceeded, int state)
     return callSucceeded && state == kQunsAcceptsNotifications;
 }
 
+ViewerNotices::QuietHours ViewerNotices::quietHours(bool readSucceeded, quint32 size,
+                                                    quint32 profile)
+{
+    if (!readSucceeded || size != sizeof(quint32)) return QuietHours::Unknown;
+    switch (profile) {
+    case 0: return QuietHours::Off;
+    case 1:
+    case 2: return QuietHours::On;
+    default: return QuietHours::Unknown;
+    }
+}
+
 // The device name from the sessions table, except for a browser on this very
 // machine: its row reads "Host machine (remote link)", which tells one row from
 // another there and says nothing to somebody reading a notice on that machine.

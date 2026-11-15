@@ -40,6 +40,86 @@
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <shellapi.h>
+
+namespace {
+
+// Do not disturb (A137). Windows 11 says nothing about it through any
+// documented call: SHQueryUserNotificationState answers "accepts
+// notifications", and the shell reports the balloon it then swallows as shown.
+// The quiet-hours profile it publishes for its own shell is the one place it
+// shows, in a WNF state that ntdll reads and no SDK header declares.
+//
+// What this does, and all it does (agreed with the security review): one read,
+// each time a notice is due, of that one state name, through
+// NtQueryWnfStateData found with GetProcAddress, into a fixed buffer whose
+// returned size is checked before use. Never a write, never a subscription. No
+// function, a failed read or an unexpected size or value is "unknown", and the
+// notice is then left to SHQueryUserNotificationState alone, as before.
+constexpr quint64 kQuietHoursProfile =
+    0x0D83063EA3BF1C75ull; // WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED
+
+using NtQueryWnfStateDataFn = LONG(NTAPI*)(const quint64* stateName, const void* typeId,
+                                           const void* explicitScope, ULONG* changeStamp,
+                                           void* buffer, ULONG* bufferSize);
+
+struct QuietRead
+{
+    bool found = false; // NtQueryWnfStateData exists in this ntdll
+    LONG status = -1;
+    ULONG size = 0;
+    quint32 profile = 0;
+};
+
+QuietRead readQuietHours()
+{
+    static const NtQueryWnfStateDataFn query = [] {
+        const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+        const FARPROC p = ntdll ? GetProcAddress(ntdll, "NtQueryWnfStateData") : nullptr;
+        return reinterpret_cast<NtQueryWnfStateDataFn>(reinterpret_cast<void*>(p));
+    }();
+    QuietRead r;
+    if (!query) return r;
+    r.found = true;
+    // Room for more than the 4 bytes expected: a longer record then comes back
+    // as its own size, and is refused for it, instead of as a failed call.
+    quint32 buffer[4] = {};
+    ULONG size = sizeof(buffer);
+    ULONG stamp = 0;
+    const quint64 name = kQuietHoursProfile;
+    r.status = query(&name, nullptr, nullptr, &stamp, buffer, &size);
+    r.size = r.status >= 0 ? size : 0;
+    r.profile = buffer[0];
+    return r;
+}
+
+// One log line whenever what was read changes (the first read included): the
+// value, never more often than it moves.
+void sayQuietHours(const QuietRead& r, ViewerNotices::QuietHours q)
+{
+    static QString said;
+    QString line;
+    if (!r.found)
+        line = QStringLiteral("unreadable (no NtQueryWnfStateData): notices follow Windows' "
+                              "state alone");
+    else if (r.status < 0)
+        line = QStringLiteral("unreadable (status 0x%1): notices follow Windows' state alone")
+                   .arg(static_cast<quint32>(r.status), 8, 16, QLatin1Char('0'));
+    else if (q == ViewerNotices::QuietHours::Unknown)
+        line = QStringLiteral("profile %1 in %2 bytes, not understood: notices follow Windows' "
+                              "state alone")
+                   .arg(r.profile)
+                   .arg(r.size);
+    else
+        line = QStringLiteral("profile %1 (%2)")
+                   .arg(r.profile)
+                   .arg(q == ViewerNotices::QuietHours::On ? QStringLiteral("on")
+                                                           : QStringLiteral("off"));
+    if (line == said) return;
+    said = line;
+    qInfo().noquote() << "[TrayManager] Do not disturb:" << line;
+}
+
+} // namespace
 #endif
 
 TrayManager::TrayManager(HttpServer* server, QObject* parent)
@@ -364,9 +444,10 @@ void TrayManager::pollActivity()
 // One notice at a time, and only once Windows says it would show it.
 //
 // SHQueryUserNotificationState is read before each: a full-screen game, a
-// presentation or quiet hours make the notice wait (A137). Waiting is logged
-// once when it starts, and each notice let out after a wait once — never with a
-// name: who watched is the tray's to say, not the log's.
+// presentation or quiet hours make the notice wait (A137). So does Do not
+// disturb, which that call does not see: read beside it (see readQuietHours).
+// Waiting is logged once when it starts, and each notice let out after a wait
+// once — never with a name: who watched is the tray's to say, not the log's.
 void TrayManager::releaseNotice()
 {
     const qint64 nowMs = m_Clock.elapsed();
@@ -374,17 +455,24 @@ void TrayManager::releaseNotice()
 #ifdef Q_OS_WIN
     QUERY_USER_NOTIFICATION_STATE state = QUNS_NOT_PRESENT;
     const bool ok = SUCCEEDED(SHQueryUserNotificationState(&state));
-    const bool shows = ViewerNotices::windowsShows(ok, static_cast<int>(state));
+    const QuietRead read = readQuietHours();
+    const ViewerNotices::QuietHours quiet =
+        ViewerNotices::quietHours(read.found && read.status >= 0, read.size, read.profile);
+    sayQuietHours(read, quiet);
+    const bool dnd = quiet == ViewerNotices::QuietHours::On;
+    const bool shows = ViewerNotices::windowsShows(ok, static_cast<int>(state)) && !dnd;
 #else
     // Elsewhere the notification service applies its own do-not-disturb, and
     // there is no state to ask for: a notice always goes out.
     const int state = 5;
+    const bool dnd = false;
     const bool shows = true;
 #endif
     if (!shows) {
         if (m_Notices.hold())
-            qInfo() << "[TrayManager] Notice held (state" << static_cast<int>(state) << "),"
-                    << m_Notices.waiting() << "waiting";
+            qInfo().nospace() << "[TrayManager] Notice held (state " << static_cast<int>(state)
+                              << (dnd ? ", do not disturb" : "") << "), " << m_Notices.waiting()
+                              << " waiting";
         return;
     }
     const bool wasHeld = m_Notices.nextWasHeld();
