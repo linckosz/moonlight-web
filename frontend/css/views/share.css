@@ -171,6 +171,36 @@
     color: var(--text-3);
 }
 
+/* The PIN prompt on the host list: their stream, or this app in its place,
+   and what the host said of the PIN. */
+.booth-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.booth-actions .btn {
+    width: 100%;
+}
+
+/* Ends someone else's stream: set apart from the way in that does not. */
+.btn-end-theirs {
+    color: var(--c-warning);
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--c-warning);
+}
+
+.booth-msg {
+    min-height: 18px;
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+.booth-msg.err {
+    color: var(--c-danger-text);
+}
+
 /* A phone: the digits stay, the word goes. */
 @media (max-width: 600px), (max-height: 520px) and (orientation: landscape) {
     .booth-pin-label {

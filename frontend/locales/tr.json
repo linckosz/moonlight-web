@@ -1253,7 +1253,22 @@
         "remove": "Kaldır",
         "noGuests": "Henüz kimse katılmadı.",
         "panelNote": "Bu PIN'i bu fuarın tanıdığı bir cihazda gören herkes katılabilir ya da sizinkini sonlandıran başka bir oyun başlatabilir. PIN her kullanımdan sonra değişir.",
-        "pinChangedFailures": "Yanlış PIN'ler denendi: PIN değişti."
+        "pinChangedFailures": "Yanlış PIN'ler denendi: PIN değişti.",
+        "inUseTitle": "{{host}} kullanımda",
+        "inUsePlaying": "{{owner}} {{app}} oynuyor.",
+        "inUseHint": "Ekranlarının sağ üstünde gösterilen PIN'i girin.",
+        "join": "Akışlarına katıl",
+        "startInstead": "Bunun yerine {{app}} başlat (onlarınkini sonlandırır)",
+        "wrongPin": "Yanlış PIN. {{n}} deneme hakkı kaldı.",
+        "wrongPinOne": "Yanlış PIN. 1 deneme hakkı kaldı.",
+        "tooManyTries": "Çok fazla deneme. {{s}} sn sonra tekrar deneyin.",
+        "roomFull": "4 misafir koltuğunun hepsi dolu.",
+        "streamEnded": "Akışları az önce sona erdi: kendinizinkini başlatabilirsiniz.",
+        "needsPairing": "Bu cihazın PIN kullanabilmesi için yeniden eşleştirilmesi gerekiyor.",
+        "ownerOnly": "Bu bilgisayarın akışını yalnızca onu yayınlayan cihaz sonlandırabilir.",
+        "someone": "Birisi",
+        "takenOverPin": "{{name}} PIN'inizi kullanarak başka bir oyun başlattı.",
+        "takenOverIdle": "{{name}} başka bir oyun başlattı: bu akışta {{minutes}} dakikadır hiçbir giriş yoktu."
     },
     "player": {
         "loading": "Yükleniyor...",

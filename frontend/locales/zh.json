@@ -1253,7 +1253,22 @@
         "remove": "移除",
         "noGuests": "还没有人加入。",
         "panelNote": "在本展台已知设备上看到此 PIN 的任何人都可以加入，或启动另一个游戏，这会结束你的串流。PIN 每次使用后都会更改。",
-        "pinChangedFailures": "有人尝试了错误的 PIN：PIN 已更改。"
+        "pinChangedFailures": "有人尝试了错误的 PIN：PIN 已更改。",
+        "inUseTitle": "{{host}} 正在使用中",
+        "inUsePlaying": "{{owner}} 正在玩 {{app}}。",
+        "inUseHint": "请输入对方屏幕右上角显示的 PIN。",
+        "join": "加入对方的串流",
+        "startInstead": "改为启动 {{app}}（会结束对方的串流）",
+        "wrongPin": "PIN 错误。还剩 {{n}} 次机会。",
+        "wrongPinOne": "PIN 错误。还剩 1 次机会。",
+        "tooManyTries": "尝试次数过多。请在 {{s}} 秒后重试。",
+        "roomFull": "4 个访客席位都已占满。",
+        "streamEnded": "对方的串流刚刚结束：你可以启动自己的串流。",
+        "needsPairing": "此设备需要重新配对才能使用 PIN。",
+        "ownerOnly": "只有正在串流此电脑的设备才能结束该串流。",
+        "someone": "有人",
+        "takenOverPin": "{{name}} 使用你的 PIN 启动了另一个游戏。",
+        "takenOverIdle": "{{name}} 启动了另一个游戏：此串流已 {{minutes}} 分钟没有任何输入。"
     },
     "player": {
         "loading": "加载中...",

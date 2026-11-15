@@ -722,6 +722,27 @@ export class BackendClient {
         if (appId > 0) body.app_id = appId;
         return this._boothPostProven('booth_join', hostUuid, '/api/booth/join', body);
     }
+    /**
+     * What a start that takes another device's stream over with its PIN adds
+     * to its body, for that one start: the PIN, and this browser's proof for
+     * that one take-over on that one host. → {booth_pin, owner_proof?}
+     * @param {string} hostUuid
+     * @param {string} pin
+     */
+    static async boothTakeoverFields(hostUuid, pin) {
+        const fields = { booth_pin: pin };
+        const challenge = await this.post('/api/share/owner-proof', {});
+        if (challenge?.nonce) {
+            const sig = await signBoothProof(
+                challenge.host_id,
+                challenge.nonce,
+                'booth_takeover',
+                hostUuid,
+            );
+            if (sig) fields.owner_proof = { nonce: challenge.nonce, sig };
+        }
+        return fields;
+    }
     static async _boothPostProven(action, hostUuid, path, body) {
         const payload = { ...body };
         const challenge = await this.post('/api/share/owner-proof', {});

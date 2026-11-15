@@ -123,4 +123,33 @@ describe('booth mode and Share', () => {
             expect(v._shareMenu?.isBoothPin).toBe(true);
         }
     });
+
+    // A take-over notice names the machine that took the stream (issue #68):
+    // whatever it says is drawn as text.
+    it("draws a forced exit's words as text, never as markup", () => {
+        vi.useFakeTimers();
+        const root = document.createElement('div');
+        const v = {
+            _rootEl: root,
+            _quitting: false,
+            _takenOver: false,
+            connected: true,
+            _playPowerOff() {},
+            quit() {},
+        };
+        StreamView.prototype._handleForcedExit.call(
+            v,
+            'T<i>x</i>',
+            '<img src=x onerror="alert(1)">',
+        );
+        const el = root.querySelector('.stream-takeover-overlay');
+        expect(el.querySelector('img')).toBe(null);
+        expect(el.querySelector('i')).toBe(null);
+        expect(el.querySelector('.takeover-sub').textContent).toBe(
+            '<img src=x onerror="alert(1)">',
+        );
+        expect(el.querySelector('.takeover-title').textContent).toBe('T<i>x</i>');
+        expect(el.querySelector('.takeover-title').getAttribute('data-text')).toBe('T<i>x</i>');
+        vi.useRealTimers();
+    });
 });

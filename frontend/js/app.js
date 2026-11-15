@@ -152,6 +152,18 @@ import {
 import * as iosAudioUnlock from './audio/iosAudioUnlock.js';
 import { init as i18nInit, applyDOM, t } from './i18n/i18n.js';
 import { escapeHtml } from './util/escapeHtml.js';
+import { showBoothPinDialog } from './ui/BoothPinDialog.js';
+import { boothErrorText } from './ui/BoothText.js';
+
+/** What a host answers a start whose take-over PIN it would not take: asked again. */
+const BOOTH_PIN_REFUSALS = new Set([
+    'booth_pin_invalid',
+    'rate_limited',
+    'owner_proof_required',
+    'owner_proof_refused',
+    'pairing_key_required',
+    'booth_session_required',
+]);
 import { micRequested, micSupported } from './audio/MicUplink.js';
 import {
     HOST_KEY_MISSING,
@@ -2791,12 +2803,20 @@ export const MoonlightApp = {
         );
 
         try {
+            // A booth whose streams have PINs (issue #68): this start takes
+            // another device's stream over with its PIN. For this start only:
+            // the settings kept for a relaunch carry neither the PIN nor its
+            // proof, and need neither once the stream is this browser's.
+            const boothFields =
+                opts && opts.boothPin
+                    ? await BackendClient.boothTakeoverFields(host.uuid, opts.boothPin)
+                    : null;
             // Asked once more if the line to the machine drops under it
             // (launchAppKeepingLine): the second press the person would make.
             const result = await BackendClient.launchAppKeepingLine(
                 host.uuid,
                 app.id,
-                streamingSettings,
+                boothFields ? { ...streamingSettings, ...boothFields } : streamingSettings,
             );
             // Log only safe fields — never log the full response as it may contain
             // internal IP info (e.g. sessionUrl exposes Sunshine's LAN address).
@@ -2892,6 +2912,23 @@ export const MoonlightApp = {
                 this.hostListView.clearLaunching({ failed: true });
                 this.hostListView.start();
             }
+            // A booth whose streams have PINs (issue #68): another device
+            // streams this host. Its PIN joins their stream or starts this app
+            // in its place; a PIN this start brought and the host refused is
+            // asked again, with why.
+            const boothCode = err && err.responseBody && err.responseBody.error;
+            const boothAsks = err && err.statusCode === 409 && boothCode === 'booth_pin_required';
+            if (boothAsks || (opts && opts.boothPin && BOOTH_PIN_REFUSALS.has(boothCode))) {
+                if (this.hostListView) this.hostListView.clearLaunching();
+                this.transition('app_list');
+                this._showBoothPinPrompt(
+                    host,
+                    app,
+                    boothAsks ? err.responseBody : opts.boothInfo,
+                    boothAsks ? undefined : boothErrorText(err),
+                );
+                return;
+            }
             // Sunshine couldn't start video capture (503) — usually no awake
             // display on the host, sometimes a macOS permission it can't be
             // granted programmatically. Show an explicit dialog whose wording and
@@ -2940,7 +2977,9 @@ export const MoonlightApp = {
                     ? t('launch.timeout')
                     : err && err.statusCode === 409 && err.message === 'somebody_signed_in'
                       ? t('hosts.somebodySignedIn')
-                      : err.message || t('launch.failed');
+                      : err && err.message === 'booth_owner_only'
+                        ? t('booth.ownerOnly')
+                        : err.message || t('launch.failed');
             Toast.error(msg);
             this.transition('app_list');
         }
@@ -2963,6 +3002,53 @@ export const MoonlightApp = {
      * instead, or back out. The choices re-invoke launchApp from their own
      * click, so the iOS audio unlock keeps a gesture to hang on to.
      */
+    /**
+     * A booth whose streams have PINs (issue #68): @p info's device streams
+     * this host. Its PIN, read at the top of their screen, joins their stream
+     * as a guest, or starts @p app in its place, which ends theirs.
+     * @param {object} host
+     * @param {object} app
+     * @param {{owner?: string, app_id?: number}} info what the host said of their stream
+     * @param {{text: string, lockoutSeconds: number}} [refusal] why a PIN was just refused
+     */
+    _showBoothPinPrompt(host, app, info, refusal) {
+        if (document.querySelector('.booth-prompt-overlay')) return;
+        const theirAppId = Number(info && info.app_id) || 0;
+        const entry =
+            this.hostListView && this.hostListView.appsByHost
+                ? this.hostListView.appsByHost[host.uuid]
+                : null;
+        const theirs = ((entry && entry.apps) || []).find((a) => a.id === theirAppId);
+        showBoothPinDialog({
+            hostName: host.displayName || host.name || '',
+            ownerName: (info && typeof info.owner === 'string' && info.owner) || t('booth.someone'),
+            theirApp: theirs ? theirs.name : t('appRunning.unknownApp'),
+            myApp: app.name,
+            initial: refusal,
+            onJoin: async (pin) => {
+                const joined = await BackendClient.boothJoin(host.uuid, theirAppId, pin);
+                // The guest page of their stream; the seat's cookie is set.
+                if (joined && typeof joined.url === 'string' && joined.url.startsWith('/p/'))
+                    window.location.assign(joined.url);
+            },
+            onStartInstead: (pin) => {
+                if (this.hostListView) this.hostListView.clearLaunching();
+                this.launchApp(host, app, undefined, undefined, {
+                    skipSelfStreamWarn: true,
+                    runningChecked: true,
+                    boothPin: pin,
+                    boothInfo: info,
+                });
+            },
+            onCancel: () => {
+                if (this.hostListView) {
+                    this.hostListView.clearLaunching();
+                    this.hostListView.start();
+                }
+            },
+        });
+    },
+
     _showAppRunningDialog(host, app, runningId) {
         if (document.querySelector('.app-running-overlay')) return;
         const entry =
@@ -3038,6 +3124,15 @@ export const MoonlightApp = {
             try {
                 await BackendClient.stopHostSession(host.uuid);
             } catch (e) {
+                // A booth whose streams have PINs: another device streams it,
+                // and only their PIN ends it (issue #68).
+                if (e && e.statusCode === 409 && e.responseBody?.error === 'booth_pin_required') {
+                    busy = false;
+                    cleanup();
+                    iosAudioUnlock.release();
+                    this._showBoothPinPrompt(host, app, e.responseBody);
+                    return;
+                }
                 console.error('[MW] Quitting the running app failed:', e);
                 busy = false;
                 iosAudioUnlock.release();

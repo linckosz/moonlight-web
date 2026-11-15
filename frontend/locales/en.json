@@ -1253,7 +1253,22 @@
         "remove": "Remove",
         "noGuests": "Nobody has joined yet.",
         "panelNote": "Anyone who sees this PIN on a device this booth knows can join, or start another game, which ends yours. The PIN changes after each use.",
-        "pinChangedFailures": "Wrong PINs were tried: the PIN changed."
+        "pinChangedFailures": "Wrong PINs were tried: the PIN changed.",
+        "inUseTitle": "{{host}} is in use",
+        "inUsePlaying": "{{owner}} is playing {{app}}.",
+        "inUseHint": "Enter the PIN shown at the top right of their screen.",
+        "join": "Join their stream",
+        "startInstead": "Start {{app}} instead (ends theirs)",
+        "wrongPin": "Wrong PIN. {{n}} tries left.",
+        "wrongPinOne": "Wrong PIN. 1 try left.",
+        "tooManyTries": "Too many tries. Try again in {{s}} s.",
+        "roomFull": "All 4 guest seats are taken.",
+        "streamEnded": "Their stream has just ended: you can start yours.",
+        "needsPairing": "This device has to be paired again before it can use a PIN.",
+        "ownerOnly": "Only the device streaming this PC can end its stream.",
+        "someone": "Someone",
+        "takenOverPin": "{{name}} used your PIN to start another game.",
+        "takenOverIdle": "{{name}} started another game: this stream had no input for {{minutes}} minutes."
     },
     "player": {
         "loading": "Loading...",

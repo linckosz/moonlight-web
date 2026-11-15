@@ -1253,7 +1253,22 @@
         "remove": "Retirer",
         "noGuests": "Personne n'a encore rejoint.",
         "panelNote": "Toute personne qui voit ce PIN sur un appareil connu de ce poste peut rejoindre le stream, ou lancer un autre jeu, ce qui arrête le vôtre. Le PIN change après chaque usage.",
-        "pinChangedFailures": "Des PIN erronés ont été essayés : le PIN a changé."
+        "pinChangedFailures": "Des PIN erronés ont été essayés : le PIN a changé.",
+        "inUseTitle": "{{host}} est occupé",
+        "inUsePlaying": "{{owner}} joue à {{app}}.",
+        "inUseHint": "Saisissez le PIN affiché en haut à droite de son écran.",
+        "join": "Rejoindre son stream",
+        "startInstead": "Lancer {{app}} à la place (arrête le sien)",
+        "wrongPin": "PIN incorrect. Encore {{n}} essais.",
+        "wrongPinOne": "PIN incorrect. Encore 1 essai.",
+        "tooManyTries": "Trop d'essais. Réessayez dans {{s}} s.",
+        "roomFull": "Les 4 places d'invité sont prises.",
+        "streamEnded": "Son stream vient de se terminer : vous pouvez lancer le vôtre.",
+        "needsPairing": "Cet appareil doit être appairé de nouveau pour utiliser un PIN.",
+        "ownerOnly": "Seul l'appareil qui streame ce PC peut arrêter son stream.",
+        "someone": "Quelqu'un",
+        "takenOverPin": "{{name}} a utilisé votre PIN pour lancer un autre jeu.",
+        "takenOverIdle": "{{name}} a lancé un autre jeu : ce stream n'a reçu aucune commande pendant {{minutes}} minutes."
     },
     "player": {
         "loading": "Chargement...",

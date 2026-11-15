@@ -659,7 +659,7 @@ export class WebRtcMedia {
                     } else if (msg.type === 'takeover') {
                         // Exit notice from MediaTrackRelay::sendExitNotice, sent
                         // on this DC just before the relay closes it.
-                        if (this.onTakeover) this.onTakeover();
+                        if (this.onTakeover) this.onTakeover(msg);
                     } else if (msg.type === 'revoked') {
                         if (this.onRevoked) this.onRevoked();
                     } else if (msg.type === 'session-ended') {

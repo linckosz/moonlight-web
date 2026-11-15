@@ -39,6 +39,16 @@ describe.each([
         expect(onTakeover).toHaveBeenCalledTimes(1);
     });
 
+    // A booth whose streams have PINs adds how and by whom (issue #68): the
+    // view reads it, so the transport hands the whole notice on.
+    it('hands the take-over notice on as it came', () => {
+        const t = make();
+        t.onTakeover = vi.fn();
+        const notice = { type: 'takeover', reason: 'idle', by: 'LAPTOP-SAM', idle_minutes: 15 };
+        inputChannel(t, label)(notice);
+        expect(t.onTakeover).toHaveBeenCalledWith(notice);
+    });
+
     it('invokes onRevoked for a revoked message', () => {
         const t = make();
         const onRevoked = vi.fn();

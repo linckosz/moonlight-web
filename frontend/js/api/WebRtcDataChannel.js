@@ -1156,7 +1156,7 @@ export class WebRtcDataChannel {
                     if (isViewMessage(msg.type)) {
                         if (this.onStats) this.onStats(msg);
                     } else if (msg.type === 'takeover') {
-                        if (this.onTakeover) this.onTakeover();
+                        if (this.onTakeover) this.onTakeover(msg);
                     } else if (msg.type === 'revoked') {
                         if (this.onRevoked) this.onRevoked();
                     } else if (msg.type === 'session-ended') {
@@ -2001,7 +2001,7 @@ export class WebRtcDataChannel {
                 if (isViewMessage(msg.type) && this.onStats) {
                     this.onStats(msg);
                 } else if (msg.type === 'takeover' && this.onTakeover) {
-                    this.onTakeover();
+                    this.onTakeover(msg);
                 } else if (msg.type === 'revoked' && this.onRevoked) {
                     this.onRevoked();
                 } else if (msg.type === 'session-ended' && this.onSessionEnded) {
@@ -2072,7 +2072,7 @@ export class WebRtcDataChannel {
                 if (isViewMessage(msg.type)) {
                     if (this.onStats) this.onStats(msg);
                 } else if (msg.type === 'takeover') {
-                    if (this.onTakeover) this.onTakeover();
+                    if (this.onTakeover) this.onTakeover(msg);
                 } else if (msg.type === 'revoked') {
                     if (this.onRevoked) this.onRevoked();
                 } else if (msg.type === 'session-ended') {

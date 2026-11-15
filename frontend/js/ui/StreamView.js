@@ -168,6 +168,7 @@ import { Icons } from './icons.js';
 import { ShareMenu } from './ShareMenu.js';
 import { BoothPinMenu } from './BoothPinMenu.js';
 import { GuestPresence } from './SharePresence.js';
+import { boothTakeoverBody } from './BoothText.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
 import { fitStreamBrand } from './streamBrandFit.js';
@@ -1735,7 +1736,7 @@ export class StreamView {
         this.webrtc.onStats = (msg) => this._handleStatsMessage(msg);
 
         // Session taken over by another device → graceful cyberpunk exit.
-        this.webrtc.onTakeover = () => this._handleTakeover();
+        this.webrtc.onTakeover = (notice) => this._handleTakeover(notice);
 
         // Device access revoked by the admin → same forced-exit path.
         this.webrtc.onRevoked = () => this._handleRevoked();
@@ -13425,10 +13426,12 @@ export class StreamView {
     /**
      * The session was taken over by another device. Show a 2s cyberpunk
      * "connection terminated" transition, then quit. Guarded so the generic
-     * onClose disconnect path stays silent.
+     * onClose disconnect path stays silent. In a booth whose streams have
+     * PINs, @p notice says how and by which machine (issue #68).
+     * @param {any} [notice]
      */
-    _handleTakeover() {
-        this._handleForcedExit(t('stream.takenOverTitle'), t('stream.takenOverBody'));
+    _handleTakeover(notice) {
+        this._handleForcedExit(t('stream.takenOverTitle'), boothTakeoverBody(notice));
     }
 
     /**
@@ -13550,16 +13553,17 @@ export class StreamView {
         // Full-screen glitch overlay (CP2077 style — see stream.css).
         const el = document.createElement('div');
         el.className = 'stream-takeover-overlay';
+        // Escaped: a take-over notice names a machine somebody else named.
         el.innerHTML =
             '<div class="takeover-scanlines"></div>' +
             '<div class="takeover-box">' +
             '<div class="takeover-title" data-text="' +
-            title +
+            escapeHtml(title) +
             '">' +
-            title +
+            escapeHtml(title) +
             '</div>' +
             '<div class="takeover-sub">' +
-            body +
+            escapeHtml(body) +
             '</div>' +
             '<div class="takeover-bar"><span></span></div>' +
             '</div>';
