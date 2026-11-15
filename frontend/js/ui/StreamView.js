@@ -166,6 +166,7 @@ import { escapeHtml } from '../util/escapeHtml.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { Icons } from './icons.js';
 import { ShareMenu } from './ShareMenu.js';
+import { BoothPinMenu } from './BoothPinMenu.js';
 import { GuestPresence } from './SharePresence.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
@@ -4881,6 +4882,14 @@ export class StreamView {
         // model is settled. Gate on the declared capability, not the product
         // name: the day this comes back, it comes back for every co-op backend.
         if (this.host?.supportsLobbies === true) return;
+        // A booth with stream PINs (booth_stream_pin, issue #68): the stream's
+        // PIN where Share would be, in place of the links.
+        if (BackendClient.boothPinMode) {
+            const pin = new BoothPinMenu(header, quitBtn, this.host);
+            this._shareMenu = pin;
+            pin.mount();
+            return;
+        }
         // Booth mode (--noadmin) lets no guest in, unless the owner set
         // share_in_booth_mode (issue #40).
         if (BackendClient.adminLocked && !BackendClient.boothShare) return;

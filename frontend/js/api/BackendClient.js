@@ -82,6 +82,7 @@ import {
     signPairApproval,
     signPairRefusal,
     signShareOwnerProof,
+    signBoothProof,
 } from '../util/pairingCrypto.js';
 import {
     CANVAS_TEARING_IS_REAL,
@@ -690,6 +691,47 @@ export class BackendClient {
         return this.post(`/api/share/slots/${slot}/deactivate`);
     }
 
+    // A booth's stream PIN (booth_stream_pin, issue #68). Every request is
+    // signed by this browser's pairing key over the host's single-use
+    // challenge, for that one action on that one host's stream — through the
+    // tunnel too. The booth's own machine has no key and signs nothing.
+
+    /**
+     * The PIN of the stream this browser started on @p hostUuid, or a new one.
+     * → {pin, generation, changed_by_failures}
+     * @param {string} hostUuid
+     * @param {'read'|'new'} [action]
+     */
+    static async boothPin(hostUuid, action = 'read') {
+        return this._boothPostProven(
+            action === 'new' ? 'booth_pin_new' : 'booth_pin_read',
+            hostUuid,
+            '/api/booth/pin',
+            { host_uuid: hostUuid, action },
+        );
+    }
+    /**
+     * Join the stream another device is watching on @p hostUuid with its PIN.
+     * → {status, slot, url} — the guest page to open; the cookie is set.
+     * @param {string} hostUuid
+     * @param {number|undefined} appId
+     * @param {string} pin
+     */
+    static async boothJoin(hostUuid, appId, pin) {
+        const body = { host_uuid: hostUuid, pin };
+        if (appId > 0) body.app_id = appId;
+        return this._boothPostProven('booth_join', hostUuid, '/api/booth/join', body);
+    }
+    static async _boothPostProven(action, hostUuid, path, body) {
+        const payload = { ...body };
+        const challenge = await this.post('/api/share/owner-proof', {});
+        if (challenge?.nonce) {
+            const sig = await signBoothProof(challenge.host_id, challenge.nonce, action, hostUuid);
+            if (sig) payload.owner_proof = { nonce: challenge.nonce, sig };
+        }
+        return this.post(path, payload);
+    }
+
     // Player side: no session cookie, no admin key — the mw_player cookie the
     // PIN buys is the only credential, and it only opens these four.
 
@@ -864,6 +906,8 @@ export class BackendClient {
         this.adminLocked = status.admin_locked === true;
         // share_in_booth_mode (issue #40): the booth still offers Share.
         this.boothShare = this.adminLocked && status.booth_share === true;
+        // booth_stream_pin (issue #68): a stream's PIN in place of Share.
+        this.boothPinMode = this.adminLocked && status.booth_pin === true;
         return status;
     }
     /** End this browser's own session and clear its cookie. Works from anywhere

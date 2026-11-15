@@ -47,6 +47,137 @@
     box-shadow: inset 0 0 0 1px var(--c-info);
 }
 
+/* ── A booth's stream PIN (booth_stream_pin, issue #68) ─────────────────────
+   Where Share would be: the PIN and how many watch, and for the owner a small
+   panel under it — the PIN large, "New PIN", the guests who joined with it. */
+.booth-pin-menu {
+    position: relative;
+    margin-right: 10px;
+}
+
+.booth-pin {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    font-size: 12.5px;
+    background: var(--surface-3);
+    color: var(--text-1);
+    border: none;
+    box-shadow: var(--edge-cyan);
+    cursor: pointer;
+}
+
+.booth-pin-guest {
+    margin-right: 10px;
+    cursor: default;
+}
+
+.booth-pin-label {
+    color: var(--text-3);
+    letter-spacing: 0.08em;
+}
+
+.booth-pin-digits {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 17px;
+    letter-spacing: 0.18em;
+    color: var(--neon-cyan);
+    font-variant-numeric: tabular-nums;
+}
+
+.booth-pin-count {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--c-info);
+    font-weight: 600;
+}
+
+.booth-pin-count svg {
+    width: 15px;
+    height: 15px;
+}
+
+.booth-panel {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 50;
+    width: min(380px, calc(100vw - 32px));
+    padding: 14px 16px 16px;
+    font-size: 13px;
+    color: var(--text-1);
+    background:
+        var(--bg-grid) 0 0 / var(--bg-grid-size),
+        linear-gradient(160deg, var(--surface-2), var(--surface-1));
+    box-shadow:
+        var(--edge-cyan),
+        0 24px 64px rgba(0, 0, 0, 0.66);
+    clip-path: var(--notch-lg);
+}
+
+.booth-panel h4 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: var(--text-3);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.booth-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.booth-panel-pin {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 30px;
+    letter-spacing: 0.2em;
+    color: var(--neon-cyan);
+}
+
+.booth-panel-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 0;
+    border-top: 1px solid var(--border-1);
+}
+
+.booth-panel-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.booth-panel-level {
+    padding: 3px 6px;
+    font-size: 12px;
+    color: var(--text-1);
+    background: var(--surface-0);
+    border: 1px solid var(--border-1);
+}
+
+.booth-panel-empty,
+.booth-panel-note {
+    margin-top: 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--text-3);
+}
+
+/* A phone: the digits stay, the word goes. */
+@media (max-width: 600px), (max-height: 520px) and (orientation: landscape) {
+    .booth-pin-label {
+        display: none;
+    }
+}
+
 /* ── Owner: the sharing board ──────────────────────────────────────────── */
 
 /* Over everything, with the page it was opened from blurred behind it: the

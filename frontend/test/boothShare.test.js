@@ -11,6 +11,16 @@ vi.mock('../js/ui/ShareMenu.js', () => ({
         }
     },
 }));
+vi.mock('../js/ui/BoothPinMenu.js', () => ({
+    BoothPinMenu: class {
+        constructor() {
+            this.isBoothPin = true;
+        }
+        mount() {
+            return Promise.resolve(true);
+        }
+    },
+}));
 
 import { BackendClient } from '../js/api/BackendClient.js';
 import { StreamView } from '../js/ui/StreamView.js';
@@ -85,5 +95,32 @@ describe('booth mode and Share', () => {
         const v = view();
         mount(v);
         expect(v._shareMenu).not.toBeNull();
+        expect(v._shareMenu.isBoothPin).toBeUndefined();
+    });
+
+    // booth_stream_pin (issue #68): the stream's PIN in place of Share.
+    it('reads booth_pin only under admin_locked, and keeps boothPin() a call', async () => {
+        await authStatus({ authenticated: true, admin_locked: true, booth_pin: true });
+        expect(BackendClient.boothPinMode).toBe(true);
+        expect(typeof BackendClient.boothPin).toBe('function');
+        await authStatus({ authenticated: true, admin_locked: false, booth_pin: true });
+        expect(BackendClient.boothPinMode).toBe(false);
+        await authStatus({ authenticated: true, admin_locked: true });
+        expect(BackendClient.boothPinMode).toBe(false);
+        expect(typeof BackendClient.boothPin).toBe('function');
+    });
+
+    it('a booth with stream PINs shows the PIN in place of Share, share_in_booth_mode or not', async () => {
+        for (const boothShare of [false, true]) {
+            await authStatus({
+                authenticated: true,
+                admin_locked: true,
+                booth_pin: true,
+                booth_share: boothShare,
+            });
+            const v = view();
+            mount(v);
+            expect(v._shareMenu?.isBoothPin).toBe(true);
+        }
     });
 });

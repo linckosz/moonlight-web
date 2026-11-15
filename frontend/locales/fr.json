@@ -1244,6 +1244,17 @@
         "unavailable": "Le partage de session n'est pas disponible sur ce serveur.",
         "openFailed": "Impossible d'ouvrir cette invitation."
     },
+    "booth": {
+        "pin": "PIN",
+        "pinTitle": "Le PIN de ce stream : un autre appareil de ce poste le saisit pour le rejoindre",
+        "panelTitle": "PIN du stream",
+        "newPin": "Nouveau PIN",
+        "level": "Niveau",
+        "remove": "Retirer",
+        "noGuests": "Personne n'a encore rejoint.",
+        "panelNote": "Toute personne qui voit ce PIN sur un appareil connu de ce poste peut rejoindre le stream, ou lancer un autre jeu, ce qui arrête le vôtre. Le PIN change après chaque usage.",
+        "pinChangedFailures": "Des PIN erronés ont été essayés : le PIN a changé."
+    },
     "player": {
         "loading": "Chargement...",
         "leave": "Quitter",

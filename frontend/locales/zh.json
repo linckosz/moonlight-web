@@ -1244,6 +1244,17 @@
         "unavailable": "此服务器不支持会话共享。",
         "openFailed": "无法开启此邀请。"
     },
+    "booth": {
+        "pin": "PIN",
+        "pinTitle": "此串流的 PIN：本展台的其他设备输入它即可加入",
+        "panelTitle": "串流 PIN",
+        "newPin": "新 PIN",
+        "level": "级别",
+        "remove": "移除",
+        "noGuests": "还没有人加入。",
+        "panelNote": "在本展台已知设备上看到此 PIN 的任何人都可以加入，或启动另一个游戏，这会结束你的串流。PIN 每次使用后都会更改。",
+        "pinChangedFailures": "有人尝试了错误的 PIN：PIN 已更改。"
+    },
     "player": {
         "loading": "加载中...",
         "leave": "离开",

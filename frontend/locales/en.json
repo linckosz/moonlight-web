@@ -1244,6 +1244,17 @@
         "unavailable": "Session sharing is not available on this server.",
         "openFailed": "Could not open this invitation."
     },
+    "booth": {
+        "pin": "PIN",
+        "pinTitle": "This stream's PIN: another device of this booth enters it to join",
+        "panelTitle": "Stream PIN",
+        "newPin": "New PIN",
+        "level": "Level",
+        "remove": "Remove",
+        "noGuests": "Nobody has joined yet.",
+        "panelNote": "Anyone who sees this PIN on a device this booth knows can join, or start another game, which ends yours. The PIN changes after each use.",
+        "pinChangedFailures": "Wrong PINs were tried: the PIN changed."
+    },
     "player": {
         "loading": "Loading...",
         "leave": "Leave",

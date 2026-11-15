@@ -1244,6 +1244,17 @@
         "unavailable": "Oturum paylaşımı bu sunucuda kullanılamıyor.",
         "openFailed": "Bu davet açılamadı."
     },
+    "booth": {
+        "pin": "PIN",
+        "pinTitle": "Bu akışın PIN'i: bu fuarın başka bir cihazı katılmak için bunu girer",
+        "panelTitle": "Akış PIN'i",
+        "newPin": "Yeni PIN",
+        "level": "Seviye",
+        "remove": "Kaldır",
+        "noGuests": "Henüz kimse katılmadı.",
+        "panelNote": "Bu PIN'i bu fuarın tanıdığı bir cihazda gören herkes katılabilir ya da sizinkini sonlandıran başka bir oyun başlatabilir. PIN her kullanımdan sonra değişir.",
+        "pinChangedFailures": "Yanlış PIN'ler denendi: PIN değişti."
+    },
     "player": {
         "loading": "Yükleniyor...",
         "leave": "Ayrıl",

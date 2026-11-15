@@ -98,6 +98,17 @@ export function presenceTitle(names) {
 }
 
 /**
+ * A booth's stream PIN as the header shows it (issue #68): "482913" →
+ * "482 913"; anything that is not six digits shows nothing.
+ * @param {string} pin
+ */
+export function formatPin(pin) {
+    return typeof pin === 'string' && /^\d{6}$/.test(pin)
+        ? `${pin.slice(0, 3)} ${pin.slice(3)}`
+        : '';
+}
+
+/**
  * A guest's view of it: a count in the stream's header (everyone, the guest
  * included), the names on hover or on a tap, and a toast for each change.
  */
@@ -114,6 +125,10 @@ export class GuestPresence {
         this._self = '';
         this._timer = null;
         this.btn = null;
+        /** A booth's stream PIN, when this guest joined with it (issue #68). */
+        this._boothPin = '';
+        /** @type {HTMLElement|null} */
+        this.pinEl = null;
     }
 
     mount() {
@@ -140,6 +155,8 @@ export class GuestPresence {
         if (this._timer) clearInterval(this._timer);
         this._timer = null;
         if (this.btn) this.btn.remove();
+        if (this.pinEl) this.pinEl.remove();
+        this.pinEl = null;
         this.btn = null;
     }
 
@@ -156,6 +173,7 @@ export class GuestPresence {
         this._self = `p${data.self}`;
         if (this._people) announceChanges(presenceChanges(this._people, people, this._self));
         this._people = people;
+        this._boothPin = typeof data.booth_pin === 'string' ? data.booth_pin : '';
         this._paint();
     }
 
@@ -174,5 +192,28 @@ export class GuestPresence {
         this.btn.title = title;
         this.btn.setAttribute('aria-label', title.replace(/\n/g, ', '));
         this.btn.hidden = false;
+        this._paintPin();
+    }
+
+    /** A booth's stream PIN beside the count, for a guest who joined with it. */
+    _paintPin() {
+        const shown = formatPin(this._boothPin);
+        if (!shown) {
+            if (this.pinEl) this.pinEl.remove();
+            this.pinEl = null;
+            return;
+        }
+        if (!this.pinEl) {
+            this.pinEl = document.createElement('span');
+            this.pinEl.className = 'booth-pin booth-pin-guest';
+            this.pinEl.innerHTML =
+                '<span class="booth-pin-label"></span><span class="booth-pin-digits"></span>';
+            this.headerEl.insertBefore(this.pinEl, this.btn);
+        }
+        /** @type {HTMLElement} */ (this.pinEl.querySelector('.booth-pin-label')).textContent =
+            t('booth.pin');
+        /** @type {HTMLElement} */ (this.pinEl.querySelector('.booth-pin-digits')).textContent =
+            shown;
+        this.pinEl.title = t('booth.pinTitle');
     }
 }
