@@ -26,6 +26,7 @@
 
 #include <rtc/rtc.hpp>
 
+#include <QPointer>
 #include <QDebug>
 #include <QHostAddress>
 #include <QJsonDocument>
@@ -131,6 +132,16 @@ void RelayBase::logSelectedCandidatePair(rtc::PeerConnection& pc, const char* lo
 void RelayBase::wireMicUplink(rtc::Track& audioTrack, const char* logTag)
 {
     if (!m_Mic) return;
+    // Refused by the host under the running stream (MicUplink::revoke): the
+    // page is told on this relay's thread, where its channel lives.
+    QPointer<RelayBase> self(this);
+    m_Mic->setOnRevoked([self](const std::string& why) {
+        RelayBase* relay = self.data();
+        if (!relay) return;
+        const QString text = QString::fromStdString(why);
+        QMetaObject::invokeMethod(
+            relay, [relay, text]() { relay->sendMicOff(text); }, Qt::QueuedConnection);
+    });
     std::weak_ptr<MicUplink> weak = m_Mic;
     audioTrack.onMessage([weak](rtc::message_variant message) {
         const auto* bytes = std::get_if<rtc::binary>(&message);
@@ -304,6 +315,13 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
     emit signalingIceCandidate(std::string(modCandidate.candidate()),
                                std::string(modCandidate.mid()));
     if (!by443.empty()) emit signalingIceCandidate(by443, std::string(candidate.mid()));
+}
+
+QByteArray RelayBase::micOffMessage(const QString& why)
+{
+    return QJsonDocument(QJsonObject{{QStringLiteral("type"), QStringLiteral("micoff")},
+                                     {QStringLiteral("why"), why}})
+        .toJson(QJsonDocument::Compact);
 }
 
 QByteArray RelayBase::inputCapsMessage(const InputMsg::Policy& policy)

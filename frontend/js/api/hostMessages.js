@@ -43,6 +43,8 @@ const VIEW_MESSAGES = new Set([
     'hidffb',
     // A guest's mouse given or taken by the owner (StreamView._setMouseAllowed).
     'inputcaps',
+    // The host refused the microphone under the running stream (issue #69).
+    'micoff',
     // Touch-keyboard characters the host could only take as text (issue #44).
     'textviaime',
 ]);

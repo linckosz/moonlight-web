@@ -87,7 +87,9 @@ public:
     /// The viewer's microphone (MicUplink.h), already started: the page's
     /// binary messages on this socket are its frames. Set before the relay
     /// moves to its thread, like the clipboard; stopped with the relay.
-    void setMicUplink(std::shared_ptr<MicUplink> mic) { m_Mic = std::move(mic); }
+    /// The viewer's microphone, as frames on the socket. Refused by the host
+    /// under the running stream, the page is told on the socket (micoff).
+    void setMicUplink(std::shared_ptr<MicUplink> mic);
 
 signals:
     void sessionEnded();

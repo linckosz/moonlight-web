@@ -32,6 +32,7 @@
 #include "../NativeMediaEngine.h"
 #include "../../backend/streambackend/NativeHostBackend.h"
 #include "../MediaTrackRelay.h"
+#include "../MicUplink.h"
 #include "../StreamRelay.h"
 #include "../SignalingServer.h"
 #include "../IMediaEngine.h"
@@ -946,6 +947,13 @@ int runStreamWorker(QCoreApplication& app)
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(2); }, Qt::QueuedConnection);
             } else if (cmd == QLatin1String("sessionEnded")) {
                 QMetaObject::invokeMethod(qApp, []() { teardownAndExit(3); }, Qt::QueuedConnection);
+            } else if (cmd == QLatin1String("micRefused")) {
+                // The administrator refused viewers' microphones (issue #69):
+                // the one this stream carries closes now, and its relay tells
+                // the page. Any thread will do (MicUplink::revoke).
+                const int n = MicUplink::revokeAll(MicUplink::kRefusedByHost);
+                qInfo() << "[StreamWorker] viewers' microphones refused by the host:" << n
+                        << "closed";
             } else if (cmd == QLatin1String("iceMuxTcp")) {
                 // A TCP connection the server took for this stream on a
                 // shared port: to the agent it is for, here and now

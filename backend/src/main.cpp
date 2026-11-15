@@ -133,6 +133,7 @@
 #include "streaming/SharedFeed.h"
 #include "streaming/StreamEnds.h"
 #include "streaming/StreamWorkerHost.h"
+#include "streaming/MicUplink.h"
 #include "streaming/WorkerService.h"
 #include "streaming/worker/StreamWorkerMain.h"
 #include "server/ConnectionHistory.h"
@@ -1037,7 +1038,7 @@ static int runStreamLimitsCommand(quint16 persistedHttpsPort, const std::optiona
 // `moonlightweb --allow-viewer-microphone on|off`: whether this host takes a
 // viewer's microphone at all (issue #69, AppSettings::viewerMicAllowed),
 // written by the running instance into its own settings.json, like the
-// ceilings above. Every stream started afterwards follows it.
+// ceilings above. Off also closes the microphones of the streams running.
 static int runViewerMicCommand(quint16 persistedHttpsPort, const QString& value)
 {
     QTextStream out(stdout);
@@ -1076,7 +1077,7 @@ static int runViewerMicCommand(quint16 persistedHttpsPort, const QString& value)
                 ? "\n  Viewers' microphones are accepted: a viewer who turns theirs on is heard\n"
                   "  by this PC's apps, when the stream is of this PC.\n\n"
                 : "\n  Viewers' microphones are refused: no stream takes one, whatever the\n"
-                  "  viewer's Settings say. A stream already running keeps its own.\n\n");
+                  "  viewer's Settings say, and the streams already running lost theirs.\n\n");
     out.flush();
     return 0;
 }
@@ -3185,6 +3186,14 @@ int main(int argc, char* argv[])
                          if (auto* worker = g_Pool.workerAs<StreamWorkerHost>(slot))
                              worker->setInputPolicy(gamepad, keyboardMouse, hid);
                      });
+
+    // The administrator refused viewers' microphones (issue #69): after the
+    // ones in this process (MicUplink::refuseAllByHost), every stream worker
+    // closes its own. Cleared before the pool goes away.
+    MicUplink::setRefuseElsewhere([&g_Pool]() {
+        for (int slot = 0; slot < kTotalSlots; ++slot)
+            if (auto* worker = g_Pool.workerAs<StreamWorkerHost>(slot)) worker->refuseMic();
+    });
 
     // Suspend host polling whenever a relay is active, so we stop hammering
     // Sunshine's HTTP server while a stream is running (avoids wedging it and
@@ -8171,6 +8180,7 @@ int main(int argc, char* argv[])
     }
 
     const int exitCode = app.exec();
+    MicUplink::setRefuseElsewhere(nullptr);
     // The router first, before anything else is torn down: what this host
     // holds there is taken off within a budget, so that an uninstall or an
     // update that asked this process to quit (--quit-server) leaves nothing

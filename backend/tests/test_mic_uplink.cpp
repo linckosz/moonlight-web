@@ -18,7 +18,54 @@
 
 #include "test_framework.h"
 
+#include <atomic>
+#include <memory>
+#include <string>
 #include <vector>
+
+namespace {
+
+// A device that plays nothing: it says when it was opened and closed, and
+// pulls what the ring holds when the test asks, as a sound card's thread would.
+struct FakeOutput : mw::mic::IMicOutput
+{
+    struct Log
+    {
+        std::atomic<int> started{0};
+        std::atomic<int> stopped{0};
+        mw::mic::JitterRing* ring = nullptr;
+    };
+    explicit FakeOutput(std::shared_ptr<Log> log)
+        : m_Log(std::move(log))
+    {}
+    bool start(mw::mic::JitterRing& ring, std::string&) override
+    {
+        m_Log->ring = &ring;
+        ++m_Log->started;
+        return true;
+    }
+    void stop() override
+    {
+        if (m_Log->ring) ++m_Log->stopped;
+        m_Log->ring = nullptr;
+    }
+    std::string deviceName() const override { return "fake"; }
+    std::shared_ptr<Log> m_Log;
+};
+
+// One frame of the WebSocket transport: 16-bit PCM, 480 samples of a tone.
+std::vector<uint8_t> pcmFrame(uint16_t sequence)
+{
+    std::vector<uint8_t> f = {0x4D, 2, uint8_t(sequence >> 8), uint8_t(sequence & 0xFF)};
+    for (int i = 0; i < 480; ++i) {
+        const int16_t v = (i % 2) ? 8000 : -8000;
+        f.push_back(uint8_t(v & 0xFF));
+        f.push_back(uint8_t((v >> 8) & 0xFF));
+    }
+    return f;
+}
+
+} // namespace
 
 namespace {
 
@@ -191,6 +238,69 @@ void run_mic_uplink_tests()
         CHECK(MicUplink::refusal(true, true, false) != MicUplink::refusal(false, true, true));
         CHECK(MicUplink::refusal(true, true, false) != MicUplink::refusal(true, false, true));
         CHECK(MicUplink::refusal(false, false, false) == MicUplink::refusal(true, true, false));
+    }
+
+    SECTION("MicUplink — refused under a running stream (issue #69)");
+    {
+        auto log = std::make_shared<FakeOutput::Log>();
+        auto mic = std::make_shared<MicUplink>(
+            "", [log](const std::string&) { return std::make_unique<FakeOutput>(log); });
+        std::string told;
+        int toldCount = 0;
+        mic->setOnRevoked([&](const std::string& why) {
+            told = why;
+            ++toldCount;
+        });
+        std::string why;
+        CHECK(mic->start(why));
+        CHECK_EQ(log->started.load(), 1);
+
+        // Granted: what arrives is played.
+        auto f = pcmFrame(1);
+        mic->onSocketFrame(f.data(), f.size());
+        mw::mic::JitterRing* ring = log->ring;
+        CHECK(ring != nullptr);
+        const uint64_t before = ring ? ring->stats().pushed : 0;
+        CHECK_EQ(before, 480u);
+
+        // The administrator refuses: the device closes, the relay is told, once.
+        CHECK_EQ(MicUplink::revokeAll(MicUplink::kRefusedByHost), 1);
+        CHECK(mic->revoked());
+        CHECK_EQ(log->stopped.load(), 1);
+        CHECK_EQ(toldCount, 1);
+        CHECK(told == MicUplink::kRefusedByHost);
+
+        // A modified page keeps sending: nothing reaches the ring, on either road.
+        for (uint16_t seq = 2; seq < 50; ++seq) {
+            auto g = pcmFrame(seq);
+            mic->onSocketFrame(g.data(), g.size());
+        }
+        const uint8_t rtp[] = {0x80, 111, 0x00, 0x02, 0, 0, 0, 0, 0, 0, 0, 1, 0xF8, 0xFF, 0xFE};
+        for (int i = 0; i < 20; ++i)
+            mic->onPacket(rtp, sizeof rtp);
+        CHECK(ring != nullptr && ring->stats().pushed == before);
+        CHECK(log->ring == nullptr);
+
+        // Asked again: nothing more, and no second message to the page.
+        CHECK_EQ(MicUplink::revokeAll(MicUplink::kRefusedByHost), 0);
+        mic->revoke("again");
+        CHECK_EQ(toldCount, 1);
+        CHECK_EQ(log->stopped.load(), 1);
+        // A revoked one does not open again.
+        CHECK(!mic->start(why));
+        CHECK(why == MicUplink::kRefusedByHost);
+        CHECK_EQ(log->started.load(), 1);
+    }
+
+    SECTION("MicUplink — refuseAllByHost reaches the other processes' hook");
+    {
+        int asked = 0;
+        MicUplink::setRefuseElsewhere([&]() { ++asked; });
+        MicUplink::refuseAllByHost();
+        CHECK_EQ(asked, 1);
+        MicUplink::setRefuseElsewhere(nullptr);
+        MicUplink::refuseAllByHost();
+        CHECK_EQ(asked, 1);
     }
 
     SECTION("MicCable — the cables Windows may play into, in order");

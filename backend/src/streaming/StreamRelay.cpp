@@ -21,12 +21,14 @@
 #include "InputMessageCodec.h"
 #include "IMediaEngine.h"
 #include "MicUplink.h"
+#include "RelayBase.h"
 #include "NativeMediaEngine.h"
 
 extern "C" {
 #include "Limelight.h"
 }
 
+#include <QPointer>
 #include <QCoreApplication>
 #include <QThread>
 #include <QMetaObject>
@@ -814,6 +816,24 @@ void StreamRelay::onWsTextMessage(const QString& message)
     } else {
         qWarning() << "[StreamRelay] Unknown input type:" << type;
     }
+}
+
+void StreamRelay::setMicUplink(std::shared_ptr<MicUplink> mic)
+{
+    m_Mic = std::move(mic);
+    if (!m_Mic) return;
+    QPointer<StreamRelay> self(this);
+    m_Mic->setOnRevoked([self](const std::string& why) {
+        StreamRelay* relay = self.data();
+        if (!relay) return;
+        const QByteArray j = RelayBase::micOffMessage(QString::fromStdString(why));
+        QMetaObject::invokeMethod(
+            relay,
+            [relay, j]() {
+                if (relay->m_WsClient) relay->m_WsClient->sendTextMessage(QString::fromUtf8(j));
+            },
+            Qt::QueuedConnection);
+    });
 }
 
 void StreamRelay::onWsBinaryMessage(const QByteArray& message)

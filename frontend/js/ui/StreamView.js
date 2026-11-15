@@ -4800,6 +4800,28 @@ export class StreamView {
         btn.setAttribute('aria-pressed', off ? 'true' : 'false');
     }
 
+    /**
+     * The host refused the microphone under the running stream (issue #69):
+     * the track stops, so the browser's indicator goes out, the button goes,
+     * and the shortcut has nothing left to open. Said once, as at a launch.
+     *
+     * @param {string} why - the host's reason
+     */
+    _micRefusedByHost(why) {
+        const mic = this._mic;
+        if (!mic) return;
+        this._mic = null;
+        // The transport keeps its reference: a closed one never opens again
+        // (MicUplink.close), and it may be between prepare() and attach().
+        mic.close();
+        if (this._micBtn) {
+            this._micBtn.remove();
+            this._micBtn = null;
+            this._positionGamingOverlay();
+        }
+        if (!this._standby) Toast.warning(t('stream.micUnavailable', { why }));
+    }
+
     /** @param {string} state - MicUplink.state */
     _onMicState(state) {
         this._syncMicButton();
@@ -8285,6 +8307,10 @@ export class StreamView {
         }
         if (msg.type === 'inputcaps') {
             this._setMouseAllowed(msg.keyboardMouse === true);
+            return;
+        }
+        if (msg.type === 'micoff') {
+            this._micRefusedByHost(typeof msg.why === 'string' ? msg.why : '');
             return;
         }
         if (msg.type === 'rumble') {

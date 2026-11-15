@@ -309,6 +309,11 @@ add_executable(run_tests
     # The native host's apps: the launchers found on a PC, and their cards' images.
     ${_src}/src/server/LauncherDetect.cpp
     ${_src}/src/server/HostAppImage.cpp
+    # The viewer's microphone itself, refused under a running stream (issue
+    # #69): played into a fake device the test gives it, decoded by libopus.
+    # MicOutputNone only stands for makeOutput(), which the test never calls.
+    ${_src}/src/streaming/MicUplink.cpp
+    ${_src}/src/streaming/MicOutputNone.cpp
 )
 
 target_include_directories(run_tests PRIVATE
@@ -337,6 +342,19 @@ target_link_libraries(run_tests PRIVATE
     Qt6::Core Qt6::Gui Qt6::Network Qt6::WebSockets
     OpenSSL::SSL OpenSSL::Crypto
 )
+
+# libopus, for MicUplink: the same submodule and options as the server build.
+if(NOT TARGET opus)
+    set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(OPUS_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${_src}/native-host/third_party/opus ${CMAKE_BINARY_DIR}/opus-mic
+                     EXCLUDE_FROM_ALL)
+endif()
+target_link_libraries(run_tests PRIVATE Opus::opus)
+target_include_directories(run_tests SYSTEM PRIVATE ${_src}/native-host/third_party/opus/include)
 
 if(WIN32)
     # The installer's request that the running server quit (the verb's pieces,

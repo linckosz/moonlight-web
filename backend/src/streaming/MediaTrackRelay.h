@@ -115,6 +115,7 @@ private:
     // inputcaps on the input DC, when it is open: whether this player's
     // keyboard and mouse reach the host.
     void sendInputCaps();
+    void sendMicOff(const QString& why) override;
     void onKeyboardMousePolicyChanged() override { sendInputCaps(); }
 
     void setupPeerConnection(const rtc::Configuration& config);

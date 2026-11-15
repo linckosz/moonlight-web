@@ -34,10 +34,17 @@ void logLine(const std::string& line)
 // The longest packet Opus allows: 120 ms at 48 kHz.
 constexpr int kMaxFrames = 5760;
 
+// Every started instance of this process, for refuseAllByHost(). Weak: the
+// relay owns them, and one that is gone has nothing left to revoke.
+std::mutex g_LiveMutex;
+std::vector<std::weak_ptr<MicUplink>> g_Live;
+std::function<void()> g_RefuseElsewhere;
+
 } // namespace
 
-MicUplink::MicUplink(std::string device)
+MicUplink::MicUplink(std::string device, OutputFactory output)
     : m_Device(std::move(device))
+    , m_OutputFactory(std::move(output))
     , m_Pcm(kMaxFrames)
 {}
 
@@ -55,6 +62,10 @@ bool MicUplink::start(std::string& why)
 {
     std::lock_guard<std::mutex> lock(m_Mutex);
     if (m_Started) return true;
+    if (revoked()) {
+        why = kRefusedByHost;
+        return false;
+    }
 
     int err = OPUS_OK;
     m_Decoder = opus_decoder_create(kRate, 1, &err);
@@ -64,7 +75,8 @@ bool MicUplink::start(std::string& why)
         return false;
     }
 
-    m_Output = mw::mic::makeOutput(m_Device, &logLine);
+    m_Output =
+        m_OutputFactory ? m_OutputFactory(m_Device) : mw::mic::makeOutput(m_Device, &logLine);
     if (!m_Output || !m_Output->start(m_Ring, why)) {
         m_Output.reset();
         opus_decoder_destroy(m_Decoder);
@@ -74,7 +86,73 @@ bool MicUplink::start(std::string& why)
     }
     m_Started = true;
     logLine("ready: the viewer's microphone plays into \"" + m_Output->deviceName() + "\"");
+    // Only an instance a shared_ptr owns can be found again (the session's
+    // always is); a bare one is never revoked from outside.
+    if (const std::weak_ptr<MicUplink> self = weak_from_this(); !self.expired()) {
+        std::lock_guard<std::mutex> live(g_LiveMutex);
+        g_Live.push_back(self);
+    }
     return true;
+}
+
+void MicUplink::revoke(const std::string& why)
+{
+    if (m_Revoked.exchange(true, std::memory_order_acq_rel)) return;
+    logLine("refused under the running stream: " + why);
+    stop();
+    std::function<void(const std::string&)> hook;
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        hook = std::move(m_OnRevoked);
+        m_OnRevoked = nullptr;
+    }
+    if (hook) hook(why);
+}
+
+void MicUplink::setOnRevoked(std::function<void(const std::string&)> hook)
+{
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    m_OnRevoked = std::move(hook);
+}
+
+int MicUplink::revokeAll(const std::string& why)
+{
+    std::vector<std::shared_ptr<MicUplink>> live;
+    {
+        std::lock_guard<std::mutex> lock(g_LiveMutex);
+        for (const auto& weak : g_Live)
+            if (auto mic = weak.lock()) live.push_back(std::move(mic));
+        g_Live.clear();
+    }
+    // Outside the list's lock: revoke() stops the device, which waits for its
+    // thread, and runs the relay's hook.
+    int revokedNow = 0;
+    for (const auto& mic : live) {
+        if (mic->revoked()) continue;
+        mic->revoke(why);
+        ++revokedNow;
+    }
+    return revokedNow;
+}
+
+void MicUplink::refuseAllByHost()
+{
+    const int here = revokeAll(kRefusedByHost);
+    if (here > 0)
+        logLine("viewers' microphones refused by the host: " + std::to_string(here) +
+                " closed in this process");
+    std::function<void()> elsewhere;
+    {
+        std::lock_guard<std::mutex> lock(g_LiveMutex);
+        elsewhere = g_RefuseElsewhere;
+    }
+    if (elsewhere) elsewhere();
+}
+
+void MicUplink::setRefuseElsewhere(std::function<void()> hook)
+{
+    std::lock_guard<std::mutex> lock(g_LiveMutex);
+    g_RefuseElsewhere = std::move(hook);
 }
 
 void MicUplink::stop()
@@ -118,6 +196,8 @@ std::string MicUplink::deviceName() const
 
 void MicUplink::onPacket(const uint8_t* data, size_t size)
 {
+    // Refused by the host: not even read.
+    if (revoked()) return;
     mw::mic::RtpPacket rtp;
     if (!mw::mic::parseRtp(data, size, rtp)) {
         if (!mw::mic::isRtcp(data, size)) {
@@ -143,6 +223,8 @@ void MicUplink::onPacket(const uint8_t* data, size_t size)
 
 void MicUplink::onSocketFrame(const uint8_t* data, size_t size)
 {
+    // Refused by the host: not even read.
+    if (revoked()) return;
     mw::mic::MicFrame frame;
     std::lock_guard<std::mutex> lock(m_Mutex);
     if (!mw::mic::parseMicFrame(data, size, frame)) {

@@ -19,8 +19,10 @@
 #include "MicJitter.h"
 #include "MicOutput.h"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -45,11 +47,26 @@ struct OpusDecoder;
 // Here: Opus (libopus, mono 48 kHz, in-band FEC for a single lost packet and
 // PLC beyond) or PCM → JitterRing → the OS's device (MicOutput.h). One
 // instance per session; the relay holds it and stops it with its connection.
-class MicUplink
+//
+// The administrator can refuse viewers' microphones while streams run
+// (settings.json viewer_mic_allowed, issue #69): refuseAllByHost() revokes
+// every started instance of this process, and the server asks each stream
+// worker to do the same in its own. A revoked instance has closed its device,
+// drops whatever arrives after without parsing it, and has told its relay,
+// which tells the page.
+class MicUplink : public std::enable_shared_from_this<MicUplink>
 {
 public:
+    /// The device a started instance plays into: makeOutput() unless a test
+    /// gives its own.
+    using OutputFactory =
+        std::function<std::unique_ptr<mw::mic::IMicOutput>(const std::string& device)>;
+
+    /// What the viewer reads when the administrator refused microphones.
+    static constexpr const char* kRefusedByHost = "this host does not accept viewers' microphones";
+
     /// @param device settings.json `mic_device` (MicOutput.h, makeOutput).
-    explicit MicUplink(std::string device);
+    explicit MicUplink(std::string device, OutputFactory output = nullptr);
     ~MicUplink();
 
     MicUplink(const MicUplink&) = delete;
@@ -62,6 +79,24 @@ public:
     /// Closes the device and logs what the session carried. Idempotent; also
     /// run by the destructor.
     void stop();
+
+    /// Refused under a running stream: the device closes now, every packet
+    /// after is dropped unread, and the hook set by setOnRevoked() runs once,
+    /// with `why`. Any thread. Idempotent.
+    void revoke(const std::string& why);
+    bool revoked() const { return m_Revoked.load(std::memory_order_acquire); }
+
+    /// Run once by revoke(), on the revoking thread: the relay that carries
+    /// this microphone posts the page's message to its own thread from there.
+    void setOnRevoked(std::function<void(const std::string&)> hook);
+
+    /// Revokes every started instance of this process. Returns how many.
+    static int revokeAll(const std::string& why);
+
+    /// The administrator turned viewer_mic_allowed off: revokeAll() here, then
+    /// the hook main.cpp set, which asks every stream worker to do the same.
+    static void refuseAllByHost();
+    static void setRefuseElsewhere(std::function<void()> hook);
 
     /// One packet as Track::onMessage delivers it — RTP, or the track's RTCP,
     /// which is skipped. Any thread; serialised inside.
@@ -87,7 +122,7 @@ public:
     /// rule.
     static std::string refusal(bool hostIsHere, bool owner, bool hostAllows)
     {
-        if (!hostAllows) return "this host does not accept viewers' microphones";
+        if (!hostAllows) return kRefusedByHost;
         if (!hostIsHere)
             return "the host is another machine, and a microphone can only reach the one "
                    "MoonlightWeb runs on";
@@ -114,6 +149,9 @@ private:
     void countLocked(size_t payloadSize, const char* road);
 
     const std::string m_Device;
+    const OutputFactory m_OutputFactory;
+    std::atomic<bool> m_Revoked{false};
+    std::function<void(const std::string&)> m_OnRevoked; // under m_Mutex
     // 40 ms held before playing, 150 ms at most: enough for Wi-Fi's bursts,
     // short enough that the voice still lands with the picture it goes with.
     mw::mic::JitterRing m_Ring{kRate / 25, kRate * 3 / 20};

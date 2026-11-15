@@ -141,6 +141,12 @@ public:
     /// stops it with the PeerConnection.
     void setMicUplink(std::shared_ptr<MicUplink> mic) { m_Mic = std::move(mic); }
 
+    /// The micoff message every relay sends when the host refused the
+    /// microphone under the running stream (issue #69): the page closes its
+    /// track, so the browser's indicator goes out, and says `why`. StreamRelay
+    /// sends it too, on its socket.
+    static QByteArray micOffMessage(const QString& why);
+
     /// Request an IDR frame from Sunshine (keyframe).
     virtual void requestIdrFrame() = 0;
 
@@ -223,6 +229,9 @@ protected:
     /// The inputcaps message both relays send: whether this player's keyboard
     /// and mouse reach the host (`keyboardMouse`).
     static QByteArray inputCapsMessage(const InputMsg::Policy& policy);
+
+    /// Sends micOffMessage on the input channel. On the relay's thread.
+    virtual void sendMicOff(const QString& why) { Q_UNUSED(why); }
 
     /// Apply the UPnP host-candidate rewrite and the IPv6 suppression, then
     /// emit signalingIceCandidate. Both relays call this from their

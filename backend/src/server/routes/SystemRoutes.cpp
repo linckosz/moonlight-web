@@ -38,6 +38,7 @@
 #include "backend/streambackend/NativeHostBackend.h"
 #include "backend/streambackend/NativeProbeService.h"
 #include "streaming/ConsoleSession.h"
+#include "streaming/MicUplink.h"
 #include "server/AudioApps.h"
 #include "streaming/RemoteDesktopReturnPolicy.h"
 #include "streaming/StreamWorkerHost.h"
@@ -1617,10 +1618,14 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         }
 
         // The administrator's word on viewers' microphones (issue #69), from
-        // the admin page or --allow-viewer-microphone. The next stream reads it.
+        // the admin page or --allow-viewer-microphone. The next stream reads it,
+        // and refusing also closes the ones already running.
         if (body.contains("viewer_mic_allowed")) {
             const bool allowed = body["viewer_mic_allowed"].toBool();
             appSettings.setViewerMicAllowed(allowed);
+            // At once, streams already running too: their microphone closes
+            // and the page is told why (MicUplink::refuseAllByHost).
+            if (!allowed) MicUplink::refuseAllByHost();
             obj["viewer_mic_allowed"] = allowed;
             obj["status"] = "saved";
             hadChange = true;

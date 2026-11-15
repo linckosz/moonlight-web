@@ -1164,6 +1164,15 @@ void MediaTrackRelay::sendHidCaps()
     } catch (const std::exception&) {}
 }
 
+void MediaTrackRelay::sendMicOff(const QString& why)
+{
+    if (!m_InputDc || !m_InputDc->isOpen() || m_Stopping.load()) return;
+    const QByteArray j = micOffMessage(why);
+    try {
+        m_InputDc->send(std::string(j.constData(), j.size()));
+    } catch (const std::exception&) {}
+}
+
 void MediaTrackRelay::sendInputCaps()
 {
     if (!m_InputDc || !m_InputDc->isOpen() || m_Stopping.load()) return;
