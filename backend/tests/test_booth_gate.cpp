@@ -7,6 +7,9 @@
  * leg, a start again after a crash or a quit never pass from anyone else, PIN
  * or not; this machine always passes; a stream nobody used for the idle time
  * passes without the PIN; anything else needs the PIN of that one stream.
+ * What a request is let through on is what it answers for: a take-over names
+ * every slot of the one taken over, and a quit that ends the host's app
+ * reaches every stream there, whatever the page names.
  */
 #include "test_framework.h"
 
@@ -228,6 +231,82 @@ void testOnePinOpensOneStream()
     CHECK(BoothGate::decide(in).verdict == Verdict::Allow);
 }
 
+void testATakeOverTakesAllOfIt()
+{
+    SECTION("BoothGate: a take-over names every slot of the one taken over");
+    // Sam streams in slot 0, the standby leg of a quality switch in slot 1,
+    // and a slot of their own beside them (7); a start of theirs is on its way.
+    BoothGate::Input in = samStreams(Action::Fresh);
+    in.inReach = {{kSam, kSamsStream, 0},
+                  {kSam, kSamsStream, 1},
+                  {kSam, kSamsStream, 7},
+                  {kSam, kSamsStream, 7},
+                  {kSam, kSamsStream, -1}};
+    BoothGate::Decision d = BoothGate::decide(in);
+    CHECK(d.verdict == Verdict::NeedPin);
+    CHECK(d.othersSlots == QList<int>({0, 1, 7}));
+    // The same slots, idle or from this machine.
+    in.lastActivityMs = kNow - 60 * kMinute;
+    d = BoothGate::decide(in);
+    CHECK(d.verdict == Verdict::AllowIdle);
+    CHECK(d.othersSlots == QList<int>({0, 1, 7}));
+    in.requester = kHere;
+    d = BoothGate::decide(in);
+    CHECK(d.verdict == Verdict::Allow);
+    CHECK(d.othersSlots == QList<int>({0, 1, 7}));
+
+    // Alex's own slot beside Sam's is never one to end.
+    in = samStreams(Action::Fresh);
+    in.inReach = {{kAlex, QStringLiteral("host-A|7|session:alex"), 6}, {kSam, kSamsStream, 0}};
+    CHECK(BoothGate::decide(in).othersSlots == QList<int>({0}));
+    in.inReach = {{kAlex, QStringLiteral("host-A|7|session:alex"), 6}};
+    CHECK(BoothGate::decide(in).othersSlots.isEmpty());
+
+    // Once Sam's slots ended, Alex's next leg is Alex's own business.
+    BoothGate::Input next = samStreams(Action::Standby);
+    next.inReach = {{kAlex, QStringLiteral("host-A|9|session:alex"), 0}};
+    CHECK(BoothGate::decide(next).why == Why::SameOwner);
+    // While one of Sam's is left, it is not.
+    next.inReach.append({kSam, kSamsStream, 7});
+    CHECK(BoothGate::decide(next).verdict == Verdict::Refuse);
+}
+
+void testWhatAQuitReaches()
+{
+    SECTION("BoothGate: a quit that ends the host's app reaches every stream there");
+    const QString samsPage = QStringLiteral("5A3F00C1D2E3F405");
+    const QString anyPage = QStringLiteral("0123456789ABCDEF");
+    // A host-wide cancel: whatever the page names, and naming nothing.
+    for (const QString& named : {anyPage, samsPage, QString()})
+        CHECK(BoothGate::quitReaches(true, named, samsPage));
+    // A retire, or a quit that ends no app: the browser it names.
+    CHECK(BoothGate::quitReaches(false, samsPage, samsPage));
+    CHECK(!BoothGate::quitReaches(false, anyPage, samsPage));
+    CHECK(BoothGate::quitReaches(false, QString(), samsPage));
+    CHECK(BoothGate::quitReaches(false, anyPage, QString()));
+
+    // Alex stops with an id of their own while Sam streams: the cancel would
+    // end Sam's stream, so the whole quit is refused.
+    auto quit = [&](bool endsTheApp, const QString& named, const StreamOwner& by) {
+        BoothGate::Input in = samStreams(Action::Quit, by);
+        in.inReach.clear();
+        if (BoothGate::quitReaches(endsTheApp, named, samsPage))
+            in.inReach = {{kSam, kSamsStream, 0}};
+        return BoothGate::decide(in);
+    };
+    BoothGate::Decision d = quit(true, anyPage, kAlex);
+    CHECK(d.verdict == Verdict::Refuse);
+    CHECK(d.code() == QStringLiteral("booth_owner_only"));
+    CHECK_EQ(d.status(Action::Quit), 403);
+    // A retire with that id touches nothing of Sam's, and goes on.
+    d = quit(false, anyPage, kAlex);
+    CHECK(d.verdict == Verdict::Allow);
+    CHECK(d.why == Why::NothingInReach);
+    // Sam's own Stop, and this machine's, as before.
+    CHECK(quit(true, samsPage, kSam).why == Why::SameOwner);
+    CHECK(quit(true, anyPage, kHere).why == Why::ThisMachine);
+}
+
 void testOwnersAreToldApartBySession()
 {
     SECTION("BoothGate: owners told apart by their session, never by its absence");
@@ -253,5 +332,7 @@ void run_booth_gate_tests()
     testIdleStreams();
     testNobodyKnown();
     testOnePinOpensOneStream();
+    testATakeOverTakesAllOfIt();
+    testWhatAQuitReaches();
     testOwnersAreToldApartBySession();
 }

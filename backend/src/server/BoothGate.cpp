@@ -40,14 +40,19 @@ bool idle(qint64 nowMs, qint64 lastActivityMs, int idleMinutes)
     return nowMs - lastActivityMs >= static_cast<qint64>(idleMinutes) * 60 * 1000;
 }
 
-Decision decide(const Input& in)
+bool quitReaches(bool endsTheApp, const QString& quitUniqueId, const QString& slotUniqueId)
 {
-    if (!in.keyOn) return make(Verdict::Allow, Why::KeyOff);
+    // The page's id is the page's word: it never keeps a host-wide cancel off
+    // somebody's stream.
+    if (endsTheApp) return true;
+    return slotUniqueId.isEmpty() || quitUniqueId.isEmpty() || quitUniqueId == slotUniqueId;
+}
 
-    // Whose streams are in reach, the caller's own left out.
-    QList<Stream> others;
-    for (const Stream& s : in.inReach)
-        if (!s.owner.sameAs(in.requester)) others.append(s);
+namespace {
+
+/// The verdict on @p others, the streams in reach that are not the caller's.
+Decision verdictOn(const Input& in, const QList<Stream>& others)
+{
     if (others.isEmpty())
         return make(Verdict::Allow, in.inReach.isEmpty() ? Why::NothingInReach : Why::SameOwner);
 
@@ -81,6 +86,22 @@ Decision decide(const Input& in)
     if (idle(in.nowMs, in.lastActivityMs, in.idleMinutes))
         return make(Verdict::AllowIdle, Why::Idle, key);
     return make(Verdict::NeedPin, Why::PinRequired, key);
+}
+
+} // namespace
+
+Decision decide(const Input& in)
+{
+    if (!in.keyOn) return make(Verdict::Allow, Why::KeyOff);
+
+    // Whose streams are in reach, the caller's own left out.
+    QList<Stream> others;
+    for (const Stream& s : in.inReach)
+        if (!s.owner.sameAs(in.requester)) others.append(s);
+    Decision d = verdictOn(in, others);
+    for (const Stream& s : others)
+        if (s.slot >= 0 && !d.othersSlots.contains(s.slot)) d.othersSlots.append(s.slot);
+    return d;
 }
 
 QString Decision::code() const

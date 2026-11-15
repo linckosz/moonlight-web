@@ -31,6 +31,10 @@
  * for a while, only with the stream's PIN, or no. Nothing here starts, ends or
  * looks anything up.
  *
+ * What a request is let through on is what it answers for: a take-over ends
+ * every stream of the others in reach (Decision::othersSlots), not only the
+ * ones a start would have ended anyway.
+ *
  * In this order, the first that applies decides:
  *  - the key off: as without it;
  *  - nobody's stream in reach, or only the caller's own: as without it;
@@ -79,11 +83,14 @@ enum class Why
     SeveralOwners,
 };
 
-/// A stream the request would reach: whose it is, and the key its PIN is kept under.
+/// A stream the request would reach: whose it is, the key its PIN is kept
+/// under, and the slot it streams in.
 struct Stream
 {
     StreamOwner owner;
     QString key;
+    /// -1 for one in no slot: a start not up yet, the stream this process runs itself.
+    int slot = -1;
 };
 
 struct Input
@@ -111,6 +118,9 @@ struct Decision
     Why why = Why::OwnerOnly;
     /// NeedPin and AllowIdle: the key of the stream taken over, whose PIN it is.
     QString streamKey;
+    /// The slots of the others' streams in reach, each once, in order. A
+    /// request let through on them ends them all, the taken-over owner told.
+    QList<int> othersSlots;
 
     bool allowed() const { return verdict == Verdict::Allow || verdict == Verdict::AllowIdle; }
     /// The error on the wire, empty when allowed.
@@ -118,6 +128,13 @@ struct Decision
     /// The status it goes with, 200 when allowed.
     int status(Action action) const;
 };
+
+/// Whether a quit reaches the stream a page of @p slotUniqueId started. A quit
+/// that ends the host's app for everyone (@p endsTheApp: a host-wide cancel)
+/// reaches every stream there, whatever the page names; any other reaches the
+/// streams of the browser it names, an empty id on either side read as that
+/// browser's (as the quit itself picks them).
+bool quitReaches(bool endsTheApp, const QString& quitUniqueId, const QString& slotUniqueId);
 
 /// Whether a stream last used at @p lastActivityMs is idle at @p nowMs.
 bool idle(qint64 nowMs, qint64 lastActivityMs, int idleMinutes);
