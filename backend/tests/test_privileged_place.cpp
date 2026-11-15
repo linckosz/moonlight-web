@@ -694,7 +694,9 @@ void run_privileged_place_tests()
     run_posix(tmp);
 #endif
 
-    resetForTests();
+    // Back to what the whole suite runs as (tests/main.cpp): a process with
+    // its user's own rights, whatever account runs it.
+    setForTests(QString(), {}, /*privileged=*/false);
     // Leave the logger somewhere harmless: QTemporaryDir cannot remove a file
     // this process still holds open.
     Logger::instance()->setLogFile(QDir::tempPath() + QStringLiteral("/mw-backend-tnr.log"),

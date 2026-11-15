@@ -7,6 +7,8 @@
  */
 #include "test_framework.h"
 
+#include "common/PrivilegedPlace.h"
+
 #include <QCoreApplication>
 #include <cstdlib>
 #include <cstring>
@@ -173,6 +175,12 @@ int main(int argc, char** argv)
     // Keep app data hermetic-ish for any path the units resolve internally.
     QCoreApplication::setApplicationName("mw-server-tests");
     QCoreApplication::setOrganizationName("moonlightweb");
+    // The suite runs as a process with its user's own rights, whatever account
+    // runs it: a CI runner is elevated, and the units would then keep their
+    // logs out of the temporary directories the tests give them
+    // (common/PrivilegedPlace.h). The tests of PrivilegedPlace stand in for a
+    // privileged process themselves, and put this back when they are done.
+    mw::place::setForTests(QString(), {}, /*privileged=*/false);
 
     run_input_encoder_tests();
     run_stream_config_tests();
