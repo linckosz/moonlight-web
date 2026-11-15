@@ -10282,11 +10282,24 @@ export class StreamView {
      * A hidden pointer carries no position at all and places nothing.
      */
     _clientCursorHostSaid(msg) {
-        if (!this._clientCursorActive() || this._clientCursorPos) return;
+        if (!this._clientCursorActive()) return;
+        // Lock-free look is the exception: the host's pointer moves by deltas
+        // that Windows' own speed and acceleration reshape, so the drawing is
+        // put back on the host's word at every report — the click lands where
+        // the host's pointer really is (IPADLOOK, 15/11/2026). Between two
+        // reports the deltas move it (see _onGamingMouseMove).
+        const lookFree = this._gamingMode && this._pointerLockRefused && this._lockFreeLook;
+        if (this._clientCursorPos && !lookFree) return;
         if (msg.visible === false) return;
-        const x = Number(msg.x),
+        let x = Number(msg.x),
             y = Number(msg.y);
         if (!isFinite(x) || !isFinite(y)) return;
+        // Inside the picture, as _clientCursorMoved keeps it: a report off it
+        // would draw the pointer over the page's own controls.
+        const fw = this._pictureWidth(),
+            fh = this._pictureHeight();
+        if (fw > 0) x = Math.max(0, Math.min(fw - 1, x));
+        if (fh > 0) y = Math.max(0, Math.min(fh - 1, y));
         this._clientCursorPos = { x, y };
         this._placeClientCursor();
     }

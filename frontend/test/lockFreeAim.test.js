@@ -72,4 +72,29 @@ describe('lock-free look on a tablet', () => {
         v._onGamingMouseMove({ movementX: 500, movementY: -500, clientX: 0, clientY: 0 });
         expect(v._clientCursorPos).toEqual({ x: 1919, y: 0 });
     });
+
+    it("puts the drawn pointer back on the host's word at every report", () => {
+        const { v } = view();
+        v._onGamingClick({ preventDefault() {}, clientX: 480, clientY: 270 });
+        // Before the refusal the host's word comes only once (the finger and
+        // the absolute moves own the position).
+        v._clientCursorHostSaid({ x: 10, y: 10, visible: true });
+        expect(v._clientCursorPos).toEqual({ x: 960, y: 540 });
+        v._pointerLockRefused = true;
+        v._onGamingMouseMove({ movementX: 30, movementY: 0, clientX: 0, clientY: 0 });
+        // Windows' acceleration took the real pointer further than the delta.
+        v._clientCursorHostSaid({ x: 1100, y: 540, visible: true });
+        expect(v._clientCursorPos).toEqual({ x: 1100, y: 540 });
+        // A hidden pointer says nothing about where it is.
+        v._clientCursorHostSaid({ x: 0, y: 0, visible: false });
+        expect(v._clientCursorPos).toEqual({ x: 1100, y: 540 });
+    });
+
+    it('keeps a report from off the picture on its edge', () => {
+        const { v } = view();
+        v._onGamingClick({ preventDefault() {}, clientX: 480, clientY: 270 });
+        v._pointerLockRefused = true;
+        v._clientCursorHostSaid({ x: 5000, y: -40, visible: true });
+        expect(v._clientCursorPos).toEqual({ x: 1919, y: 0 });
+    });
 });
