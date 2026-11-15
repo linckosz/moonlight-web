@@ -76,8 +76,18 @@ void run_turn_watch_tests()
         fake->turns = 1;
         TurnWatch watch(fake->reader(fake), Orientation{1, false}, 5);
         CompositorTransform seen;
-        CHECK(!takeWithin(watch, seen, 60));
+        // Asked as the capture loop would until the thread has read at least
+        // three times: counted by readings, not by a time that a loaded runner
+        // can stretch (macOS CI, 15/11/2026: fewer than three in 60 ms).
+        bool said = false;
+        const auto until = Clock::now() + std::chrono::seconds(5);
+        while (watch.readings() < 3 && Clock::now() < until) {
+            if (watch.take(seen)) said = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
         CHECK(watch.readings() >= 3);
+        CHECK(!said);
+        CHECK(!watch.take(seen));
     }
 
     SECTION("TurnWatch — a turn is seen within a few intervals, and said once");
