@@ -752,6 +752,13 @@ void run_request_guard_tests()
     // What may be asked over the channel: the routes of the tray icon, the
     // command line and a second launch, each with its verb.
     CHECK(localChannelRoute("GET", "/api/health"));
+    // A booth's stream PIN routes are never this channel's (issue #68): this
+    // machine reads its own stream's PIN from its browser, not from a script.
+    for (const char* method : {"GET", "POST"}) {
+        CHECK(!localChannelRoute(method, "/api/booth/join"));
+        CHECK(!localChannelRoute(method, "/api/booth/pin"));
+        CHECK(!localChannelRoute(method, "/api/booth"));
+    }
     // What this machine can capture and encode, for a script's request: the
     // read alone, never the routes that change its displays.
     CHECK(localChannelRoute("GET", "/api/native/status"));

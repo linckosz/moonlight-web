@@ -183,8 +183,10 @@ void registerBoothRoutes(RestRouter& router, ShareManager& share, BoothPin& pins
                                      cookie))
                 return refusal(QStringLiteral("room_full"), 503);
             share.markHolder(slot, holder);
+            // Somebody new came in: the PIN they used is spent. A holder taking
+            // their own seat back is nobody new, and leaves it as it was.
+            pins.rotate(stream.key, BoothPin::Reason::Used);
         }
-        pins.rotate(stream.key, BoothPin::Reason::Used);
 
         QJsonObject obj;
         obj[QStringLiteral("status")] = QStringLiteral("ok");

@@ -284,6 +284,9 @@ void testAJoinAndItsSeat()
     CHECK_EQ(status, 200);
     CHECK_EQ(again.value("slot").toInt(), slot);
     CHECK(again.value("url").toString() == url);
+    // Nobody new came in: the PIN stays as it was.
+    CHECK(b.pins.read(b.stream.key) == pin2);
+    CHECK(b.pins.lastReason(b.stream.key) == BoothPin::Reason::Used);
     const QString cookie2 =
         raw.headers.value(QStringLiteral("Set-Cookie")).mid(10).section(QLatin1Char(';'), 0, 0);
     CHECK(cookie2 != cookie);
