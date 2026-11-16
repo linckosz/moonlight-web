@@ -22,6 +22,7 @@
 #include "common/Logger.h"
 #include "common/PrivilegedPlace.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QElapsedTimer>
@@ -31,6 +32,7 @@
 #include <QThread>
 
 #include <cstdio>
+#include <iterator>
 #include <optional>
 
 #ifdef Q_OS_WIN
@@ -1365,7 +1367,10 @@ bool othersOff(const Context& ctx)
     return QFile::exists(othersOffPath(ctx));
 }
 
-void setOthersOff(const Context& ctx, bool off)
+/// @p kept: what stays on, ours (VirtualDisplay::keptOurs) or a real
+/// display's device path (KeepOnly). The marker says it, so that the way
+/// back — the stream's end, the guard — knows which one it is.
+void setOthersOff(const Context& ctx, bool off, const QString& kept = VirtualDisplay::keptOurs())
 {
     if (!off) {
         mw::place::removeShared(othersOffPath(ctx));
@@ -1373,12 +1378,168 @@ void setOthersOff(const Context& ctx, bool off)
     }
     QFile f(othersOffPath(ctx));
     QString why;
-    if (!mw::place::openShared(f, QIODevice::WriteOnly, &why))
+    if (!mw::place::openShared(f, QIODevice::WriteOnly, &why)) {
         Logger::warning(
             QStringLiteral("[vdisplay-apply] cannot write %1: %2").arg(f.fileName(), why));
+        return;
+    }
+    f.write(VirtualDisplay::othersOffMarker(kept));
+    f.close();
+}
+
+/// The marker as the helper reads it: there or not, and what it names when
+/// it parses (VirtualDisplay::parseOthersOffMarker); a marker that is there
+/// and does not parse names nothing.
+struct Marker
+{
+    bool present = false;
+    std::optional<QString> kept;
+};
+
+Marker readMarker(const Context& ctx)
+{
+    Marker m;
+    QFile f;
+    QString why;
+    bool missing = false;
+    const bool opened = mw::place::SharedDir(ctx.dir).open(
+        f, QFileInfo(othersOffPath(ctx)).fileName(), QIODevice::ReadOnly, &why, &missing);
+    // There but refused (a link, a directory) still counts as there: the
+    // way back then takes Windows' extended layout, and nothing is kept.
+    m.present = opened || !missing;
+    constexpr qint64 kMaxMarkerBytes = 4096;
+    if (!opened || f.size() > kMaxMarkerBytes) return m;
+    m.kept = VirtualDisplay::parseOthersOffMarker(f.read(kMaxMarkerBytes));
+    return m;
 }
 
 // ── Stage "snapshot": the desktop half that runs before the node goes on ──
+
+/// The server that asked (Request::server) is alive, is the very process
+/// that wrote that creation time, and runs an executable of our name. Not a
+/// boundary — any process of this user may change the display layout itself
+/// — but no stray file turns the screens off without a server behind it.
+bool askedByServer(const QString& server)
+{
+    const auto id = VirtualDisplay::parseServerId(server);
+    if (!id) return false;
+    HANDLE proc =
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, DWORD(id->first));
+    if (!proc) return false;
+    bool ok = false;
+    FILETIME c{}, e{}, k{}, u{};
+    if (GetProcessTimes(proc, &c, &e, &k, &u) &&
+        ((quint64(c.dwHighDateTime) << 32) | quint64(c.dwLowDateTime)) == id->second &&
+        WaitForSingleObject(proc, 0) == WAIT_TIMEOUT) {
+        wchar_t image[MAX_PATH * 2] = {};
+        DWORD n = DWORD(std::size(image));
+        if (QueryFullProcessImageNameW(proc, 0, image, &n)) {
+            const QString theirs = QFileInfo(QString::fromWCharArray(image, int(n))).fileName();
+            const QString ours = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
+            ok = theirs.compare(ours, Qt::CaseInsensitive) == 0;
+        }
+    }
+    CloseHandle(proc);
+    return ok;
+}
+
+/// KeepOnly: an owner streams one of the PC's own displays, and every other
+/// one goes off until RestoreLayout (VDEXCLALL, 16/11/2026). The layout with
+/// all of them on is saved first, the marker names the display kept, and the
+/// change itself is never saved to Windows' database (savesLayout): a reboot
+/// mid-stream comes back with every display on.
+int keepOnly(Context& ctx)
+{
+    const QString stage = QStringLiteral("mode");
+    if (!askedByServer(ctx.request.server))
+        return failAt(ctx, stage, QStringLiteral("no live server asked for it"));
+    const QString& path = ctx.request.keepDevicePath;
+    QStringList active;
+    for (const ActivePath& p : activePaths())
+        active << p.devicePath;
+    if (!VirtualDisplay::devicePathAmong(path, active)) {
+        // Never the path itself in the log: the request's word, not ours.
+        Logger::warning(QStringLiteral("[vdisplay-apply] keep only: the display named is not "
+                                       "an active one — nothing changed"));
+        return failAt(ctx, stage, QStringLiteral("the display is not an active one"));
+    }
+    // Ours on (a stream on it, or its grace): its own layout from before is
+    // the one saved, and turning it off from here would leave its way back
+    // with a layout that is not its own.
+    if (findOurTarget()) return failAt(ctx, stage, QStringLiteral("the virtual display is on"));
+    const Marker m = readMarker(ctx);
+    switch (VirtualDisplay::keepStep(m.present, m.kept, path)) {
+    case VirtualDisplay::KeepStep::Already:
+        ctx.result.ok = true;
+        ctx.result.stage = QStringLiteral("done");
+        return finish(ctx);
+    case VirtualDisplay::KeepStep::Refuse:
+        return failAt(ctx, stage,
+                      QStringLiteral("the other displays are already off for "
+                                     "another stream"));
+    case VirtualDisplay::KeepStep::Apply: break;
+    }
+    QString error;
+    if (saveTopology(ctx, &error)) {
+        Logger::info(QStringLiteral("[vdisplay-apply] display layout saved"));
+    } else {
+        // Without it the way back is Windows' own extended layout.
+        mw::place::removeShared(topologyPath(ctx));
+        Logger::warning(QStringLiteral("[vdisplay-apply] display layout not saved: %1").arg(error));
+    }
+    // The marker first: a crash between the two leaves a marker with the
+    // displays on, and the way back then only puts them as they are.
+    setOthersOff(ctx, true, path);
+    const int n = keepOnlyOurs(path, &error);
+    if (n < 0) {
+        setOthersOff(ctx, false);
+        mw::place::removeShared(topologyPath(ctx));
+        return failAt(ctx, stage, QStringLiteral("the others stay on: %1").arg(error));
+    }
+    Logger::info(QStringLiteral("[vdisplay-apply] keep only: %1 other display(s) off").arg(n));
+    ctx.result.ok = true;
+    ctx.result.stage = QStringLiteral("done");
+    return finish(ctx);
+}
+
+/// RestoreLayout: the displays a stream turned off back on, as they were,
+/// whichever display it kept, our node left alone. Also the guard's way back
+/// when the server is gone, and a server's at start when a marker was left.
+/// A layout that will not load, or names a display gone, gives Windows' own
+/// extended layout; never half of one.
+int restoreLayout(Context& ctx)
+{
+    const QString stage = QStringLiteral("mode");
+    if (!readMarker(ctx).present) {
+        ctx.result.ok = true;
+        ctx.result.stage = QStringLiteral("done");
+        return finish(ctx);
+    }
+    bool back = false;
+    if (const auto saved = loadTopology(ctx); saved && topologyStillAttached(*saved)) {
+        QString error;
+        back = applyTopology(*saved, &error);
+        if (back)
+            Logger::info(QStringLiteral("[vdisplay-apply] display layout restored"));
+        else
+            Logger::warning(
+                QStringLiteral("[vdisplay-apply] display layout not restored: %1").arg(error));
+    }
+    if (!back) {
+        const LONG rc = SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
+        if (rc != ERROR_SUCCESS)
+            return failAt(
+                ctx, stage,
+                QStringLiteral("the other displays not back on: %1").arg(lastErrorText(DWORD(rc))));
+        Logger::info(QStringLiteral("[vdisplay-apply] the other displays back on, as Windows "
+                                    "extends them"));
+    }
+    mw::place::removeShared(topologyPath(ctx));
+    setOthersOff(ctx, false);
+    ctx.result.ok = true;
+    ctx.result.stage = QStringLiteral("done");
+    return finish(ctx);
+}
 
 int stageSnapshot(Context& ctx)
 {
@@ -1387,6 +1548,12 @@ int stageSnapshot(Context& ctx)
     ctx.result.stage = QStringLiteral("snapshot");
     if (ctx.request.action != Action::Activate) return kExitOk;
     QString error;
+    // One exclusive at a time: with a real display's stream keeping only its
+    // own, ours coming on would take that one's place (VDEXCLALL).
+    if (const Marker m = readMarker(ctx);
+        m.present && m.kept && *m.kept != VirtualDisplay::keptOurs())
+        return failAt(ctx, QStringLiteral("snapshot"),
+                      QStringLiteral("the other displays are off for another display's stream"));
     if (othersOff(ctx)) {
         // A new mode for an exclusive stream's display: what is active is ours
         // alone, and the layout to come back to is the one already saved.
@@ -1515,6 +1682,8 @@ int stageMode(Context& ctx)
         ctx.result.stage = QStringLiteral("done");
         return finish(ctx);
     }
+    if (ctx.request.action == Action::KeepOnly) return keepOnly(ctx);
+    if (ctx.request.action == Action::RestoreLayout) return restoreLayout(ctx);
     if (ctx.request.action != Action::Activate) {
         ctx.result.ok = true;
         ctx.result.stage = QStringLiteral("done");
@@ -1788,7 +1957,9 @@ int run(const QString& stageArg, const QString& dirArg, const std::optional<QStr
     } else if (ctx.request.action == Action::Deactivate) {
         if (wantMode) stages.push_back(&stageMode);
         if (wantDriver) stages.push_back(&stageDriver);
-    } else if (ctx.request.action == Action::OthersBack) {
+    } else if (ctx.request.action == Action::OthersBack || ctx.request.action == Action::KeepOnly ||
+               ctx.request.action == Action::RestoreLayout) {
+        // The desktop half alone: the node is left as it is.
         if (wantMode) stages.push_back(&stageMode);
     } else {
         if (wantDriver) stages.push_back(&stageDriver);
@@ -1871,8 +2042,10 @@ int guard(const QString& server)
         if (step == VirtualDisplay::GuardStep::Restore) {
             Logger::warning(QStringLiteral("[vdisplay-guard] the server is gone with the other "
                                            "displays off — bringing them back"));
+            // The layout from before back, whichever display the stream
+            // kept: topology only, ours or not (VDEXCLALL).
             VirtualDisplay::Request req;
-            req.action = VirtualDisplay::Request::Action::Deactivate;
+            req.action = VirtualDisplay::Request::Action::RestoreLayout;
             QFile f(VirtualDisplay::requestPath());
             if (mw::place::openShared(f, QIODevice::WriteOnly)) {
                 f.write(VirtualDisplay::toJson(req));

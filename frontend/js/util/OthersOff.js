@@ -4,14 +4,14 @@
  *
  * Two keys, both needed. The administrator allows it (Admin, native host,
  * Windows with "MoonlightWeb Virtual Display" installed), and each browser
- * chooses it for its own streams on that display. The choice is this
- * browser's alone: it rides every launch as `others_off`, and is never made
- * the server's default for the other browsers. A guest has no say: the server
- * ignores it for an invitation's stream.
+ * may turn it off for its own streams of one of the PC's screens, the virtual
+ * one or a real one. The choice is this browser's alone: it rides every
+ * launch as `others_off`, and is never made the server's default for the
+ * other browsers. A guest has no say: the server ignores it for an
+ * invitation's stream.
  *
  * A browser that never chose sends nothing, and the server applies the PC's
- * inherited default: ticked on a PC whose admin box was ticked before the
- * choice moved to the viewer, so an update changes nothing there.
+ * default: on wherever the admin allows it (VDEXDEF, 16/11/2026).
  *
  * The host's card says both (nativeDisplay.others_off): `allowed`, and
  * `inherited` (what a browser that never chose gets). The displays a stream

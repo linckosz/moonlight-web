@@ -206,6 +206,36 @@ static quint64 g_SignInReservationSeq = 0;
 // when its turn comes and stands down. File scope for the same reason as the
 // two above.
 static QHash<int, quint64> g_SlotLaunchGeneration;
+// Since when each slot's launch has been on its way, until its worker is in
+// the slot (VDEXCLALL): a stream still launching counts as one running when a
+// real display's stream asks for the other displays off. A launch that ends
+// without a worker leaves its entry, which stops counting after
+// kLaunchingCountsMs.
+static QHash<int, qint64> g_SlotLaunchingSinceMs;
+static constexpr qint64 kLaunchingCountsMs = 60 * 1000;
+// Set in main once the pool exists (VDEXCLALL): see there.
+static std::function<bool(int)> g_OtherStreamOn;
+static std::function<void(int)> g_RestoreKeptSoon;
+// The grace before the displays a real display's stream turned off come
+// back, as the virtual display's (VirtualDisplayJob::kReleaseGraceMs).
+static constexpr int kKeptReleaseGraceMs = 4000;
+
+// The real display a native host stream of @p appId shows, by its display
+// key (DisplayInfo::key, the monitor device path on Windows), or empty: a
+// display's card, or an owner's app that opens on the primary display. Our
+// virtual display and a gamescope are not "real displays" here (VDEXCLALL).
+static QString screenKeyForApp(int appId)
+{
+    QString why;
+    if (NativeHostBackend::isDisplayCard(appId))
+        return NativeHostBackend::displayKeyForApp(appId, &why);
+    if (NativeHostBackend::isHostAppCard(appId) &&
+        NativeHostBackend::hostAppScreen() == NativeHostBackend::HostAppScreen::Primary) {
+        const int primary = NativeHostBackend::primaryDisplayAppId(&why);
+        if (primary > 0) return NativeHostBackend::displayKeyForApp(primary, &why);
+    }
+    return QString();
+}
 // The quit commands of the native host's apps opened on "MoonlightWeb Virtual
 // Display" since it came on: run when it goes off (setBeforeRelease), or the
 // program would land on a physical screen — Big Picture full screen on the
@@ -3006,6 +3036,43 @@ int main(int argc, char* argv[])
         g_HostAppCloseOnRelease.clear();
         return true;
     });
+    // A real display's stream with the others off (VDEXCLALL): whether any
+    // other stream runs or is launching on this PC — any slot but
+    // @p exceptSlot, guests and our virtual display included.
+    g_OtherStreamOn = [&g_Pool](int exceptSlot) {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        for (int i = 0; i < g_Pool.size(); ++i) {
+            if (i == exceptSlot) continue;
+            if (!g_Pool.at(i).worker.isNull()) return true;
+            const qint64 since = g_SlotLaunchingSinceMs.value(i, 0);
+            if (since > 0 && now - since < kLaunchingCountsMs) return true;
+        }
+        return VirtualDisplayJob::instance().running() ||
+               AppSettings().virtualDisplay().value(QLatin1String("active")).toBool(false);
+    };
+    // The others back once no stream is left on the display kept, after a
+    // grace (@p graceMs): a reload or a take-over of the same display comes
+    // back to the screens as they were, a crash's page in kCrashGraceMs.
+    g_RestoreKeptSoon = [&g_Pool](int graceMs) {
+        QTimer::singleShot(graceMs, qApp, [&g_Pool]() {
+            const QString kept = VirtualDisplayJob::keptDisplay();
+            if (kept.isEmpty()) return;
+            bool streamed = false;
+            for (const SessionPool::Slot& sl : g_Pool)
+                if (!sl.worker.isNull() && sl.hostUuid == NativeHostBackend::hostUuid() &&
+                    screenKeyForApp(sl.appId) == kept)
+                    streamed = true;
+            if (!VirtualDisplay::screenOthersComeBack(true, streamed)) return;
+            qInfo() << "[Session] no stream left on the display kept — the other displays "
+                       "back on";
+            VirtualDisplayJob::instance().restoreLayout(nullptr);
+        });
+    };
+#ifdef Q_OS_WIN
+    // A server that died with the other displays off for a real display's
+    // stream: its guard has brought them back, or this does.
+    VirtualDisplayJob::instance().restoreLeftLayout();
+#endif
     // Per-host result of the dual-stream capability probe (first standby
     // launch): missing = unknown (assume yes), false = host rejected a second
     // concurrent session → frontend falls back to the legacy relaunch.
@@ -3192,6 +3259,8 @@ int main(int argc, char* argv[])
         // A stream gone takes its PIN along; the standby leg of the same one keeps it.
         boothPins.retainOnly(liveBoothKeys());
         if (onVirtualDisplay) VirtualDisplayJob::instance().releaseSoon();
+        if (g_RestoreKeptSoon && !VirtualDisplayJob::keptDisplay().isEmpty())
+            g_RestoreKeptSoon(kKeptReleaseGraceMs);
         if (!old) return static_cast<StreamWorkerHost*>(nullptr);
         // Whatever its worker does next, this stream was stopped here.
         const qint64 stoppedAt = QDateTime::currentMSecsSinceEpoch();
@@ -6013,6 +6082,10 @@ int main(int argc, char* argv[])
                     // on behind every stream that ran beside Display 1.
                     if (onVirtualDisplay)
                         VirtualDisplayJob::instance().releaseSoon(comesBack ? kCrashGraceMs : 0);
+                    // A real display kept with the others off: back on once
+                    // no stream is left on it (VDEXCLALL).
+                    if (g_RestoreKeptSoon && !VirtualDisplayJob::keptDisplay().isEmpty())
+                        g_RestoreKeptSoon(comesBack ? kCrashGraceMs : kKeptReleaseGraceMs);
                 });
 
             const bool virtualStream = host->backendType == NativeHostBackend::typeName() &&
@@ -6061,6 +6134,7 @@ int main(int argc, char* argv[])
                 }
                 SessionPool::Slot& sl = g_Pool.at(reqSlot);
                 sl.worker = worker;
+                g_SlotLaunchingSinceMs.remove(reqSlot);
                 // The host's word now, which may have changed since its config
                 // was written (issue #69): every change after reaches it too.
                 worker->setMicAllowed(MicUplink::hostAllows());
@@ -6085,6 +6159,22 @@ int main(int argc, char* argv[])
             // asked — a quality switch, a reload. It never saw this worker in
             // the pool, so it could not tear it down; this one stands down
             // instead, before spawning anything.
+            // A real display's stream has the other displays off: only that
+            // display may be launched until it ends — ours or another one
+            // would be shown black, or take its place (VDEXCLALL).
+            const QString launchScreenKey = host->backendType == NativeHostBackend::typeName()
+                                                ? screenKeyForApp(appId)
+                                                : QString();
+            if (host->backendType == NativeHostBackend::typeName() &&
+                VirtualDisplay::launchBlockedByKeep(VirtualDisplayJob::keptDisplay(),
+                                                    launchScreenKey,
+                                                    NativeHostBackend::usesVirtualDisplay(appId))) {
+                worker->deleteLater();
+                respond(HttpResponse::error(
+                    409, "The PC's other screens are off for another stream until it ends"));
+                return;
+            }
+            g_SlotLaunchingSinceMs[reqSlot] = QDateTime::currentMSecsSinceEpoch();
             const quint64 generation = ++g_SlotLaunchGeneration[reqSlot];
             auto claimThenStart = [&routerPorts, startWorker, cfg, reqSlot, generation, worker,
                                    respond, standby]() {
@@ -6281,6 +6371,34 @@ int main(int argc, char* argv[])
                         });
                 };
             }
+#ifdef Q_OS_WIN
+            // One of the PC's real displays, the owner's: the other displays
+            // off while it streams, when the admin allows it and this browser
+            // has not said no — and no other stream runs or is launching,
+            // which would lose its picture (VDEXCLALL, 16/11/2026). A standby
+            // leg rides its main stream's choice and asks nothing.
+            if (host->backendType == NativeHostBackend::typeName() && !standby &&
+                !launchScreenKey.isEmpty() && vdOthersOff) {
+                const bool otherStream = g_OtherStreamOn && g_OtherStreamOn(reqSlot);
+                if (VirtualDisplay::screenOthersGoOff(VirtualDisplay::Asker::Owner, vdOthersOff,
+                                                      otherStream)) {
+                    readyThenStart = [claimThenStart, launchScreenKey]() {
+                        VirtualDisplayJob::instance().keepOnly(
+                            launchScreenKey, [claimThenStart](bool ok, const QString& error) {
+                                // The stream goes ahead either way: the
+                                // displays staying on takes nothing from it.
+                                if (!ok)
+                                    qWarning().noquote()
+                                        << "[Session] the other displays stay on:" << error;
+                                claimThenStart();
+                            });
+                    };
+                } else {
+                    qInfo() << "[Session] the other displays stay on: another stream runs on "
+                               "this PC";
+                }
+            }
+#endif
 
             // Serialize with whatever still holds this slot's ports: a previous
             // worker child (wait for its process to die) or a legacy in-process
@@ -7899,6 +8017,10 @@ int main(int argc, char* argv[])
                 // guest turned on stayed on under the owner's.
                 if (onVirtualDisplay)
                     VirtualDisplayJob::instance().releaseSoon(comesBack ? kCrashGraceMs : 0);
+                // A real display kept with the others off: back on once no
+                // stream is left on it (VDEXCLALL).
+                if (g_RestoreKeptSoon && !VirtualDisplayJob::keptDisplay().isEmpty())
+                    g_RestoreKeptSoon(comesBack ? kCrashGraceMs : kKeptReleaseGraceMs);
             });
 
         // However this worker goes — ended, left, ended by the owner — its
@@ -7943,6 +8065,7 @@ int main(int argc, char* argv[])
             }
             SessionPool::Slot& sl = g_Pool.at(slot);
             sl.worker = worker;
+            g_SlotLaunchingSinceMs.remove(slot);
             // The host's word now, as for the owner's slots (issue #69).
             worker->setMicAllowed(MicUplink::hostAllows());
             sl.clientUniqueId = uid;
@@ -7954,6 +8077,18 @@ int main(int argc, char* argv[])
         // told which external port the browser will aim at — the owner path's
         // sequence, generation guard included: a newer join on the slot while
         // the router is being asked stands this one down.
+        // A real display's stream has the other displays off: a guest may
+        // join that display only (VDEXCLALL).
+        if (host->backendType == NativeHostBackend::typeName() &&
+            VirtualDisplay::launchBlockedByKeep(VirtualDisplayJob::keptDisplay(),
+                                                screenKeyForApp(appId),
+                                                NativeHostBackend::usesVirtualDisplay(appId))) {
+            worker->deleteLater();
+            respond(HttpResponse::error(
+                409, "The PC's other screens are off for another stream until it ends"));
+            return;
+        }
+        g_SlotLaunchingSinceMs[slot] = QDateTime::currentMSecsSinceEpoch();
         const quint64 generation = ++g_SlotLaunchGeneration[slot];
         auto claimThenStart = [&routerPorts, &keepGuestHole, &releaseGuestHoleSoon, joinFeed,
                                startWorker, cfg, slot, generation, worker, respond]() {

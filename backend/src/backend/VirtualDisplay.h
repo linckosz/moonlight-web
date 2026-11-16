@@ -27,6 +27,7 @@
 
 #include <array>
 #include <optional>
+#include <utility>
 
 namespace mw::native {
 struct DisplayInfo;
@@ -393,6 +394,12 @@ struct Request
         Activate,   ///< a stream starts: enable, set the mode, make primary
         Deactivate, ///< the last stream ended: restore the primary, disable
         OthersBack, ///< the owner left, guests stay: the other displays back on
+        /// An owner streams one of this PC's real displays: every other one
+        /// off (Request::keepDevicePath), our node left alone (VDEXCLALL).
+        KeepOnly,
+        /// That stream ended, or its server is gone: the layout from before
+        /// back, whichever display was kept, our node left alone.
+        RestoreLayout,
     };
     Action action = Action::Activate;
     /// Deactivate: the display to make primary again, as Activate reported
@@ -443,10 +450,52 @@ struct Request
     /// ours (settingsXml), never into an owner's own. Always a validGpuName()
     /// once parsed.
     QString gpu;
+    /// KeepOnly: the display to keep, as its monitor device path (the
+    /// native host's DisplayInfo::key). Always a validDevicePath() once
+    /// parsed; the helper also requires it to be ACTIVE when it acts
+    /// (devicePathAmong). Written as `device_path`.
+    QString keepDevicePath;
+    /// KeepOnly: the server asking, as "pid:creation time" (the guard's own
+    /// argument). The helper acts only for a live process with that very
+    /// creation time and our executable's name. Written as `server`.
+    QString server;
 };
 
+/// A display key an elevated process may compare: non-empty, at most 512
+/// characters, no control character. Never interpreted, only compared.
+bool validDevicePath(const QString& path);
+
+/// Whether @p path is, string for string, one of @p active (the target
+/// device paths of the paths active right now). No prefix, no case folding.
+bool devicePathAmong(const QString& path, const QStringList& active);
+
+/// "pid:creation time" as the server and its guard write it: two numbers,
+/// the pid not 0. nullopt otherwise.
+std::optional<std::pair<quint64, quint64>> parseServerId(const QString& server);
+
+/// The marker's content (othersOffPath) names what is kept: our display, or
+/// one of the PC's own by its device path.
+inline QString keptOurs()
+{
+    return QStringLiteral("vd");
+}
+QByteArray othersOffMarker(const QString& kept);
+/// Strict: an empty file (an older server's) or "vd" is ours, "display:"
+/// and a validDevicePath() is that display; anything else is nullopt, and
+/// the way back is Windows' own extended layout.
+std::optional<QString> parseOthersOffMarker(const QByteArray& content);
+
+/// What the helper does with KeepOnly for @p path, given the marker.
+enum class KeepStep
+{
+    Apply,   ///< no marker: snapshot, marker, the others off
+    Already, ///< the marker names this display: nothing to change
+    Refuse,  ///< the marker names another one, or cannot be read
+};
+KeepStep keepStep(bool markerPresent, const std::optional<QString>& marker, const QString& path);
+
 /// Parse and validate a request. The file is read by an elevated process, so
-/// its contents are a choice among five verbs, one display key and a mode,
+/// its contents are a choice among seven verbs, display keys and a mode,
 /// never free-form input. Returns nullopt with @p error filled on any deviation.
 std::optional<Request> parseRequest(const QByteArray& json, QString* error);
 
@@ -508,6 +557,24 @@ bool ownerWantsOthersOff(bool allowed, bool hasChoice, bool choice, bool inherit
 /// without this their cards would vanish for the length of the stream. None
 /// with the displays on.
 QList<int> darkDisplays(const QList<int>& lit, const QList<int>& listed, bool othersOff);
+
+/// Whether a stream of one of the PC's real displays turns the others off
+/// (VDEXCLALL, 16/11/2026): the owner asking, the option in force
+/// (@p optionOn: ownerWantsOthersOff), and no other stream on this PC,
+/// streaming or still launching, guests and our display included
+/// (@p otherStream) — never darken someone else's picture.
+bool screenOthersGoOff(Asker asker, bool optionOn, bool otherStream);
+
+/// Whether the displays a real display's stream turned off come back now:
+/// they are off for it (@p offForScreen) and no stream is left on the kept
+/// display (@p keptStreamed).
+bool screenOthersComeBack(bool offForScreen, bool keptStreamed);
+
+/// Whether a launch is refused while a real display's stream has the
+/// others off (@p keptKey, empty when none): any launch but one of that very
+/// display (@p launchKey), our display's included — its activation would
+/// take the kept one's place.
+bool launchBlockedByKeep(const QString& keptKey, const QString& launchKey, bool launchIsOurs);
 
 /// With a stream still on the display: whether the other displays come back on
 /// now. They were the owner's to turn off, so they go with the owner's stream

@@ -1033,4 +1033,102 @@ void run_virtual_display_tests()
     CHECK(guardStep(true, false) == GuardStep::Leave);
     CHECK(guardStep(false, false) == GuardStep::Leave);
     CHECK_EQ(guardArgument(), QStringLiteral("--vdisplay-guard"));
+
+    SECTION("VirtualDisplay — KeepOnly names an active display and a server, strictly");
+    {
+        const QString path = QStringLiteral("\\\\?\\DISPLAY#GBT270D#5&8211&0&UID4352#{e6f07b5f}");
+        Request keep;
+        keep.action = Request::Action::KeepOnly;
+        keep.keepDevicePath = path;
+        keep.server = QStringLiteral("1234:133456789012345678");
+        const auto parsed = parseRequest(toJson(keep), &err);
+        CHECK(parsed.has_value());
+        if (parsed) {
+            CHECK(parsed->action == Request::Action::KeepOnly);
+            CHECK_EQ(parsed->keepDevicePath, path);
+            CHECK_EQ(parsed->server, keep.server);
+            CHECK(!parsed->exclusive);
+        }
+        // Both fields are required, and strict.
+        CHECK(!parseRequest("{\"action\":\"keep_only\"}", &err).has_value());
+        CHECK(!parseRequest("{\"action\":\"keep_only\",\"device_path\":\"x\"}", &err).has_value());
+        CHECK(!parseRequest("{\"action\":\"keep_only\",\"device_path\":\"x\",\"server\":\"0:1\"}",
+                            &err)
+                   .has_value());
+        CHECK(!parseRequest(
+                   "{\"action\":\"keep_only\",\"device_path\":\"a\nb\",\"server\":\"1:1\"}", &err)
+                   .has_value());
+        CHECK(
+            !parseRequest("{\"action\":\"keep_only\",\"device_path\":42,\"server\":\"1:1\"}", &err)
+                 .has_value());
+        CHECK(parseRequest("{\"action\":\"keep_only\",\"device_path\":\"x\",\"server\":\"1:1\"}",
+                           &err)
+                  .has_value());
+        // The verb back, alone.
+        Request restore;
+        restore.action = Request::Action::RestoreLayout;
+        const auto back = parseRequest(toJson(restore), &err);
+        CHECK(back.has_value());
+        if (back) CHECK(back->action == Request::Action::RestoreLayout);
+
+        CHECK(validDevicePath(path));
+        CHECK(!validDevicePath(QString()));
+        CHECK(!validDevicePath(QString(513, QLatin1Char('a'))));
+        CHECK(validDevicePath(QString(512, QLatin1Char('a'))));
+        CHECK(!validDevicePath(QStringLiteral("a\tb")));
+        // Among the active paths: string for string, no prefix, no case folding.
+        const QStringList active{path, QStringLiteral("\\\\?\\DISPLAY#MTT1337#1&f8#{e6}")};
+        CHECK(devicePathAmong(path, active));
+        CHECK(!devicePathAmong(path.left(path.size() - 1), active));
+        CHECK(!devicePathAmong(path + QLatin1Char('x'), active));
+        CHECK(!devicePathAmong(path.toLower(), active));
+        CHECK(!devicePathAmong(QString(), {QString()}));
+
+        CHECK(parseServerId(QStringLiteral("1234:5678")).has_value());
+        CHECK(!parseServerId(QStringLiteral("0:5678")).has_value());
+        CHECK(!parseServerId(QStringLiteral("1234")).has_value());
+        CHECK(!parseServerId(QStringLiteral("a:1")).has_value());
+        CHECK(!parseServerId(QStringLiteral("99999999999:1")).has_value());
+    }
+
+    SECTION("VirtualDisplay — the marker says which display is kept, strictly");
+    {
+        const QString path = QStringLiteral("\\\\?\\DISPLAY#GBT270D#5&8211#{e6}");
+        CHECK(parseOthersOffMarker(QByteArray()) == std::optional<QString>(keptOurs()));
+        CHECK(parseOthersOffMarker("vd") == std::optional<QString>(keptOurs()));
+        CHECK(parseOthersOffMarker(othersOffMarker(keptOurs())) ==
+              std::optional<QString>(keptOurs()));
+        CHECK(parseOthersOffMarker(othersOffMarker(path)) == std::optional<QString>(path));
+        CHECK(!parseOthersOffMarker("display:").has_value());
+        CHECK(!parseOthersOffMarker("display:a\nb").has_value());
+        CHECK(!parseOthersOffMarker("vd\n").has_value());
+        CHECK(!parseOthersOffMarker("garbage").has_value());
+        CHECK(!parseOthersOffMarker(QByteArray("display:") + QByteArray(600, 'a')).has_value());
+        CHECK(!parseOthersOffMarker(QByteArray("display:\xff\xfe")).has_value());
+
+        // One kept display at a time: the same one again changes nothing.
+        CHECK(keepStep(false, std::nullopt, path) == KeepStep::Apply);
+        CHECK(keepStep(true, path, path) == KeepStep::Already);
+        CHECK(keepStep(true, keptOurs(), path) == KeepStep::Refuse);
+        CHECK(keepStep(true, QStringLiteral("\\\\?\\other"), path) == KeepStep::Refuse);
+        CHECK(keepStep(true, std::nullopt, path) == KeepStep::Refuse);
+    }
+
+    SECTION("VirtualDisplay — a real display's stream turns the others off only alone");
+    CHECK(screenOthersGoOff(Asker::Owner, true, false));
+    CHECK(!screenOthersGoOff(Asker::Owner, true, true));
+    CHECK(!screenOthersGoOff(Asker::Owner, false, false));
+    CHECK(!screenOthersGoOff(Asker::Guest, true, false));
+    CHECK(screenOthersComeBack(true, false));
+    CHECK(!screenOthersComeBack(true, true));
+    CHECK(!screenOthersComeBack(false, false));
+    {
+        const QString kept = QStringLiteral("\\\\?\\A");
+        CHECK(!launchBlockedByKeep(QString(), QStringLiteral("\\\\?\\B"), false));
+        CHECK(!launchBlockedByKeep(QString(), QString(), true));
+        CHECK(!launchBlockedByKeep(kept, kept, false));
+        CHECK(launchBlockedByKeep(kept, QStringLiteral("\\\\?\\B"), false));
+        CHECK(launchBlockedByKeep(kept, QString(), true));
+        CHECK(launchBlockedByKeep(kept, QString(), false));
+    }
 }

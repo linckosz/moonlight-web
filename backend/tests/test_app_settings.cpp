@@ -88,6 +88,27 @@ void run_app_settings_tests()
     CHECK_EQ(s.httpPort(8080), quint16(8080));
     CHECK_EQ(s.httpsPort(8443), quint16(8443));
 
+    // VDEXDEF (16/11/2026): a browser that never chose follows the admin's
+    // box itself; the key an older server wrote false is ignored, then
+    // dropped by the next change of the box.
+    {
+        CHECK(!s.virtualDisplayExclusive());
+        CHECK(!s.virtualDisplayExclusiveInherited());
+        QJsonObject obj = s.readAll();
+        obj["virtual_display_exclusive"] = true;
+        obj["virtual_display_exclusive_inherited"] = false;
+        s.writeAll(obj);
+        CHECK(s.virtualDisplayExclusiveInherited());
+        s.setVirtualDisplayExclusive(true);
+        CHECK(!s.readAll().contains("virtual_display_exclusive_inherited"));
+        CHECK(s.virtualDisplayExclusiveInherited());
+        s.setVirtualDisplayExclusive(false);
+        CHECK(!s.virtualDisplayExclusiveInherited());
+        obj = s.readAll();
+        obj.remove("virtual_display_exclusive");
+        s.writeAll(obj);
+    }
+
     // Round-trips: numbers and ports.
     s.setHttpPort(80);
     CHECK_EQ(s.httpPort(1), quint16(80));

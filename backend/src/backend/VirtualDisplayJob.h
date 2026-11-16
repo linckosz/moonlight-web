@@ -104,6 +104,22 @@ public:
     /// Turn it off (previous primary back, disable). @p cb may be null.
     void deactivate(Callback cb);
 
+    /// An owner's stream of one of the PC's real displays (VDEXCLALL): every
+    /// other display off, @p devicePath kept (the native host's display key).
+    /// The caller has checked the rules (VirtualDisplay::screenOthersGoOff);
+    /// the helper checks again that the display is active, that ours is off
+    /// and that no other display is kept. @p cb may be null.
+    void keepOnly(const QString& devicePath, Callback cb);
+    /// The layout from before KeepOnly back. @p cb may be null.
+    void restoreLayout(Callback cb);
+    /// The display a real display's stream keeps on while the others are
+    /// off, from the helper's marker; empty when none is (the others on, or
+    /// off for ours).
+    static QString keptDisplay();
+    /// At start: a marker a dead server left for a real display's stream (or
+    /// one that will not parse) brings the layout from before back.
+    void restoreLeftLayout();
+
     /// Turn it off in a few seconds unless activate() comes first. A longer
     /// @p graceMs holds it for a stream that is coming back (its worker
     /// crashed, and the page starts it again); a pending longer grace is never
@@ -155,6 +171,7 @@ private:
         bool hdr = false;
         bool exclusive = false; ///< VirtualDisplay::Request::exclusive
         Callback cb;
+        QString devicePath; ///< VirtualDisplay::Request::keepDevicePath
     };
 
     void activateAs(VirtualDisplay::Asker asker, int width, int height, int refreshMilliHz,
@@ -163,7 +180,7 @@ private:
     /// is gone (VirtualDisplay::othersComeBack).
     bool othersDueBack() const;
     void enqueue(VirtualDisplay::Request::Action action, int width, int height, int refreshMilliHz,
-                 bool hdr, bool exclusive, Callback cb);
+                 bool hdr, bool exclusive, Callback cb, const QString& devicePath = QString());
     void startNext();
     void setState(State s);
     void fail(const QString& error);

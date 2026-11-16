@@ -674,19 +674,21 @@ public:
 
     // Stored as JSON bool "virtual_display_exclusive", DEFAULT false, set from
     // the admin page (Windows, the virtual display installed): the admin
-    // ALLOWS streams to turn every other display off while they run on ours;
-    // each viewer then chooses it in the browser's streaming settings (issue
-    // #39, VirtualDisplay::ownerWantsOthersOff). Read as each activation
-    // starts.
+    // ALLOWS an owner's stream of one of this PC's displays (ours or a real
+    // one) to turn every other display off while it runs; each viewer may
+    // turn it off in the browser's streaming settings (issue #39,
+    // VirtualDisplay::ownerWantsOthersOff). Read as each stream starts.
     bool virtualDisplayExclusive() const;
-    // Also writes "virtual_display_exclusive_inherited" false: once the admin
-    // has changed the box, a browser that never chose starts unticked.
+    // Also drops "virtual_display_exclusive_inherited", left by an older
+    // server.
     void setVirtualDisplayExclusive(bool enabled);
 
-    // What a browser that never chose gets. Stored as JSON bool
-    // "virtual_display_exclusive_inherited"; absent, it is the admin's box
-    // itself: a PC updated with the box ticked (when the box alone decided)
-    // keeps its other displays going off until each viewer chooses.
+    // What a browser that never chose gets: the admin's box itself, allowed
+    // meaning on (VDEXDEF, 16/11/2026). A browser's own choice rides its
+    // launch and is never stored here. The old
+    // "virtual_display_exclusive_inherited" key, written false by an older
+    // server on every change of the box and never chosen by anyone, is
+    // ignored.
     bool virtualDisplayExclusiveInherited() const;
 
     // Stored as JSON string "virtual_display_gpu", DEFAULT "" (the driver's

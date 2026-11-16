@@ -68,6 +68,8 @@ QString toString(Request::Action action)
     case Request::Action::Activate: return QStringLiteral("activate");
     case Request::Action::Deactivate: return QStringLiteral("deactivate");
     case Request::Action::OthersBack: return QStringLiteral("others_back");
+    case Request::Action::KeepOnly: return QStringLiteral("keep_only");
+    case Request::Action::RestoreLayout: return QStringLiteral("restore_layout");
     }
     return QString();
 }
@@ -86,7 +88,8 @@ std::optional<Request> parseRequest(const QByteArray& json, QString* error)
     bool known = false;
     for (const Request::Action a :
          {Request::Action::Install, Request::Action::Uninstall, Request::Action::Activate,
-          Request::Action::Deactivate, Request::Action::OthersBack}) {
+          Request::Action::Deactivate, Request::Action::OthersBack, Request::Action::KeepOnly,
+          Request::Action::RestoreLayout}) {
         if (action == toString(a)) {
             req.action = a;
             known = true;
@@ -151,6 +154,22 @@ std::optional<Request> parseRequest(const QByteArray& json, QString* error)
         return std::nullopt;
     }
     req.benchSecondary = req.action == Request::Action::Activate && benchSecondary.toBool(false);
+    if (req.action == Request::Action::KeepOnly) {
+        // The display to keep and who asks: both required, both strict. An
+        // elevated process turns every other display off on this word.
+        const QJsonValue path = obj.value(QLatin1String("device_path"));
+        if (!path.isString() || !validDevicePath(path.toString())) {
+            if (error) *error = QStringLiteral("device_path is not a display key");
+            return std::nullopt;
+        }
+        req.keepDevicePath = path.toString();
+        const QJsonValue server = obj.value(QLatin1String("server"));
+        if (!server.isString() || !parseServerId(server.toString())) {
+            if (error) *error = QStringLiteral("server is not pid:creation time");
+            return std::nullopt;
+        }
+        req.server = server.toString();
+    }
     return req;
 }
 
@@ -175,6 +194,60 @@ QString exchangeDirRefusal(const QString& asked, const QString& own, bool privil
     if (!privileged || a.compare(o, Qt::CaseInsensitive) == 0) return QString();
     return QStringLiteral("%1 is not this helper's directory (%2)")
         .arg(QDir::toNativeSeparators(a), QDir::toNativeSeparators(o));
+}
+
+bool validDevicePath(const QString& path)
+{
+    if (path.isEmpty() || path.size() > 512) return false;
+    for (const QChar c : path)
+        if (c.category() == QChar::Other_Control) return false;
+    return true;
+}
+
+bool devicePathAmong(const QString& path, const QStringList& active)
+{
+    if (!validDevicePath(path)) return false;
+    for (const QString& a : active)
+        if (a == path) return true;
+    return false;
+}
+
+std::optional<std::pair<quint64, quint64>> parseServerId(const QString& server)
+{
+    static const QRegularExpression re(QStringLiteral("^([0-9]{1,10}):([0-9]{1,20})$"));
+    const QRegularExpressionMatch m = re.match(server);
+    if (!m.hasMatch()) return std::nullopt;
+    bool okPid = false, okTime = false;
+    const quint64 pid = m.captured(1).toULongLong(&okPid);
+    const quint64 created = m.captured(2).toULongLong(&okTime);
+    if (!okPid || !okTime || pid == 0 || pid > 0xFFFFFFFFull) return std::nullopt;
+    return std::make_pair(pid, created);
+}
+
+QByteArray othersOffMarker(const QString& kept)
+{
+    if (kept == keptOurs()) return keptOurs().toUtf8();
+    return QByteArrayLiteral("display:") + kept.toUtf8();
+}
+
+std::optional<QString> parseOthersOffMarker(const QByteArray& content)
+{
+    if (content.isEmpty() || content == keptOurs().toUtf8()) return keptOurs();
+    static const QByteArray prefix = QByteArrayLiteral("display:");
+    if (!content.startsWith(prefix) || content.size() > prefix.size() + 512 * 4)
+        return std::nullopt;
+    const QByteArray rest = content.mid(prefix.size());
+    const QString path = QString::fromUtf8(rest);
+    // Strict: what comes back as UTF-8 is what was read, nothing replaced.
+    if (path.toUtf8() != rest || !validDevicePath(path)) return std::nullopt;
+    return path;
+}
+
+KeepStep keepStep(bool markerPresent, const std::optional<QString>& marker, const QString& path)
+{
+    if (!markerPresent) return KeepStep::Apply;
+    if (marker && *marker == path) return KeepStep::Already;
+    return KeepStep::Refuse;
 }
 
 QString gpuOfSettings(const QString& xml)
@@ -204,6 +277,23 @@ QList<int> darkDisplays(const QList<int>& lit, const QList<int>& listed, bool ot
     for (int id : lit)
         if (!listed.contains(id) && !dark.contains(id)) dark.append(id);
     return dark;
+}
+
+bool screenOthersGoOff(Asker asker, bool optionOn, bool otherStream)
+{
+    return asker == Asker::Owner && optionOn && !otherStream;
+}
+
+bool screenOthersComeBack(bool offForScreen, bool keptStreamed)
+{
+    return offForScreen && !keptStreamed;
+}
+
+bool launchBlockedByKeep(const QString& keptKey, const QString& launchKey, bool launchIsOurs)
+{
+    if (keptKey.isEmpty()) return false;
+    if (launchIsOurs) return true;
+    return launchKey != keptKey;
 }
 
 bool othersComeBack(bool ownerOn, bool othersOff)
@@ -276,6 +366,8 @@ QByteArray toJson(const Request& req)
     if (!req.gpu.isEmpty()) obj["gpu"] = req.gpu;
     if (req.benchHdr) obj["bench_hdr"] = true;
     if (req.benchSecondary) obj["bench_secondary"] = true;
+    if (!req.keepDevicePath.isEmpty()) obj["device_path"] = req.keepDevicePath;
+    if (!req.server.isEmpty()) obj["server"] = req.server;
     return QJsonDocument(obj).toJson(QJsonDocument::Compact);
 }
 

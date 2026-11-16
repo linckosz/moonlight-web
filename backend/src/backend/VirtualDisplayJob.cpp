@@ -55,6 +55,20 @@ constexpr int kReleaseGraceMs = 4 * 1000;
 
 using Action = VirtualDisplay::Request::Action;
 
+/// This server as its guard and the helper's KeepOnly name it: "pid:creation
+/// time". Empty off Windows, or when the times cannot be read.
+QString serverId()
+{
+#ifdef Q_OS_WIN
+    FILETIME c{}, e{}, k{}, u{};
+    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u)) return QString();
+    const quint64 created = (quint64(c.dwHighDateTime) << 32) | quint64(c.dwLowDateTime);
+    return QStringLiteral("%1:%2").arg(GetCurrentProcessId()).arg(created);
+#else
+    return QString();
+#endif
+}
+
 const char* stateName(VirtualDisplayJob::State s)
 {
     switch (s) {
@@ -281,6 +295,46 @@ void VirtualDisplayJob::deactivate(Callback cb)
     enqueue(Action::Deactivate, 0, 0, 0, false, false, std::move(cb));
 }
 
+void VirtualDisplayJob::keepOnly(const QString& devicePath, Callback cb)
+{
+    if (!VirtualDisplay::validDevicePath(devicePath)) {
+        if (cb) cb(false, QStringLiteral("not a display key"));
+        return;
+    }
+    enqueue(Action::KeepOnly, 0, 0, 0, false, false, std::move(cb), devicePath);
+}
+
+void VirtualDisplayJob::restoreLayout(Callback cb)
+{
+    enqueue(Action::RestoreLayout, 0, 0, 0, false, false, std::move(cb));
+}
+
+QString VirtualDisplayJob::keptDisplay()
+{
+    QFile f(VirtualDisplay::othersOffPath());
+    if (!QFile::exists(f.fileName())) return QString();
+    if (!mw::place::openShared(f, QIODevice::ReadOnly) || f.size() > 4096) return QString();
+    const auto kept = VirtualDisplay::parseOthersOffMarker(f.read(4096));
+    return kept && *kept != VirtualDisplay::keptOurs() ? *kept : QString();
+}
+
+void VirtualDisplayJob::restoreLeftLayout()
+{
+#ifdef Q_OS_WIN
+    QFile f(VirtualDisplay::othersOffPath());
+    if (!QFile::exists(f.fileName())) return;
+    std::optional<QString> kept;
+    if (mw::place::openShared(f, QIODevice::ReadOnly) && f.size() <= 4096)
+        kept = VirtualDisplay::parseOthersOffMarker(f.read(4096));
+    f.close();
+    // Ours: its own way back runs when its display goes off.
+    if (kept && *kept == VirtualDisplay::keptOurs()) return;
+    Logger::warning(QStringLiteral("[vdisplay] the other displays were left off by a stream "
+                                   "that is gone — bringing them back"));
+    restoreLayout(nullptr);
+#endif
+}
+
 void VirtualDisplayJob::releaseSoon(int graceMs)
 {
     // Linux: it went with the stream's portal session — what was opened on
@@ -295,7 +349,7 @@ void VirtualDisplayJob::releaseSoon(int graceMs)
 }
 
 void VirtualDisplayJob::enqueue(Action action, int width, int height, int refreshMilliHz, bool hdr,
-                                bool exclusive, Callback cb)
+                                bool exclusive, Callback cb, const QString& devicePath)
 {
     // The same verb AND the same mode as the running or last queued
     // operation: join it. A different mode is a different operation, and it
@@ -307,13 +361,13 @@ void VirtualDisplayJob::enqueue(Action action, int width, int height, int refres
         m_AskedBeforeFallback ? *m_AskedBeforeFallback : m_Request;
     if (running() && runningAsked.action == action && runningAsked.width == width &&
         runningAsked.height == height && runningAsked.refreshMilliHz == refreshMilliHz &&
-        runningAsked.hdr == hdr && m_Queue.isEmpty()) {
+        runningAsked.hdr == hdr && runningAsked.keepDevicePath == devicePath && m_Queue.isEmpty()) {
         if (cb) m_Callbacks.append(std::move(cb));
         return;
     }
     if (!m_Queue.isEmpty() && m_Queue.last().action == action && m_Queue.last().width == width &&
         m_Queue.last().height == height && m_Queue.last().refreshMilliHz == refreshMilliHz &&
-        m_Queue.last().hdr == hdr) {
+        m_Queue.last().hdr == hdr && m_Queue.last().devicePath == devicePath) {
         if (cb) {
             Callback prev = m_Queue.last().cb;
             m_Queue.last().cb = [prev, cb](bool ok, const QString& err) {
@@ -323,7 +377,8 @@ void VirtualDisplayJob::enqueue(Action action, int width, int height, int refres
         }
         return;
     }
-    m_Queue.append(Pending{action, width, height, refreshMilliHz, hdr, exclusive, std::move(cb)});
+    m_Queue.append(
+        Pending{action, width, height, refreshMilliHz, hdr, exclusive, std::move(cb), devicePath});
     if (!running()) startNext();
 }
 
@@ -346,6 +401,10 @@ void VirtualDisplayJob::startNext()
     m_Request.benchSecondary = next.action == Action::Activate &&
                                qEnvironmentVariableIntValue("MW_BENCH_VD_SECONDARY") == 1;
     m_Request.exclusive = next.exclusive;
+    if (next.action == Action::KeepOnly) {
+        m_Request.keepDevicePath = next.devicePath;
+        m_Request.server = serverId();
+    }
     // The GPU the owner chose on the display's card, read as each activation
     // starts: the next stream follows a change.
     if (next.action == Action::Activate) m_Request.gpu = AppSettings().virtualDisplayGpu();
@@ -462,6 +521,8 @@ void VirtualDisplayJob::succeed(const VirtualDisplay::Result& res)
         m_ActiveRefresh = asked.refreshMilliHz;
         m_ActiveHdr = asked.hdr;
         if (m_Request.exclusive) startGuard();
+    } else if (m_Request.action == Action::KeepOnly) {
+        startGuard();
     } else if (m_Request.action == Action::Deactivate) {
         settings.clearVirtualDisplay();
         m_ActiveWidth = m_ActiveHeight = m_ActiveRefresh = 0;
@@ -477,10 +538,8 @@ void VirtualDisplayJob::startGuard()
     // A service has no desktop to put a layout back on, and its supervisor
     // restarts it; a server in the user's session may simply die.
     if (!qEnvironmentVariableIsEmpty("MW_SERVICE")) return;
-    FILETIME c{}, e{}, k{}, u{};
-    if (!GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u)) return;
-    const quint64 created = (quint64(c.dwHighDateTime) << 32) | quint64(c.dwLowDateTime);
-    const QString server = QStringLiteral("%1:%2").arg(GetCurrentProcessId()).arg(created);
+    const QString server = serverId();
+    if (server.isEmpty()) return;
     if (!mw::startDetached(QCoreApplication::applicationFilePath(),
                            {VirtualDisplay::guardArgument(), server}))
         Logger::warning(QStringLiteral("[vdisplay] the guard of the other displays did not start"));
@@ -522,7 +581,9 @@ void VirtualDisplayJob::dispatch()
                 m_NextStages = {QStringLiteral("snapshot"), QStringLiteral("driver"),
                                 QStringLiteral("mode")};
                 break;
-            case Action::OthersBack: m_NextStages = {QStringLiteral("mode")}; break;
+            case Action::OthersBack:
+            case Action::KeepOnly:
+            case Action::RestoreLayout: m_NextStages = {QStringLiteral("mode")}; break;
             case Action::Deactivate:
                 m_NextStages = {QStringLiteral("mode"), QStringLiteral("driver")};
                 break;

@@ -1323,16 +1323,19 @@ void AppSettings::setVirtualDisplayExclusive(bool enabled)
 {
     QJsonObject obj = readAll();
     obj["virtual_display_exclusive"] = enabled;
-    obj["virtual_display_exclusive_inherited"] = false;
+    // Left by an older server, which wrote it false on every change of the
+    // box: no longer read (virtualDisplayExclusiveInherited).
+    obj.remove("virtual_display_exclusive_inherited");
     writeAll(obj);
 }
 
 bool AppSettings::virtualDisplayExclusiveInherited() const
 {
-    QJsonObject obj = readAll();
-    const QJsonValue inherited = obj.value("virtual_display_exclusive_inherited");
-    return inherited.isBool() ? inherited.toBool()
-                              : obj.value("virtual_display_exclusive").toBool(false);
+    // The admin's box itself: allowed means on for every browser that never
+    // chose (VDEXDEF, 16/11/2026). Whatever an older server stored under
+    // "virtual_display_exclusive_inherited" was written by that server on its
+    // own, never chosen by anyone, and is ignored.
+    return virtualDisplayExclusive();
 }
 
 QString AppSettings::virtualDisplayGpu() const

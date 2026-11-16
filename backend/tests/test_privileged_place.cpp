@@ -827,6 +827,34 @@ void run_windows(const QString& tmp, const QString& me)
         CHECK(QDir().rename(shared, tmp + QStringLiteral("/shared-moved")));
         CHECK(QDir().rename(tmp + QStringLiteral("/shared-moved"), shared));
 
+        // The display helper's own files, through the calls it makes
+        // (openShared/removeShared, VirtualDisplayApply): a junction in place
+        // of its directory, a symbolic link in place of its saved layout —
+        // refused, and nothing is written where they lead (VDEXCLALL, V7).
+        {
+            const QString elsewhereVd = tmp + QStringLiteral("/vd-elsewhere");
+            CHECK(QDir().mkpath(elsewhereVd));
+            const QString vdJunction = tmp + QStringLiteral("/vdisplay-j");
+            CHECK(makeJunction(vdJunction, elsewhereVd));
+            QFile marker(vdJunction + QStringLiteral("/others-off"));
+            CHECK(!openShared(marker, QIODevice::WriteOnly));
+            CHECK(!QFileInfo::exists(elsewhereVd + QStringLiteral("/others-off")));
+
+            const QString vd = tmp + QStringLiteral("/vdisplay");
+            CHECK(QDir().mkpath(vd));
+            if (makeSymlink(vd + QStringLiteral("/topology.bin"), witness)) {
+                QFile topo(vd + QStringLiteral("/topology.bin"));
+                CHECK(!openShared(topo, QIODevice::WriteOnly));
+                CHECK(!openShared(topo, QIODevice::ReadOnly));
+                CHECK(removeShared(vd + QStringLiteral("/topology.bin")));
+                CHECK_EQ(readFile(witness), kept);
+                CHECK_EQ(QFileInfo(witness).size(), qint64(kept.size()));
+            } else {
+                std::fprintf(stderr, "  (no right to make a symbolic link here: the display "
+                                     "helper's check is skipped)\n");
+            }
+        }
+
         // A junction for the directory, and a directory reached through one.
         const QString link = tmp + QStringLiteral("/shared-link");
         CHECK(makeJunction(link, shared));
