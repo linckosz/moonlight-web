@@ -10,7 +10,7 @@ import { StreamView } from '../js/ui/StreamView.js';
  * VERTFIX: iPadOS takes the top and bottom edges (the notification centre,
  * the home bar), so the pointer never rests on them. In full screen only, a
  * band before them turns the camera up or down once the pointer has rested
- * there (SR's V1-V7).
+ * there (V1-V7).
  */
 let now = 0;
 let frames = [];

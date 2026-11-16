@@ -9647,7 +9647,7 @@ export class StreamView {
                 // longer follows the local one: a look mode, not for menus —
                 // so only while the host hides its pointer (_lookFreeByDeltas).
                 // While the vertical turn sends, the hand's small dy does
-                // not: never both on one axis (V3, SR). A larger one stops
+                // not: never both on one axis (V3). A larger one stops
                 // the turn (_edgeTurnMove) and goes out as it is.
                 const dy =
                     this._edgeTurnVertActive() &&
@@ -10400,7 +10400,7 @@ export class StreamView {
     static EDGE_TURN_BAND_PX = 48;
     /** How long the pointer rests in that band before the vertical turn starts. */
     static EDGE_TURN_REST_MS = 200;
-    /** A move larger than this, on either axis, is the hand's own (V3, SR). */
+    /** A move larger than this, on either axis, is the hand's own (V3). */
     static EDGE_TURN_REAL_PX = 2;
     /** The vertical turn's cap without a real move (VERTCAP, Bruno 16/11/2026). */
     static EDGE_TURN_VERT_MAX_MS = 3000;
@@ -10449,7 +10449,7 @@ export class StreamView {
             turn.lastEventMs = now;
             return;
         }
-        // On a side edge, a vertical turn or its rest gives way (V5, SR).
+        // On a side edge, a vertical turn or its rest gives way (V5).
         this._stopEdgeTurn();
         if (this._edgeTurnCapped || !this._edgeTurnMayRun()) return;
         let sum = 0;
@@ -10486,7 +10486,7 @@ export class StreamView {
     }
 
     /**
-     * The vertical turn (VERTFIX = A, SR's V1-V7). Armed only in full screen,
+     * The vertical turn (VERTFIX = A, V1-V7). Armed only in full screen,
      * by a pointer that came into the band before the top or bottom edge
      * moving towards that edge (V4) — a pointer that slides into it sideways
      * arms nothing. Once the pointer has rested there for EDGE_TURN_REST_MS,
@@ -10541,7 +10541,7 @@ export class StreamView {
             if (!real) return;
             // The hand's own move (V3): towards the edge, the turn rests
             // again, armed; any other — aiming sideways in the band — and it
-            // is disarmed until the next move towards the edge (R1, SR).
+            // is disarmed until the next move towards the edge (R1).
             if (!towards) {
                 stopY();
                 return;
@@ -10573,7 +10573,7 @@ export class StreamView {
 
     /**
      * Whether the turn may send now: what a real lock-free move needs, read
-     * again at every frame (E1, SR) — a guest whose mouse is taken back mid-
+     * again at every frame (E1) — a guest whose mouse is taken back mid-
      * turn, a mode toggled, the lock granted, the tab hidden all stop it.
      */
     _edgeTurnMayRun() {
