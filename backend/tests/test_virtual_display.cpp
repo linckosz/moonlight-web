@@ -20,6 +20,8 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 
@@ -997,6 +999,43 @@ void run_virtual_display_tests()
         for (const bool choice : {false, true})
             for (const bool inherited : {false, true})
                 CHECK(!ownerWantsOthersOff(false, has, choice, inherited));
+
+    SECTION("VirtualDisplay — the viewer's choice, read from a /start's body");
+    // A boolean only. Absent, null, a string or the number 1: no choice.
+    CHECK(!othersOffChoice(QJsonObject{}).has_value());
+    CHECK(othersOffChoice(QJsonObject{{"others_off", true}}) == std::optional<bool>(true));
+    CHECK(othersOffChoice(QJsonObject{{"others_off", false}}) == std::optional<bool>(false));
+    CHECK(!othersOffChoice(QJsonObject{{"others_off", QJsonValue::Null}}).has_value());
+    CHECK(!othersOffChoice(QJsonObject{{"others_off", "true"}}).has_value());
+    CHECK(!othersOffChoice(QJsonObject{{"others_off", 1}}).has_value());
+    {
+        // Read, never changed: no key added where there was none.
+        const QJsonObject body{{"appId", 4}};
+        const QJsonObject before = body;
+        othersOffChoice(body);
+        ownerWantsOthersOff(true, body, true);
+        CHECK(body == before);
+        CHECK(!body.contains("others_off"));
+    }
+    // The server's question for a launch, as a browser that never chose sends
+    // it: the PC's default, on wherever the admin allows it (VDEXDEF). Before
+    // this, the key was added on the way and read back as "no".
+    {
+        const QJsonObject never{{"appId", 4}, {"stream_fps", 60}};
+        CHECK(ownerWantsOthersOff(true, never, true));
+        CHECK(!ownerWantsOthersOff(true, never, false));
+        CHECK(!ownerWantsOthersOff(false, never, true));
+        QJsonObject chose = never;
+        chose.insert("others_off", false);
+        CHECK(!ownerWantsOthersOff(true, chose, true));
+        chose.insert("others_off", true);
+        CHECK(ownerWantsOthersOff(true, chose, false));
+        CHECK(!ownerWantsOthersOff(false, chose, true));
+        // A value of another type is no choice: the default again.
+        chose.insert("others_off", 1);
+        CHECK(ownerWantsOthersOff(true, chose, true));
+        CHECK(!ownerWantsOthersOff(true, chose, false));
+    }
 
     SECTION("VirtualDisplay — the cards of the displays a stream turned off");
     CHECK(darkDisplays({1, 2, 3}, {1}, true) == QList<int>({2, 3}));

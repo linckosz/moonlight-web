@@ -4299,7 +4299,9 @@ int main(int argc, char* argv[])
         }
 
         QJsonDocument doc = QJsonDocument::fromJson(req.body);
-        QJsonObject body = doc.object();
+        // Read, never changed: a non-const operator[] would add a key that is
+        // absent, and the next contains() would see a choice nobody made.
+        const QJsonObject body = doc.object();
 
         // A TV on plain HTTP (issue #42, server/LanHttp.h). Its token is its
         // slot's session from here on: what a revocation cuts and what its
@@ -6239,8 +6241,8 @@ int main(int argc, char* argv[])
             const bool vdOthersOff = [&body]() {
                 AppSettings settings;
                 return VirtualDisplay::ownerWantsOthersOff(
-                    settings.virtualDisplayExclusive(), body.contains("others_off"),
-                    body["others_off"].toBool(false), settings.virtualDisplayExclusiveInherited());
+                    settings.virtualDisplayExclusive(), body,
+                    settings.virtualDisplayExclusiveInherited());
             }();
             // Its refresh rate, on Windows, is 240 Hz whatever the stream's
             // (decision A of plan framerate-hote, 30/09/2026), or a whole
@@ -6372,6 +6374,20 @@ int main(int argc, char* argv[])
                 };
             }
 #ifdef Q_OS_WIN
+            if (host->backendType == NativeHostBackend::typeName() &&
+                !NativeHostBackend::usesVirtualDisplay(appId)) {
+                // Why the other displays go off or stay on, said once per
+                // launch: a stream that leaves them on says nothing otherwise.
+                const std::optional<bool> said = VirtualDisplay::othersOffChoice(body);
+                const QString choice = !said   ? QStringLiteral("none")
+                                       : *said ? QStringLiteral("on")
+                                               : QStringLiteral("off");
+                qInfo().noquote() << "[Session] the other displays: app" << appId << "screen"
+                                  << (launchScreenKey.isEmpty() ? QStringLiteral("unknown")
+                                                                : QStringLiteral("known"))
+                                  << "choice" << choice << "wanted" << vdOthersOff << "standby"
+                                  << standby;
+            }
             // One of the PC's real displays, the owner's: the other displays
             // off while it streams, when the admin allows it and this browser
             // has not said no — and no other stream runs or is launching,

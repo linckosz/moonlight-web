@@ -551,6 +551,14 @@ bool othersGoOff(Asker asker, bool optionOn, bool guestOn, bool othersOff);
 /// the admin's box itself, so on wherever it is allowed (VDEXDEF, 16/11/2026).
 bool ownerWantsOthersOff(bool allowed, bool hasChoice, bool choice, bool inherited);
 
+/// The viewer's own choice in a /start's body ("others_off"): a boolean only.
+/// Absent, null or of any other type (the number 1 too), no choice: the PC's
+/// default applies. Read with value(), so the body is never changed.
+std::optional<bool> othersOffChoice(const QJsonObject& body);
+
+/// ownerWantsOthersOff() for a /start's @p body: what the server asks.
+bool ownerWantsOthersOff(bool allowed, const QJsonObject& body, bool inherited);
+
 /// The display cards drawn dark on the native host's card: with the other
 /// displays off (@p othersOff), the ones last seen lit (@p lit, in their
 /// order) that the PC no longer lists (@p listed). Windows detaches them, so

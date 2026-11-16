@@ -22,6 +22,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QJsonValue>
 #include <QRegularExpression>
 #include <QXmlStreamReader>
 
@@ -268,6 +269,19 @@ bool othersGoOff(Asker asker, bool optionOn, bool guestOn, bool othersOff)
 bool ownerWantsOthersOff(bool allowed, bool hasChoice, bool choice, bool inherited)
 {
     return allowed && (hasChoice ? choice : inherited);
+}
+
+std::optional<bool> othersOffChoice(const QJsonObject& body)
+{
+    const QJsonValue value = body.value(QLatin1String("others_off"));
+    if (!value.isBool()) return std::nullopt;
+    return value.toBool();
+}
+
+bool ownerWantsOthersOff(bool allowed, const QJsonObject& body, bool inherited)
+{
+    const std::optional<bool> choice = othersOffChoice(body);
+    return ownerWantsOthersOff(allowed, choice.has_value(), choice.value_or(false), inherited);
 }
 
 QList<int> darkDisplays(const QList<int>& lit, const QList<int>& listed, bool othersOff)
