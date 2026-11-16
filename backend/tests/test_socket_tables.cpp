@@ -155,4 +155,41 @@ void run_socket_tables_tests()
     CHECK(mw::sockettables::listens(1, false) != Listens::Unknown);
     CHECK(mw::sockettables::listens(1, true) != Listens::Unknown);
 #endif
+
+    SECTION("SocketTables: another MoonlightWeb server on this machine");
+    {
+        using mw::sockettables::otherServerAmong;
+        using mw::sockettables::Process;
+        using mw::sockettables::serverName;
+        // The editions' program names, exactly: in any case under Windows only
+        CHECK(serverName("MoonlightWeb.exe", true) && serverName("MoonlightWebDev.exe", true));
+        CHECK(serverName("moonlightweb.EXE", true) && serverName("MOONLIGHTWEBDEV.exe", true));
+        CHECK(serverName("MoonlightWeb", false) && serverName("MoonlightWebDev", false));
+        CHECK(!serverName("moonlightweb", false) && !serverName("MoonlightWeb.exe", false));
+        for (const char* other :
+             {"", "MoonlightWeb", "MoonlightWebDev", "MoonlightWeb2.exe", "MoonlightWebDevX.exe",
+              "moonlightweb-launch", "MoonlightWeb.exe ", "Moonlight.exe", "Sunshine.exe"})
+            CHECK(!serverName(other, true));
+        CHECK(!serverName("MoonlightWebDevX", false) && !serverName("moonlightweb-launch", false));
+
+        const QList<Process> some{{4, "System"}, {900, "svchost.exe"}, {1200, "MoonlightWeb.exe"}};
+        // This process is not another server
+        CHECK(otherServerAmong(some, 1200, true, true) == Listens::No);
+        CHECK(otherServerAmong(some, 77, true, true) == Listens::Yes);
+        CHECK(otherServerAmong({{5, "MoonlightWebDev.exe"}}, 77, true, true) == Listens::Yes);
+        CHECK(otherServerAmong({}, 77, true, true) == Listens::No);
+        // A list that may lack some says nothing, short of a server it does list
+        CHECK(otherServerAmong({{4, "System"}}, 77, true, false) == Listens::Unknown);
+        CHECK(otherServerAmong(some, 77, true, false) == Listens::Yes);
+        // Elsewhere, the names as the kernel gives them
+        CHECK(otherServerAmong({{12, "MoonlightWeb"}}, 77, false, true) == Listens::Yes);
+        CHECK(otherServerAmong({{12, "MoonlightWeb.exe"}}, 77, false, true) == Listens::No);
+        // This system's own answer is one of the three, and Unknown where
+        // nothing is read
+        const Listens here = mw::sockettables::otherServer();
+        CHECK(here == Listens::No || here == Listens::Yes || here == Listens::Unknown);
+#if !defined(_WIN32) && !defined(__linux__)
+        CHECK(here == Listens::Unknown);
+#endif
+    }
 }

@@ -96,6 +96,10 @@ bool dottedIpv4(const QString& text);
 /// within the lists its kind draws from (RouterPortPools.h), and fit what the
 /// line says it is for. A line that is not is never acted on, so a record
 /// altered by hand leads nowhere outside this host's own numbers.
+///
+/// A DEV identity's also include what it wrote when it bound the installed
+/// host's block and drew from its pool: a slot's hole to that block, and (with
+/// a tag) its shared port at the top of it. Those are only ever taken back.
 bool allowed(bool devInstance, const Hole& hole);
 
 /// A port no MoonlightWeb ever asks a router for: between the installed

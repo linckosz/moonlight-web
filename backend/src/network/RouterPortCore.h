@@ -111,6 +111,10 @@ public:
         uint16_t internal = 0;
         /// Whether the TCP mapping alongside the UDP one was accepted.
         bool tcp = false;
+        /// The description the router showed of the entry once it was
+        /// written: its own words, for a router that puts its own. Empty when
+        /// it showed nothing. Not part of what a claim is.
+        QString text;
 
         bool operator==(const Claim& o) const
         {
@@ -131,6 +135,11 @@ public:
         Refused,
         /// The write was accepted, yet the table still points elsewhere.
         KeptElsewhere,
+        /// The router forwards it to this machine, under a description that is
+        /// not this installation's: another edition's, or another
+        /// installation's, on this machine. Never its address nor its tag in
+        /// the log.
+        OtherInstallation,
     };
 
     struct Skipped
@@ -209,6 +218,9 @@ public:
     {
         Claim claim;
         QString owner;
+        /// At this machine's address still, but another installation's entry
+        /// by its description: another edition on this machine wrote it.
+        bool here = false;
     };
 
     /// `localBindProbe(port)`: whether this machine can listen there right
@@ -240,13 +252,15 @@ public:
     static Request muxRequest(bool devInstance, int which, const QList<uint16_t>& remembered);
 
     /// Whether `port` may be the router-side number of a stream slot's own
-    /// hole: one of the stream block, or of the media pool.
-    static bool mediaPortAllowed(uint16_t port);
+    /// hole for this kind of instance: one of its stream block, or of its
+    /// media pool (RouterPortPools.h).
+    static bool mediaPortAllowed(bool devInstance, uint16_t port);
 
     /// The request for a stream slot's own port, `internalPort`: the number
     /// the slot had on the router last time (`remembered`, 0 for none, left
-    /// out when it is no number a slot's hole may have), then the port's own
-    /// number, then the media pool. With the mux in use, no router-side
+    /// out when it is no number a slot's hole may have for this kind of
+    /// instance), then the port's own number, then the instance's media
+    /// pool. With the mux in use, no router-side
     /// number is taken from the mux's stretch of the block: those are the
     /// mux's, whenever it comes to ask for them. And a port the mux itself is
     /// bound to (`muxHoldsPort`) gets no hole at all: the hole would lead to
@@ -255,7 +269,8 @@ public:
                                 uint16_t remembered, bool muxHoldsPort);
 
     /// The address this host had when its remembered ports were obtained.
-    /// An entry the router still points there is ours to overwrite.
+    /// An entry the router still points there, under this installation's
+    /// tag, is ours to overwrite.
     void setPreviousLanAddress(const QString& ip) { m_PreviousLan = ip; }
 
     /// The record of what this host writes (RouterHoles.h): every entry is
@@ -272,18 +287,38 @@ public:
         m_Listens = std::move(listens);
     }
 
+    /// Whether another MoonlightWeb server runs on this machine
+    /// (SocketTables.h): Yes, No, or Unknown when the system does not say.
+    /// Asked before an untagged stream slot entry is taken back or taken
+    /// over. Unset, nothing is known, and no such entry is.
+    void setOtherServer(std::function<mw::sockettables::Listens()> otherServer)
+    {
+        m_OtherServer = std::move(otherServer);
+    }
+
+    /// Whether this core walks a DEV identity's ports (PortIdentity.h). A DEV
+    /// identity never takes over an untagged stream slot entry.
+    void setDevInstance(bool devInstance) { m_DevInstance = devInstance; }
+
     /// One port, from the first candidate the router lets this host have.
-    /// Candidates already held by this core are passed over silently.
+    /// Candidates already held by this core are passed over silently. An
+    /// entry the router already has for a candidate is taken over only when
+    /// it is this installation's: at this host's address (or the one it had
+    /// before a renumbering) and under a description with this record's tag,
+    /// or, for an entry of a version that put no tag, under the rule of
+    /// earlierOurs(). Anyone else's is passed over, and left as it is.
     Result claim(const Request& request);
 
-    /// Re-add every held mapping, then read each back. Returns the ones the
-    /// table now aims elsewhere — those are dropped from the held list, since
-    /// a hole that leads to another machine is worse than none, and their
-    /// TCP entry is taken off when it is still this host's. One still
-    /// running down its old lease after the write is removed and added
-    /// afresh: some routers answer a re-add without renewing anything. Also
-    /// drives the lease latch: two consecutive renewal failures switch to
-    /// permanent mappings and re-add once more.
+    /// Re-add every held mapping, then read each back. Each is read first:
+    /// one the router now aims at another machine, or shows at this host's
+    /// address as another installation's, is not written over. Returns those
+    /// — they are dropped from the held list, since a hole that leads
+    /// elsewhere is worse than none, and their TCP entry is taken off when it
+    /// is still this host's. One still running down its old lease after the
+    /// write is removed and added afresh: some routers answer a re-add
+    /// without renewing anything. Also drives the lease latch: two
+    /// consecutive renewal failures switch to permanent mappings and re-add
+    /// once more.
     QList<Lost> renew();
 
     /// The same for one held mapping, now: a stream or a browser about to be
@@ -292,7 +327,10 @@ public:
     /// Nothing for a port this core does not hold.
     QList<Lost> renew(uint16_t externalPort);
 
-    /// Remove one held mapping (UDP, and TCP if it was accepted).
+    /// Remove one held mapping (UDP, and TCP if it was accepted), each only
+    /// while the router shows it as this host's entry: one that is another
+    /// machine's or another installation's by now is left, and so said. A
+    /// router that does not say is asked to remove it as before.
     void release(const Claim& claim);
     void releaseAll();
 
@@ -309,9 +347,10 @@ public:
     /// The process is quitting: from now on nothing is written to the router
     /// (claim(), renew() and sweep() give nothing), then every held mapping
     /// is taken off, the streams' shared ports first, then the tunnel's, then
-    /// the slots'. No call to the router is begun once @p expired says true;
-    /// one under way is not cut. Removals the router does not acknowledge
-    /// stay in the record, as with release().
+    /// the slots', each only while the router shows it as this host's, as
+    /// with release(). No call to the router is begun once @p expired says
+    /// true; one under way is not cut. Removals the router does not
+    /// acknowledge stay in the record.
     Released releaseBeforeExit(const std::function<bool()>& expired);
 
     /// No more writes to the router (releaseBeforeExit() begins with it).
@@ -340,8 +379,9 @@ public:
         HeldAgain,
         /// Of a version that kept no record, and something on this machine
         /// listens on the port it leads to, or the system does not say
-        /// whether anything does: left as it is, judged again at the next
-        /// start.
+        /// whether anything does; for a stream slot's, or another
+        /// MoonlightWeb server runs here, or the system does not say: left as
+        /// it is, judged again at the next start.
         InUse,
     };
 
@@ -349,7 +389,9 @@ public:
     {
         Swept outcome = Swept::Unknown;
         /// NotOurs: "address", "internal port" or "description". InUse:
-        /// "listened", or "unknown" when the system does not say.
+        /// "listened", or "unknown" when the system does not say; "server"
+        /// when another MoonlightWeb server runs here, or "server unknown"
+        /// when the system does not say whether one does.
         QString detail;
     };
 
@@ -370,8 +412,11 @@ public:
     /// was noted under; its internal port is the noted one; its description
     /// is the noted one to the letter, this installation's tag included. For
     /// a line of a version that put no tag, also: nothing on this machine
-    /// listens on that internal port. The removal is read back. Whatever
-    /// else the router says, nothing is removed.
+    /// listens on that internal port; and, for a stream slot's, no other
+    /// MoonlightWeb server runs on this machine (asked first, and again just
+    /// before the removal), since every edition up to 0.4.3 wrote those
+    /// words to those ports. The removal is read back. Whatever else the
+    /// router says, nothing is removed.
     SweepResult sweep(const mw::routerholes::Hole& hole);
 
     QList<Claim> held() const { return m_Held; }
@@ -391,13 +436,47 @@ private:
     };
 
     bool tryOne(uint16_t external, const Request& request, Result& result);
-    /// Empty when the router has no entry, or cannot say.
-    QString ownerOf(uint16_t external);
-    /// Whether the TCP entry of `external` may be written or removed: none, one
-    /// this host holds (or held before a DHCP renumbering), or a router that
-    /// cannot say. A neighbour's TCP forward on the same number is not ours,
-    /// whoever holds the UDP one. `seen` gets the entry, when there is one.
-    bool tcpWritable(uint16_t external, IUpnpGateway::Entry* seen = nullptr);
+
+    /// Whose the router's entry of one number and protocol is.
+    enum class Whose
+    {
+        /// None, or a router that does not say: nothing to leave alone.
+        Free,
+        /// This host's: one it may write over, or take off.
+        Ours,
+        /// Another machine's: `shown.client` says whose.
+        Foreign,
+        /// At this host's address, another installation's by its description.
+        Other,
+    };
+    /// What the router shows of `external` in that protocol, and whose it is.
+    /// For a held claim (`held`): at this host's address, to the port it
+    /// binds, and under no other installation's words (its own text, the
+    /// words the router showed at the claim, or words that are not a
+    /// MoonlightWeb's at all). For a candidate (`held` null): at this host's
+    /// address, or the one it had before a renumbering, under this record's
+    /// tag; or an entry of a version that put no tag, under earlierOurs().
+    /// `shown` gets the entry when there is one.
+    Whose judge(uint16_t external, bool tcp, const Claim* held, IUpnpGateway::Entry& shown);
+    /// The same of an entry the router showed (Found, with a client).
+    Whose whoseIs(const IUpnpGateway::Entry& shown, uint16_t external, bool tcp, const Claim* held);
+    /// Whether a description is one a MoonlightWeb writes, describe() of a
+    /// kind, a slot, and no tag or a tag; `tag` gets the tag.
+    static bool moonlightText(const QString& description, QString* tag);
+    /// Whether a description is one this installation writes: a
+    /// MoonlightWeb's, with this record's tag. Never so without a record.
+    bool taggedOurs(const QString& description) const;
+    /// Whether an entry of a version that put no tag, at this host's address,
+    /// is this installation's own to take over: the record holds that very
+    /// line as one of an earlier version (`old`), noted under this address;
+    /// the router shows it to the noted port under that version's words; and
+    /// nothing on this machine listens on that port in that protocol. For a
+    /// stream slot's, also: no other MoonlightWeb server runs here, and this
+    /// is the installed host's identity, the only one that binds that block
+    /// now.
+    bool earlierOurs(uint16_t external, bool tcp, const IUpnpGateway::Entry& shown);
+    /// Whether another MoonlightWeb server runs here, as setOtherServer() says.
+    mw::sockettables::Listens otherServer() const;
     /// Whether an entry read back just after a write still counts down the
     /// lease it had before it: the router took the write and kept the entry.
     bool keptOldLease(int leaseLeft) const;
@@ -420,17 +499,26 @@ private:
     /// more: it is taken off at once, when the router shows it as the entry
     /// this host wrote: at its address, to its port, under its description.
     void dropTcpOf(const Claim& lost);
+    /// Takes one held entry off, when the router shows it as this host's
+    /// (judge()); `left` says it is still there after a removal that was
+    /// asked for. False when nothing was asked of the router: another's
+    /// entry, or one already gone. `expired` is asked before each call.
+    bool takeOff(const Claim& claim, bool tcp, const std::function<bool()>& expired, bool& left);
     /// Whether this core holds the entry of that port in that protocol.
     bool holdsLine(uint16_t external, bool tcp) const;
     /// One renewal of a held mapping: UDP and TCP written, UDP read back into
     /// `owner`, the pair added afresh if the router kept its old lease. False
-    /// when the router refused the UDP write.
-    bool rewrite(const Claim& claim, QString& owner);
+    /// when the router refused the UDP write. Nothing is written when the
+    /// router shows the entry as another machine's (`owner` says whose) or
+    /// another installation's on this one (`here`, `owner` this address).
+    bool rewrite(const Claim& claim, QString& owner, bool& here);
 
     IUpnpGateway& m_Gateway;
     std::function<bool(uint16_t)> m_BindProbe;
     mw::routerholes::IRecord* m_Record = nullptr;
     std::function<mw::sockettables::Listens(uint16_t, bool)> m_Listens;
+    std::function<mw::sockettables::Listens()> m_OtherServer;
+    bool m_DevInstance = false;
     QString m_PreviousLan;
     QList<Claim> m_Held;
     uint32_t m_LeaseSec;

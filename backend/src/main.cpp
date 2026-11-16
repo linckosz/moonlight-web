@@ -1705,11 +1705,10 @@ static void dropUdpRungsWhenBlocked(QStringList& chain, const QJsonObject& body,
 using mw::edition::kDevHttpPort;
 using mw::edition::kDevHttpsPort;
 using mw::edition::kDevSignalingPort;
-// WebRTC media UDP port base (all modes). Each concurrent slot binds a distinct
-// port (base + slot) so simultaneous streams never collide on it; the router
-// forwards an external port to it, claimed per slot by RouterPortAllocator.
-// The packages and the dev firewall rule open base..base+kSlotHardCeiling-1.
-static constexpr quint16 kMediaBasePort = mw::routerports::kMediaBasePort;
+// WebRTC media: each concurrent slot binds a distinct port (its identity's
+// block base + slot, RouterPortPools.h) so simultaneous streams never collide
+// on it; the router forwards an external port to it, claimed per slot by
+// RouterPortAllocator. The packages and the dev firewall rule open the block.
 // Whether the streams share ports in this run (settings.json ice_udp_mux, and
 // the ports could be bound). Set once, as the server starts.
 static bool g_StreamMuxInUse = false;
@@ -2822,7 +2821,7 @@ int main(int argc, char* argv[])
     // them — so a household that streams twice reserves two routes, not the
     // whole plan. What a single host may actually use is a separate, smaller
     // question, answered per backend by concurrentSessionCap().
-    const SlotPortPlan kSlotPlan = planSlotPorts(signalingPort, kMediaBasePort, kSlotHardCeiling);
+    const SlotPortPlan kSlotPlan = planSlotPorts(signalingPort, kSlotHardCeiling);
     const int kMaxSlots = qMax(kTotalSlots, kSlotPlan.maxSlots);
     SessionPool g_Pool(signalingPort, kSlotPlan.extraBase, kTotalSlots, kMaxSlots);
 
@@ -2833,8 +2832,7 @@ int main(int argc, char* argv[])
     // started further down, with the allocator (IceMuxPorts).
     IceMux g_IceMux;
     qInfo() << "[Session] Stream slots: reserved" << kTotalSlots << "max" << kMaxSlots
-            << "— slot 0 signaling" << signalingPort << ", slots 1.. from" << kSlotPlan.extraBase
-            << ", media block from" << kMediaBasePort;
+            << "— slot 0 signaling" << signalingPort << ", slots 1.. from" << kSlotPlan.extraBase;
 
     // ── A booth's stream PINs (booth_stream_pin, issue #68) ───────────────────
     // One PIN per owner stream, kept under a key naming its host, its app and
@@ -3475,6 +3473,12 @@ int main(int argc, char* argv[])
             mw::portidentity::said(mw::portidentity::settle(appSettings.debugDevStandardPorts()));
         !said.isEmpty())
         qWarning().noquote() << "[Ports]" << said;
+    {
+        const quint16 base = mw::routerports::mediaBasePort(mw::portidentity::devPorts());
+        qInfo().noquote() << QStringLiteral("[Ports] Stream block: %1-%2")
+                                 .arg(base)
+                                 .arg(base + mw::routerports::kMediaPortCount - 1);
+    }
 
     InternetAccessManager internetAccess(&appSettings);
     // What dials for the guard of TCP 443 (network/Tcp443Guard): it knows a

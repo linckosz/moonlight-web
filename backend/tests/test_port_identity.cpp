@@ -136,7 +136,9 @@ void run_port_identity_tests()
         CHECK_EQ(
             static_cast<int>(
                 RouterPortCore::muxRequest(refused, RouterPortCore::kMuxBlock, {}).preferred[0]),
-            48573);
+            48597);
+        CHECK_EQ(static_cast<int>(slotMediaPort(0, false, refused)), 48574);
+        CHECK_EQ(static_cast<int>(slotMediaPort(0, true, refused)), 48574);
 
         // Granted: as the installed host, and none of the DEV identity's
         const bool granted = devPortsFor(true, Bench::Granted);

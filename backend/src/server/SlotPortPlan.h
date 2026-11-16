@@ -17,23 +17,27 @@
 
 #pragma once
 
+#include "network/RouterPortPools.h"
+
 #include <QtGlobal>
 
 // Where a slot's two signaling ports live, and how many slots fit.
 //
 // Slot 0 keeps the historical base; slots 1.. take two consecutive ports from a
 // second base, just above slot 0's own ports (base, +1 relay, +2 control) and
-// pushed past every block it would land on: the media block, and the ports the
-// streaming servers sharing the machine listen on. It used to start right
-// after the media block, which production and --dev share: once the block
-// moved above the --dev base, both instances would have started their slots at
-// the same port.
+// pushed past every block it would land on: both editions' media blocks, and
+// the ports the streaming servers sharing the machine listen on. It used to
+// start right after the media block: once the block moved above the --dev
+// base, production and --dev would have started their slots at the same port.
+// Both media blocks, whatever the identity: a stream socket of either edition
+// listens in TCP on its block, on every address, and a signaling port of the
+// other on loopback would stand in its way.
 //
 // The foreign blocks: Sunshine and Apollo's stock ports (47984-48010, RTSP on
 // 48010), and MultiSeat's seats (48100 - 5 onwards, thirty ports a seat, eight
 // seats) with Wolf's video and audio pings (48100, 48200) among them.
-// Production lands at 48011-48058, --dev (48501) past the media block, at
-// 48574-48621.
+// Production lands at 48011-48058, --dev (48501) past the two media blocks, at
+// 48598-48645.
 //
 // Header-only and free of the server, so tests/test_session_pool.cpp checks the
 // plan the server runs with.
@@ -43,16 +47,20 @@ struct SlotPortPlan
     int maxSlots = 0;
 };
 
-inline SlotPortPlan planSlotPorts(quint16 signalingBase, quint16 mediaBase, int ceiling)
+inline SlotPortPlan planSlotPorts(quint16 signalingBase, int ceiling)
 {
     struct Block
     {
         int first, last;
     };
+    using mw::routerports::kDevMediaBasePort;
+    using mw::routerports::kMediaBasePort;
+    using mw::routerports::kMediaPortCount;
     const Block kTaken[] = {
         {47984, 48010},
         {48095, 48399},
-        {mediaBase, mediaBase + ceiling - 1},
+        {kMediaBasePort, kMediaBasePort + kMediaPortCount - 1},
+        {kDevMediaBasePort, kDevMediaBasePort + kMediaPortCount - 1},
     };
     int extra = signalingBase + 4;
     for (bool moved = true; moved;) {

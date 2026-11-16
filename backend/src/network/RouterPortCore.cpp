@@ -48,8 +48,8 @@ constexpr bool inAnyList(int port)
     for (const uint16_t p : kTunnelPreferred)
         if (p == port) return true;
     return (port >= kTunnelPoolBegin && port <= kTunnelPoolEnd) ||
-           (port >= kDevTunnelPoolBegin && port <= kDevTunnelPoolEnd) ||
-           (port >= kMediaPoolBegin && port <= kMediaPoolEnd) || inMediaBlock(port);
+           (port >= kDevTunnelPoolBegin && port <= kDevTunnelPoolEnd) || inMediaPool(false, port) ||
+           inMediaPool(true, port) || inMediaBlock(false, port) || inMediaBlock(true, port);
 }
 // The question whose answer is known is only known if nobody writes there.
 static_assert(!inAnyList(mw::routerholes::kKnownQuestionPort),
@@ -156,17 +156,17 @@ RouterPortCore::Request RouterPortCore::muxRequest(bool devInstance, int which,
     if (which != kMuxBlock) return request;
 
     // Listed rather than given as a pool: a --dev walks its stretch downwards.
-    const int first = kMediaBasePort;
-    const int last = kMediaBasePort + kMediaPortCount - 1;
+    const int first = mediaBasePort(devInstance);
+    const int last = first + kMediaPortCount - 1;
     for (int i = 0; i < kMuxBlockSpan; ++i)
         request.preferred.append(static_cast<uint16_t>(devInstance ? last - i : first + i));
     return request;
 }
 
-bool RouterPortCore::mediaPortAllowed(uint16_t port)
+bool RouterPortCore::mediaPortAllowed(bool devInstance, uint16_t port)
 {
     using namespace mw::routerports;
-    return inMediaBlock(port) || (port >= kMediaPoolBegin && port <= kMediaPoolEnd);
+    return inMediaBlock(devInstance, port) || inMediaPool(devInstance, port);
 }
 
 RouterPortCore::Request RouterPortCore::mediaRequest(bool muxInUse, bool devInstance, int slot,
@@ -179,13 +179,16 @@ RouterPortCore::Request RouterPortCore::mediaRequest(bool muxInUse, bool devInst
     request.slot = slot;
     request.internalPort = internalPort;
     if (muxHoldsPort) return request;
+    // A number of the other identity's block or pool is never asked for: a
+    // DEV that remembers what it had before it had a block of its own
     const auto free = [&](uint16_t port) {
-        return mediaPortAllowed(port) && !(muxInUse && inMuxBlockStretch(devInstance, port));
+        return mediaPortAllowed(devInstance, port) &&
+               !(muxInUse && inMuxBlockStretch(devInstance, port));
     };
     if (free(remembered)) request.remembered.append(remembered);
     if (free(internalPort)) request.preferred.append(internalPort);
-    request.poolBegin = kMediaPoolBegin;
-    request.poolEnd = kMediaPoolEnd;
+    request.poolBegin = devInstance ? kDevMediaPoolBegin : kMediaPoolBegin;
+    request.poolEnd = devInstance ? kDevMediaPoolEnd : kMediaPoolEnd;
     return request;
 }
 
@@ -203,21 +206,92 @@ bool RouterPortCore::holdsLine(uint16_t external, bool tcp) const
     return false;
 }
 
-QString RouterPortCore::ownerOf(uint16_t external)
+bool RouterPortCore::moonlightText(const QString& description, QString* tag)
 {
-    IUpnpGateway::Entry shown;
-    if (m_Gateway.entry(external, kUdp, shown) != Lookup::Found) return {};
-    return shown.client;
+    using mw::routerholes::describe;
+    // The words, then the tag when there is one
+    QString words = description;
+    QString itsTag;
+    const qsizetype space = description.lastIndexOf(QLatin1Char(' '));
+    if (space > 0 && mw::routerholes::validTag(description.mid(space + 1))) {
+        words = description.left(space);
+        itsTag = description.mid(space + 1);
+    }
+    bool known = false;
+    for (const Kind kind : {Kind::Tunnel, Kind::Streams, Kind::Tcp443})
+        known = known || words == describe(kind, -1, QString());
+    for (int slot = 0; !known && slot < mw::routerports::kMediaPortCount; ++slot)
+        known = words == describe(Kind::Media, slot, QString());
+    if (known && tag) *tag = itsTag;
+    return known;
 }
 
-bool RouterPortCore::tcpWritable(uint16_t external, IUpnpGateway::Entry* seen)
+bool RouterPortCore::taggedOurs(const QString& description) const
 {
-    IUpnpGateway::Entry shown;
-    if (m_Gateway.entry(external, kTcp, shown) != Lookup::Found || shown.client.isEmpty())
-        return true;
-    if (seen) *seen = shown;
-    return shown.client == m_Gateway.lanAddress() ||
-           (!m_PreviousLan.isEmpty() && shown.client == m_PreviousLan);
+    if (!m_Record || !mw::routerholes::validTag(m_Record->tag())) return false;
+    QString tag;
+    return moonlightText(description, &tag) && tag == m_Record->tag();
+}
+
+Listens RouterPortCore::otherServer() const
+{
+    return m_OtherServer ? m_OtherServer() : Listens::Unknown;
+}
+
+bool RouterPortCore::earlierOurs(uint16_t external, bool tcp, const IUpnpGateway::Entry& shown)
+{
+    if (!m_Record) return false;
+    Hole line;
+    if (!m_Record->find(external, tcp, line) || !line.old) return false;
+    if (line.lan != m_Gateway.lanAddress() || shown.client != line.lan) return false;
+    if (shown.internalPort != line.internal) return false;
+    if (shown.description != mw::routerholes::describe(line.kind, line.slot, QString()))
+        return false;
+    // Every edition up to 0.4.3 wrote these words to these ports. Only the
+    // installed host binds that block now, and only while no other server
+    // here may be the one that wrote them: a release of then that streams
+    // over UDP alone listens on nothing in TCP, its TCP entry in use all the
+    // same.
+    const bool slotEntry = line.kind == Kind::Media;
+    if (slotEntry && m_DevInstance) return false;
+    const Listens listens = m_Listens ? m_Listens(line.internal, tcp) : Listens::Unknown;
+    if (listens != Listens::No) return false;
+    return !slotEntry || otherServer() == Listens::No;
+}
+
+RouterPortCore::Whose RouterPortCore::whoseIs(const IUpnpGateway::Entry& shown, uint16_t external,
+                                              bool tcp, const Claim* held)
+{
+    const QString lan = m_Gateway.lanAddress();
+    if (held) {
+        if (shown.client != lan) return Whose::Foreign;
+        // To another port of this machine than the one this host binds
+        if (shown.internalPort != 0 && shown.internalPort != held->internal) return Whose::Other;
+        const QString& text = shown.description;
+        if (text == textOf(held->purpose, held->slot) ||
+            (!held->text.isEmpty() && text == held->text))
+            return Whose::Ours;
+        // Words that are a MoonlightWeb's, and not this installation's: an
+        // edition beside it wrote them. Any other words are the router's own,
+        // as some routers put, or what they show after a reboot.
+        return moonlightText(text, nullptr) ? Whose::Other : Whose::Ours;
+    }
+    // One this host had before a DHCP renumbering is its own only by its tag:
+    // the address may be another machine's by now.
+    const bool before = !m_PreviousLan.isEmpty() && shown.client == m_PreviousLan;
+    if (shown.client != lan && !before) return Whose::Foreign;
+    if (taggedOurs(shown.description)) return Whose::Ours;
+    if (!before && earlierOurs(external, tcp, shown)) return Whose::Ours;
+    return before ? Whose::Foreign : Whose::Other;
+}
+
+RouterPortCore::Whose RouterPortCore::judge(uint16_t external, bool tcp, const Claim* held,
+                                            IUpnpGateway::Entry& shown)
+{
+    if (m_Gateway.entry(external, tcp ? kTcp : kUdp, shown) != Lookup::Found ||
+        shown.client.isEmpty())
+        return Whose::Free;
+    return whoseIs(shown, external, tcp, held);
 }
 
 bool RouterPortCore::keptOldLease(int leaseLeft) const
@@ -302,13 +376,60 @@ void RouterPortCore::dropTcpOf(const Claim& lost)
     // One the router does not show, or shows as a neighbour's, is not asked
     // to go: its line stays for the next start, which goes by the record.
     IUpnpGateway::Entry there;
-    if (!tcpWritable(lost.external, &there) || there.client.isEmpty()) return;
-    // Nor one at this host's address that is not the entry it wrote: the
-    // address may be the one it had before a renumbering, another machine's
-    // by now, and another edition on this machine may hold that number.
+    if (m_Gateway.entry(lost.external, kTcp, there) != Lookup::Found) return;
+    if (there.client != m_Gateway.lanAddress()) return;
+    // Nor one at this host's address that is not the entry it wrote, to the
+    // letter: another edition on this machine may hold that number.
     if (there.internalPort != lost.internal || there.description != textOf(lost.purpose, lost.slot))
         return;
     if (m_Gateway.remove(lost.external, kTcp)) strike(lost.external, true);
+}
+
+bool RouterPortCore::takeOff(const Claim& claim, bool tcp, const std::function<bool()>& expired,
+                             bool& left)
+{
+    const QString& protocol = tcp ? kTcp : kUdp;
+    const auto late = [&expired]() { return expired && expired(); };
+    if (late()) {
+        left = true;
+        return false;
+    }
+    IUpnpGateway::Entry shown;
+    const Lookup seen = m_Gateway.entry(claim.external, protocol, shown);
+    // Gone already: a router that rebooted, a lease that ran out
+    if (seen == Lookup::None) {
+        strike(claim.external, tcp);
+        return false;
+    }
+    // Another machine's, or another installation's on this machine, by now:
+    // not this host's to take off, and no longer in its record. A router that
+    // does not say is asked to remove what this host wrote, as ever.
+    if (seen == Lookup::Found && !shown.client.isEmpty()) {
+        const Whose whose = whoseIs(shown, claim.external, tcp, &claim);
+        if (whose == Whose::Foreign || whose == Whose::Other) {
+            strike(claim.external, tcp);
+            qInfo().noquote() << QStringLiteral("[UPNP] %1 %2 is %3's entry on the router by now: "
+                                                "left as it is")
+                                     .arg(protocol)
+                                     .arg(claim.external)
+                                     .arg(whose == Whose::Foreign
+                                              ? QStringLiteral("another machine")
+                                              : QStringLiteral("another installation on this "
+                                                               "machine"));
+            return false;
+        }
+    }
+    if (late()) {
+        left = true;
+        return false;
+    }
+    // A removal the router does not acknowledge stays in the record: the
+    // next start looks at what is left of it.
+    if (m_Gateway.remove(claim.external, protocol))
+        strike(claim.external, tcp);
+    else
+        left = true;
+    return true;
 }
 
 RouterPortCore::Result RouterPortCore::claim(const Request& request)
@@ -359,18 +480,29 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     // the way ours was broken, until it renews and breaks ours back. There are
     // other ports; a fight over this one has no winner.
     //
-    // One exception: an entry that points at the address THIS host had before
-    // a DHCP renumbering. Nobody else is behind it, and leaving it alone would
-    // strand the port until the lease runs out — forever, if it was permanent.
+    // So is another installation's on this machine: one address to the
+    // router, so its entries point here too, and only their description says
+    // whose they are. An entry at this address is this installation's when it
+    // carries its tag, or is one a version that put no tag wrote here and
+    // nothing uses any more (earlierOurs). Anything else stays.
+    //
+    // One exception to the address: an entry that points at the address THIS
+    // host had before a DHCP renumbering, under its tag. Leaving it alone
+    // would strand the port until the lease runs out — forever, if it was
+    // permanent.
     const QString lan = m_Gateway.lanAddress();
-    const QString before = ownerOf(external);
-    if (!before.isEmpty() && before != lan) {
-        if (!m_PreviousLan.isEmpty() && before == m_PreviousLan) {
-            result.reclaimedFrom = before;
-        } else {
-            result.skipped.append({external, SkipReason::Foreign, before});
-            return false;
-        }
+    IUpnpGateway::Entry seen;
+    switch (judge(external, false, nullptr, seen)) {
+    case Whose::Free: break;
+    case Whose::Ours:
+        if (seen.client != lan) result.reclaimedFrom = seen.client;
+        break;
+    case Whose::Foreign:
+        result.skipped.append({external, SkipReason::Foreign, seen.client});
+        return false;
+    case Whose::Other:
+        result.skipped.append({external, SkipReason::OtherInstallation, {}});
+        return false;
     }
 
     // The mux binds for good, so it binds late: only a number the router has
@@ -428,6 +560,7 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     const bool oldLease = !after.isEmpty() && keptOldLease(shown.leaseLeft);
     const bool oldText = !after.isEmpty() && keptOldText(udp, shown);
     const bool kept = oldLease || oldText;
+    QString text = after.isEmpty() ? QString() : shown.description;
     if (kept) {
         if (oldLease)
             logKeptLease(external, shown.leaseLeft);
@@ -438,6 +571,12 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
             handBack();
             return false;
         }
+        // What it shows now: a router that puts words of its own puts them
+        // again, and the renewals know the entry by them
+        IUpnpGateway::Entry again;
+        text = m_Gateway.entry(external, kUdp, again) == Lookup::Found && again.client == lan
+                   ? again.description
+                   : QString();
     }
 
     Claim claim;
@@ -445,16 +584,19 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     claim.slot = request.slot;
     claim.external = external;
     claim.internal = internal;
+    claim.text = text;
     // Best effort, and only useful where UDP is blocked outright: the
     // connections enable ICE-TCP, but a browser only ever opens those
     // outbound, so reaching this machine needs the inbound hole too. A
     // neighbour's TCP forward on the same number is left alone, like its UDP
-    // one above: the router would repoint it, or remove it and add ours.
+    // one above: the router would repoint it, or remove it and add ours. So
+    // is another installation's on this machine, by the same rule.
     if (request.tcp) {
         Write tcp = udp;
         tcp.tcp = true;
         IUpnpGateway::Entry there;
-        if (tcpWritable(external, &there)) {
+        const Whose whose = judge(external, true, nullptr, there);
+        if (whose == Whose::Free || whose == Whose::Ours) {
             // An entry of this host's with another text is written afresh too
             const bool tcpOldText = !there.client.isEmpty() && keptOldText(tcp, there);
             claim.tcp = write(tcp, kept || tcpOldText);
@@ -465,14 +607,30 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     return true;
 }
 
-bool RouterPortCore::rewrite(const Claim& c, QString& owner)
+bool RouterPortCore::rewrite(const Claim& c, QString& owner, bool& here)
 {
+    here = false;
+    // Read first: what the router aims at another machine, or shows as
+    // another installation's on this one, is not written over. The router
+    // would take the write, and the other host's next renewal would take it
+    // back, each breaking the other's streams in turn.
+    IUpnpGateway::Entry before;
+    switch (judge(c.external, false, &c, before)) {
+    case Whose::Free:
+    case Whose::Ours: break;
+    case Whose::Other: here = true; [[fallthrough]];
+    case Whose::Foreign: owner = before.client; return true;
+    }
+
     const Write udp{c.external, c.internal, c.purpose, c.slot, false};
     Write tcpWrite = udp;
     tcpWrite.tcp = true;
     bool ok = write(udp);
-    // A neighbour may have taken the TCP number since: its entry is not rewritten.
-    const bool tcp = c.tcp && tcpWritable(c.external);
+    // A neighbour may have taken the TCP number since, or another
+    // installation here: its entry is not rewritten.
+    IUpnpGateway::Entry tcpShown;
+    const Whose tcpWhose = c.tcp ? judge(c.external, true, &c, tcpShown) : Whose::Foreign;
+    const bool tcp = tcpWhose == Whose::Free || tcpWhose == Whose::Ours;
     if (tcp) write(tcpWrite);
     IUpnpGateway::Entry shown;
     owner = m_Gateway.entry(c.external, kUdp, shown) == Lookup::Found ? shown.client : QString();
@@ -503,8 +661,9 @@ QList<RouterPortCore::Lost> RouterPortCore::renew()
     const QList<Claim> held = m_Held;
     for (const Claim& c : held) {
         QString owner;
-        if (!rewrite(c, owner)) ok = false;
-        if (!owner.isEmpty() && owner != lan) lost.append({c, owner});
+        bool here = false;
+        if (!rewrite(c, owner, here)) ok = false;
+        if (here || (!owner.isEmpty() && owner != lan)) lost.append({c, owner, here});
     }
     for (const Lost& l : lost) {
         m_Held.removeAll(l.claim);
@@ -526,7 +685,8 @@ QList<RouterPortCore::Lost> RouterPortCore::renew()
         m_LeaseSec = 0;
         for (const Claim& c : std::as_const(m_Held)) {
             QString owner;
-            rewrite(c, owner);
+            bool here = false;
+            rewrite(c, owner, here);
         }
     }
     return lost;
@@ -539,12 +699,13 @@ QList<RouterPortCore::Lost> RouterPortCore::renew(uint16_t externalPort)
         if (held.external != externalPort) continue;
         const Claim c = held;
         QString owner;
-        rewrite(c, owner);
-        if (owner.isEmpty() || owner == m_Gateway.lanAddress()) return {};
+        bool here = false;
+        rewrite(c, owner, here);
+        if (!here && (owner.isEmpty() || owner == m_Gateway.lanAddress())) return {};
         m_Held.removeAll(c);
         strike(c.external, false);
         dropTcpOf(c);
-        return {{c, owner}};
+        return {{c, owner, here}};
     }
     return {};
 }
@@ -552,11 +713,10 @@ QList<RouterPortCore::Lost> RouterPortCore::renew(uint16_t externalPort)
 void RouterPortCore::release(const Claim& claim)
 {
     if (!m_Held.contains(claim)) return;
-    // A removal the router does not acknowledge stays in the record: the
-    // next start looks at what is left of it.
-    if (m_Gateway.remove(claim.external, kUdp)) strike(claim.external, false);
-    if (claim.tcp && tcpWritable(claim.external) && m_Gateway.remove(claim.external, kTcp))
-        strike(claim.external, true);
+    // Each entry only while it is this host's (takeOff)
+    bool left = false;
+    takeOff(claim, false, {}, left);
+    if (claim.tcp) takeOff(claim, true, {}, left);
     m_Held.removeAll(claim);
 }
 
@@ -580,30 +740,17 @@ RouterPortCore::Released RouterPortCore::releaseBeforeExit(const std::function<b
     for (const Claim& c : std::as_const(order)) {
         // Not held any more either way: what is left of it is the record's.
         m_Held.removeAll(c);
-        if (expired && expired()) {
-            out.left.append(c);
-            continue;
-        }
         // As release(), with the deadline asked before each call: a removal
-        // the router does not acknowledge stays in the record. A TCP entry
-        // that is not this host's (tcpWritable) is not ours to take off, and
-        // not counted as left.
-        bool gone = m_Gateway.remove(c.external, kUdp);
-        if (gone) strike(c.external, false);
-        if (c.tcp) {
-            if (expired && expired()) {
-                gone = false;
-            } else if (tcpWritable(c.external)) {
-                if (m_Gateway.remove(c.external, kTcp))
-                    strike(c.external, true);
-                else
-                    gone = false;
-            }
-        }
-        if (gone)
-            ++out.released;
-        else
+        // the router does not acknowledge stays in the record. An entry that
+        // is not this host's any more is not ours to take off, and not
+        // counted as left.
+        bool left = false;
+        takeOff(c, false, expired, left);
+        if (c.tcp) takeOff(c, true, expired, left);
+        if (left)
             out.left.append(c);
+        else
+            ++out.released;
     }
     return out;
 }
@@ -650,6 +797,24 @@ RouterPortCore::SweepResult RouterPortCore::sweep(const Hole& hole)
     const QString tag = line.old ? QString() : m_Record->tag();
     if (!line.old && !mw::routerholes::validTag(tag)) return {Swept::Unknown, {}};
 
+    // A stream slot's entry of a version that put no tag: every edition then
+    // wrote those words to those ports, a DEV as well as a release, so the
+    // entry may be another edition's on this machine, and in use while
+    // nothing listens on its port (a release of then streaming over UDP
+    // alone, for its TCP entry). Only while no other MoonlightWeb server runs
+    // here is nobody behind it. Asked first, and again just before the removal.
+    const bool slotOfThen = line.old && line.kind == Kind::Media;
+    const auto serverHere = [this]() -> std::optional<SweepResult> {
+        switch (otherServer()) {
+        case Listens::No: return std::nullopt;
+        case Listens::Yes: return SweepResult{Swept::InUse, QStringLiteral("server")};
+        case Listens::Unknown: break;
+        }
+        return SweepResult{Swept::InUse, QStringLiteral("server unknown")};
+    };
+    if (slotOfThen)
+        if (const auto busy = serverHere()) return *busy;
+
     const QString& protocol = line.tcp ? kTcp : kUdp;
     IUpnpGateway::Entry shown;
     switch (m_Gateway.entry(line.external, protocol, shown)) {
@@ -682,6 +847,8 @@ RouterPortCore::SweepResult RouterPortCore::sweep(const Hole& hole)
             return {Swept::InUse, listens == Listens::Yes ? QStringLiteral("listened")
                                                           : QStringLiteral("unknown")};
     }
+    if (slotOfThen)
+        if (const auto busy = serverHere()) return *busy;
 
     if (!m_Gateway.remove(line.external, protocol)) return {Swept::Stayed, {}};
     IUpnpGateway::Entry after;

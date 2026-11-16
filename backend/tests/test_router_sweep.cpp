@@ -129,8 +129,10 @@ TableGateway::Key tcp(uint16_t port)
 struct MemoryRecord : mw::routerholes::IRecord
 {
     QList<Hole> lines;
+    /// Whose record: another installation on the same machine has its own.
+    QString itsTag = kTag;
 
-    QString tag() const override { return kTag; }
+    QString tag() const override { return itsTag; }
     QList<Hole> holes() const override { return lines; }
 
     bool find(uint16_t external, bool isTcp, Hole& out) const override
@@ -214,6 +216,11 @@ struct Bench
     RouterPortCore core;
     Listens answer = Listens::No;
     QList<QPair<uint16_t, bool>> listenAsked;
+    /// Whether another MoonlightWeb server runs here: `servers` first, one
+    /// answer each time it is asked, then `server`.
+    Listens server = Listens::No;
+    QList<Listens> servers;
+    int serverAsked = 0;
 
     Bench()
         : core(gw, kAlwaysFree)
@@ -222,6 +229,10 @@ struct Bench
         core.setListens([this](uint16_t port, bool isTcp) {
             listenAsked.append({port, isTcp});
             return answer;
+        });
+        core.setOtherServer([this]() {
+            ++serverAsked;
+            return servers.isEmpty() ? server : servers.takeFirst();
         });
     }
 
@@ -732,19 +743,37 @@ void run_router_sweep_tests()
     }
 
     SECTION("RouterSweep: what the record says is what the router shows");
-    // A leftover with another text, on a router that takes a write over its
-    // own entry without changing it: written afresh, once, in each protocol.
+    // A leftover of an earlier version, with its words and no tag, on a router
+    // that takes a write over its own entry without changing it: written
+    // afresh, once, in each protocol.
     {
         Bench b;
         b.gw.keepsText = true;
         const Hole line = tunnelLine(3478);
-        b.gw.table[udp(3478)] = rowOf(line, QString());
-        b.gw.table[tcp(3478)] = rowOf(line, QString());
+        for (const bool isTcp : {false, true}) {
+            Hole earlier = tunnelLine(3478, isTcp);
+            earlier.old = true;
+            b.record.note(earlier);
+            b.gw.table[keyOf(earlier)] = rowOf(line, QString());
+        }
         const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
         CHECK(r.ok && r.claim.external == 3478 && r.claim.tcp);
         CHECK(b.gw.table[udp(3478)] == rowOf(line, kTag));
         CHECK(b.gw.table[tcp(3478)] == rowOf(line, kTag));
         CHECK_EQ(b.gw.removes, 2);
+    }
+    // The same words with no line of an earlier version in the record: some
+    // other edition's on this machine, passed over and left as it is
+    {
+        Bench b;
+        const Hole line = tunnelLine(3478);
+        b.gw.table[udp(3478)] = rowOf(line, QString());
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(r.ok && r.claim.external == 3479);
+        CHECK(r.skipped.size() == 1 &&
+              r.skipped.first().reason == RouterPortCore::SkipReason::OtherInstallation);
+        CHECK(b.gw.table[udp(3478)] == rowOf(line, QString()));
+        CHECK(!b.record.has(3478, false));
     }
     // A router that writes a text of its own: once, and no more. Nothing of
     // what it shows ever matches, so nothing of it is ever swept.
@@ -774,13 +803,15 @@ void run_router_sweep_tests()
         CHECK(b.core.renew().isEmpty());
         CHECK_EQ(b.gw.removes, 0);
     }
-    // Without a record the description proves nothing, and is left as it is
+    // Without a record nothing proves an entry at this address this host's:
+    // passed over, and left as it is
     {
         TableGateway gw;
         gw.keepsText = true;
         gw.table[udp(3478)] = {kLan, 3478, QStringLiteral("upnp"), 0};
         RouterPortCore core(gw, kAlwaysFree);
-        CHECK(core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        const auto r = core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(r.ok && r.claim.external == 3479);
         CHECK_EQ(gw.removes, 0);
         CHECK(gw.table[udp(3478)].description == QStringLiteral("upnp"));
     }
@@ -876,7 +907,7 @@ void run_router_sweep_tests()
         // What the instance walks: the DEV lists unless under the key
         const bool killedAsDev = !killedUnderKey;
         const uint16_t devTunnel = mw::routerports::kDevTunnelPoolBegin;
-        Hole streamsLine = tunnelLine(killedAsDev ? 48573 : 3479);
+        Hole streamsLine = tunnelLine(killedAsDev ? 48597 : 3479);
         streamsLine.kind = Kind::Streams;
         const QList<Hole> left{tunnelLine(killedAsDev ? devTunnel : 3478),
                                tunnelLine(killedAsDev ? devTunnel : 3478, true), streamsLine};
@@ -942,6 +973,367 @@ void run_router_sweep_tests()
             CHECK(core.sweepList() == QList<Hole>{own});
             CHECK(core.sweep(own).outcome == Swept::Removed);
             CHECK(gw.table.isEmpty());
+        }
+    }
+
+    SECTION("RouterSweep: another installation on this machine, by its tag alone");
+    // Two editions on one machine are one address to the router. Another's
+    // entry there, under its tag or under no tag, is never written over,
+    // renewed over or taken off; this installation's is, under its tag.
+    const QString kOtherTag = QStringLiteral("0b77e2");
+    // At a claim: another's passed over and said without an address, this
+    // installation's own taken back
+    {
+        Bench b;
+        const TableGateway::Row theirs = rowOf(tunnelLine(3478), kOtherTag);
+        b.gw.table[udp(3478)] = theirs;
+        b.gw.table[tcp(3478)] = theirs;
+        b.gw.table[udp(3479)] = rowOf(tunnelLine(3479), kTag);
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {3478, 3479}));
+        CHECK(r.ok && r.claim.external == 3479 && r.claim.tcp);
+        CHECK(r.skipped.size() == 1 && r.skipped.first().port == 3478);
+        CHECK(r.skipped.first().reason == RouterPortCore::SkipReason::OtherInstallation);
+        CHECK(r.skipped.first().owner.isEmpty());
+        CHECK(b.gw.table.value(udp(3478)) == theirs && b.gw.table.value(tcp(3478)) == theirs);
+        CHECK(b.gw.table.value(udp(3479)) == rowOf(tunnelLine(3479), kTag));
+        CHECK(!b.record.has(3478, false) && !b.record.has(3478, true));
+        CHECK(b.record.has(3479, false) && b.record.has(3479, true));
+    }
+    // Its TCP entry alone on a number that is free in UDP: the UDP hole is
+    // this host's, the TCP one stays the other's
+    {
+        Bench b;
+        const TableGateway::Row theirs = rowOf(tunnelLine(3478, true), kOtherTag);
+        b.gw.table[tcp(3478)] = theirs;
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(r.ok && r.claim.external == 3478 && !r.claim.tcp);
+        CHECK(b.gw.table.value(tcp(3478)) == theirs);
+        CHECK(!b.record.has(3478, true));
+    }
+    // At the address this host had before a renumbering: its own under its
+    // tag, another machine's under any other words
+    {
+        Bench b;
+        const QString before = QStringLiteral("192.168.1.77");
+        b.core.setPreviousLanAddress(before);
+        TableGateway::Row mine = rowOf(tunnelLine(3478), kTag);
+        mine.client = before;
+        TableGateway::Row other = rowOf(tunnelLine(3479), QString());
+        other.client = before;
+        b.gw.table[udp(3478)] = mine;
+        b.gw.table[udp(3479)] = other;
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {3479, 3478}));
+        CHECK(r.ok && r.claim.external == 3478 && r.reclaimedFrom == before);
+        CHECK(r.skipped.size() == 1 && r.skipped.first().port == 3479);
+        CHECK(r.skipped.first().reason == RouterPortCore::SkipReason::Foreign);
+        CHECK(b.gw.table.value(udp(3478)).client == kLan);
+        CHECK(b.gw.table.value(udp(3479)) == other);
+    }
+    // At a renewal: an entry another installation here has written over is
+    // lost, and not written back over; the TCP entry this host wrote goes
+    {
+        Bench b;
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(r.ok && r.claim.tcp);
+        const TableGateway::Row theirs = rowOf(tunnelLine(3478), kOtherTag);
+        b.gw.table[udp(3478)] = theirs;
+        const int adds = b.gw.adds;
+        const auto lost = b.core.renew();
+        CHECK(lost.size() == 1 && lost.first().here && lost.first().owner == kLan);
+        CHECK_EQ(b.gw.adds, adds);
+        CHECK(b.gw.table.value(udp(3478)) == theirs);
+        CHECK(!b.gw.table.contains(tcp(3478)));
+        CHECK(!b.record.has(3478, false) && !b.record.has(3478, true));
+        CHECK(!b.core.holds(3478));
+    }
+    // The same for one looked at now, written over by an edition of before
+    // the tags (its words alone)
+    {
+        using mw::routerports::kMediaBasePort;
+        Bench b;
+        CHECK(b.core.claim(RouterPortCore::mediaRequest(false, false, 0, kMediaBasePort, 0, false))
+                  .ok);
+        const TableGateway::Row then = rowOf(mediaLine(0, kMediaBasePort), QString());
+        b.gw.table[udp(kMediaBasePort)] = then;
+        const int adds = b.gw.adds;
+        const auto lost = b.core.renew(kMediaBasePort);
+        CHECK(lost.size() == 1 && lost.first().here);
+        CHECK_EQ(b.gw.adds, adds);
+        CHECK(b.gw.table.value(udp(kMediaBasePort)) == then);
+    }
+    // To another port of this machine than the one this host binds: lost too
+    {
+        Bench b;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        b.gw.table[udp(3478)].internal = 3479;
+        const auto lost = b.core.renew();
+        CHECK(lost.size() == 1 && lost.first().here);
+        CHECK_EQ(b.gw.table.value(udp(3478)).internal, uint16_t(3479));
+    }
+    // At a release, and before the process quits: another's is left (and not
+    // counted as left behind), this host's own is taken off
+    {
+        using mw::routerports::kMediaBasePort;
+        Bench b;
+        const auto t = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        const auto m = b.core.claim(
+            RouterPortCore::mediaRequest(false, false, 1, uint16_t(kMediaBasePort + 1), 0, false));
+        CHECK(t.ok && t.claim.tcp && m.ok && m.claim.tcp);
+        const TableGateway::Row theirs = rowOf(tunnelLine(3478), kOtherTag);
+        b.gw.table[udp(3478)] = theirs;
+        b.gw.removes = 0;
+        b.core.release(t.claim);
+        CHECK(b.gw.table.value(udp(3478)) == theirs);
+        CHECK(!b.gw.table.contains(tcp(3478)));
+        CHECK_EQ(b.gw.removes, 1);
+        CHECK(!b.record.has(3478, false) && !b.record.has(3478, true));
+        const uint16_t slotPort = m.claim.external;
+        const TableGateway::Row theirsToo = rowOf(mediaLine(1, slotPort), kOtherTag);
+        b.gw.table[udp(slotPort)] = theirsToo;
+        const auto out = b.core.releaseBeforeExit({});
+        CHECK(out.released == 1 && out.left.isEmpty());
+        CHECK(b.gw.table.value(udp(slotPort)) == theirsToo);
+        CHECK(!b.gw.table.contains(tcp(slotPort)));
+        CHECK(b.record.lines.isEmpty());
+    }
+    // Two installations of one identity on one machine (a DEV under its
+    // bench key beside the installed host): the same numbers, told apart by
+    // their tags alone. Neither takes, renews over or removes the other's.
+    {
+        TableGateway gw;
+        MemoryRecord mine;
+        MemoryRecord theirs;
+        theirs.itsTag = kOtherTag;
+        RouterPortCore a(gw, kAlwaysFree);
+        RouterPortCore b(gw, kAlwaysFree);
+        a.setRecord(&mine);
+        b.setRecord(&theirs);
+        const auto first = a.claim(RouterPortCore::tunnelRequest(false, {}));
+        const auto second = b.claim(RouterPortCore::tunnelRequest(false, {3478}));
+        CHECK(first.ok && first.claim.external == 3478);
+        CHECK(second.ok && second.claim.external == 3479);
+        const auto before = gw.table;
+        CHECK(a.renew().isEmpty() && b.renew().isEmpty());
+        CHECK(gw.table == before);
+        CHECK(b.renew(3478).isEmpty());
+        CHECK(gw.table == before);
+        b.releaseAll();
+        CHECK(gw.table.value(udp(3478)) == rowOf(tunnelLine(3478), kTag));
+        CHECK(gw.table.value(tcp(3478)) == rowOf(tunnelLine(3478, true), kTag));
+        CHECK(!gw.table.contains(udp(3479)) && !gw.table.contains(tcp(3479)));
+        CHECK(mine.has(3478, false) && mine.has(3478, true) && theirs.lines.isEmpty());
+        // A start of the other one that finds a line of its record on a
+        // number this one holds now: not its own, left
+        Hole was = tunnelLine(3478);
+        theirs.note(was);
+        CHECK(b.sweep(was).outcome == Swept::NotOurs);
+        CHECK(gw.table.value(udp(3478)) == rowOf(tunnelLine(3478), kTag));
+        a.releaseAll();
+        CHECK(gw.table.isEmpty());
+    }
+
+    SECTION("RouterSweep: an entry of an earlier version, taken over by a claim");
+    // A stream slot's entry of a version that put no tag: every edition then
+    // wrote those words to those ports. Taken over only by the installed
+    // host, from a line of its own record, while nothing listens on its port
+    // and no other MoonlightWeb server runs here.
+    {
+        using mw::routerports::kMediaBasePort;
+        using mw::routerports::kMediaPoolBegin;
+        Hole line = mediaLine(0, kMediaPoolBegin);
+        line.old = true;
+        const auto request =
+            RouterPortCore::mediaRequest(false, false, 0, kMediaBasePort, kMediaPoolBegin, false);
+        const auto claimWith = [&](Listens listens, Listens server, bool dev, bool noted,
+                                   TableGateway::Row* after) {
+            Bench b;
+            b.answer = listens;
+            b.server = server;
+            b.core.setDevInstance(dev);
+            if (noted) b.record.note(line);
+            b.gw.table[udp(kMediaPoolBegin)] = rowOf(line, QString());
+            const auto r = b.core.claim(request);
+            *after = b.gw.table.value(udp(kMediaPoolBegin));
+            return r;
+        };
+        TableGateway::Row after;
+        const TableGateway::Row then = rowOf(line, QString());
+        // All of it holds: taken over, and written with this installation's tag
+        auto r = claimWith(Listens::No, Listens::No, false, true, &after);
+        CHECK(r.ok && r.claim.external == kMediaPoolBegin && r.claim.internal == kMediaBasePort);
+        CHECK(after == rowOf(mediaLine(0, kMediaPoolBegin), kTag));
+        // Anything else: passed over, left as it is, the slot's own number taken
+        const auto passedOver = [&](Listens listens, Listens server, bool dev, bool noted) {
+            const auto res = claimWith(listens, server, dev, noted, &after);
+            CHECK(res.ok && res.claim.external == kMediaBasePort);
+            CHECK(!res.skipped.isEmpty() &&
+                  res.skipped.first().reason == RouterPortCore::SkipReason::OtherInstallation);
+            CHECK(after == then);
+        };
+        passedOver(Listens::Yes, Listens::No, false, true);
+        passedOver(Listens::Unknown, Listens::No, false, true);
+        passedOver(Listens::No, Listens::Yes, false, true);
+        passedOver(Listens::No, Listens::Unknown, false, true);
+        // A DEV identity never takes one over
+        passedOver(Listens::No, Listens::No, true, true);
+        // No line of an earlier version in the record
+        passedOver(Listens::No, Listens::No, false, false);
+    }
+
+    SECTION("RouterSweep: an earlier version's stream slot entry, and another server here");
+    {
+        using mw::routerports::kMediaPoolBegin;
+        Hole line = mediaLine(2, kMediaPoolBegin, true);
+        line.old = true;
+        // Another MoonlightWeb server runs here, or the system does not say:
+        // left as it is, the router not even asked, judged again next start
+        for (const Listens server : {Listens::Yes, Listens::Unknown}) {
+            Bench b;
+            b.left(line, QString());
+            b.server = server;
+            const auto r = b.core.sweep(line);
+            CHECK(r.outcome == Swept::InUse);
+            CHECK(r.detail == (server == Listens::Yes ? QLatin1String("server")
+                                                      : QLatin1String("server unknown")));
+            CHECK(b.gw.table.contains(keyOf(line)) && b.record.has(line.external, true));
+            CHECK(b.gw.asked.isEmpty());
+            CHECK_EQ(b.gw.removes, 0);
+        }
+        // None when first asked, one by the time of the removal: left
+        {
+            Bench b;
+            b.left(line, QString());
+            b.servers = {Listens::No, Listens::Yes};
+            const auto r = b.core.sweep(line);
+            CHECK(r.outcome == Swept::InUse && r.detail == QLatin1String("server"));
+            CHECK_EQ(b.serverAsked, 2);
+            CHECK(b.gw.table.contains(keyOf(line)) && b.record.has(line.external, true));
+            CHECK_EQ(b.gw.removes, 0);
+        }
+        // None either time, and nothing listening: taken back
+        {
+            Bench b;
+            b.left(line, QString());
+            CHECK(b.core.sweep(line).outcome == Swept::Removed);
+            CHECK_EQ(b.serverAsked, 2);
+            CHECK(b.gw.table.isEmpty() && b.record.lines.isEmpty());
+        }
+        // Nobody to ask: nothing is known, nothing removed
+        {
+            TableGateway gw;
+            MemoryRecord record;
+            RouterPortCore core(gw, kAlwaysFree);
+            core.setRecord(&record);
+            core.setListens([](uint16_t, bool) { return Listens::No; });
+            record.note(line);
+            gw.table[keyOf(line)] = rowOf(line, QString());
+            const auto r = core.sweep(line);
+            CHECK(r.outcome == Swept::InUse && r.detail == QLatin1String("server unknown"));
+            CHECK(gw.table.contains(keyOf(line)));
+        }
+        // Still there after its removal: said, kept for the next start
+        {
+            Bench b;
+            b.left(line, QString());
+            b.gw.keepsRemoved = true;
+            CHECK(b.core.sweep(line).outcome == Swept::Stayed);
+            CHECK(b.record.has(line.external, true));
+            CHECK_EQ(b.gw.removes, 1);
+        }
+        // The tunnel's entries of then were each in a block of its edition's
+        // own, and a tagged line is this installation's: neither asks
+        {
+            Bench b;
+            Hole tunnelThen = tunnelLine(3478);
+            tunnelThen.old = true;
+            b.left(tunnelThen, QString());
+            const Hole tagged = mediaLine(1, uint16_t(kMediaPoolBegin + 1));
+            b.left(tagged);
+            b.server = Listens::Yes;
+            CHECK(b.core.sweep(tunnelThen).outcome == Swept::Removed);
+            CHECK(b.core.sweep(tagged).outcome == Swept::Removed);
+            CHECK_EQ(b.serverAsked, 0);
+        }
+    }
+
+    SECTION("RouterSweep: what a DEV wrote while it bound the installed host's block");
+    // A DEV identity binds a block of its own now (48574-48597). What it
+    // wrote on the router while it bound the installed host's is its own
+    // still, taken back at its next start: with its tag as any line, its
+    // shared port at the top of that block included; without one (up to
+    // 0.4.3), under the rules of an earlier version's stream slot entry.
+    [&]() {
+        using mw::routerholes::File;
+        using namespace mw::routerports;
+        QTemporaryDir dir;
+        CHECK(dir.isValid());
+        const QByteArray machine = QByteArrayLiteral("machine-one");
+        const mw::routerholes::Earlier none;
+        QString said;
+        TableGateway gw;
+        Hole shared = tunnelLine(uint16_t(kMediaBasePort + kMediaPortCount - 1));
+        shared.kind = Kind::Streams;
+        const Hole slot = mediaLine(0, kMediaPoolBegin);
+        const QList<Hole> left{shared, slot};
+        // The DEV that was killed, before it had its block
+        {
+            auto record = File::open(dir.path(), true, machine, none, kLan, &said);
+            CHECK(record != nullptr);
+            if (!record) return;
+            for (const Hole& line : left) {
+                record->note(line);
+                gw.table[keyOf(line)] = rowOf(line, record->tag());
+            }
+        }
+        // The DEV of now, at its next start: both are its own, and go
+        {
+            auto record = File::open(dir.path(), true, machine, none, kLan, &said);
+            CHECK(record != nullptr);
+            if (!record) return;
+            CHECK(record->holes() == left);
+            RouterPortCore core(gw, kAlwaysFree);
+            core.setRecord(record.get());
+            core.setDevInstance(true);
+            const QList<Hole> list = core.sweepList();
+            CHECK(list == left);
+            CHECK(core.sweepBelieved(list));
+            for (const Hole& line : list)
+                CHECK(core.sweep(line).outcome == Swept::Removed);
+            CHECK(gw.table.isEmpty());
+            CHECK(record->holes().isEmpty());
+        }
+    }();
+    // Without a tag: a DEV up to 0.4.3's, from the numbers it remembers
+    {
+        using namespace mw::routerports;
+        mw::routerholes::Earlier earlier;
+        earlier.lan = kLan;
+        earlier.media = {{0, kMediaPoolBegin}};
+        const QList<Hole> lines = mw::routerholes::earlierHoles(true, earlier, kLan);
+        CHECK_EQ(lines.size(), 2);
+        for (const Listens server : {Listens::Yes, Listens::Unknown, Listens::No}) {
+            Bench b;
+            b.core.setDevInstance(true);
+            b.server = server;
+            for (const Hole& line : lines)
+                b.left(line, QString());
+            CHECK(b.core.sweepList() == lines);
+            for (const Hole& line : lines)
+                CHECK(b.core.sweep(line).outcome ==
+                      (server == Listens::No ? Swept::Removed : Swept::InUse));
+            CHECK(b.gw.table.isEmpty() == (server == Listens::No));
+        }
+        // Something listens on its port in TCP (a release of then streaming
+        // over TCP): that one stays
+        {
+            Bench b;
+            b.core.setDevInstance(true);
+            for (const Hole& line : lines)
+                b.left(line, QString());
+            b.answer = Listens::Yes;
+            for (const Hole& line : lines)
+                CHECK(b.core.sweep(line).outcome == Swept::InUse);
+            CHECK_EQ(b.gw.table.size(), 2);
         }
     }
 }
