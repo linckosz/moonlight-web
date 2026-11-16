@@ -33,7 +33,7 @@ EDITION=${4:-prod}
 # notation (postinst turns a range's ':' into firewalld's '-'). 48550:48573/udp
 # is the stream media block: one pinned port per slot, 48550 + slot, for the 24
 # slots (mw::routerports::kMediaBasePort / kMediaPortCount). postinst also
-# reserves it from the kernel's ephemeral ports (MEDIA_RANGE below).
+# reserves it from the kernel's ephemeral ports (RESERVE below the hooks).
 # The same block in TCP, and the rendezvous tunnel's ports in TCP (3478:3481,
 # 5349:5352, then 46000:46031: mw::routerports::kTunnelPreferred and the tunnel
 # pool), are for passive ICE-TCP (v0.4.1, on by default). It listens on the port
@@ -250,28 +250,13 @@ elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Statu
 fi
 # firewall-end
 
-# Reserve the media block from the kernel's ephemeral ports (32768-60999 by
+# Reserve the stream block from the kernel's ephemeral ports (32768-60999 by
 # default), so no outgoing connection is handed one of them at random and the
-# stream never has to leave the block the firewall opens. The setting is a single
-# list for the whole machine: what is already reserved is kept, and the merged
-# list is written to sysctl.d so it survives a reboot. Best-effort: a container
-# cannot write it, and the app then falls back within the block on its own.
-if [ -n "$MEDIA_RANGE" ]; then
-    key=net.ipv4.ip_local_reserved_ports
-    if cur=$(sysctl -n "$key" 2>/dev/null); then
-        case ",$cur," in
-            *",$MEDIA_RANGE,"*) new=$cur ;;
-            *) new=${cur:+$cur,}$MEDIA_RANGE ;;
-        esac
-        if sysctl -w "$key=$new" >/dev/null 2>&1; then
-            {
-                echo "# Written by the MoonlightWeb package: keeps the kernel from handing its"
-                echo "# stream media ports ($MEDIA_RANGE) out as ephemeral ports. Removed with it."
-                echo "$key = $(sysctl -n "$key")"
-            } > /etc/sysctl.d/60-moonlightweb.conf 2>/dev/null || true
-        fi
-    fi
-fi
+# stream never has to leave the block the firewall opens. Best-effort: a
+# container cannot write it, and the app then falls back within the block on
+# its own. mw_reserve is put in at this marker (see RESERVE below the hooks).
+# @RESERVE@
+mw_reserve add
 
 # The package's own signed repository, added when none is configured — the way
 # Chrome's package adds Google's. A .deb or .rpm installed by hand then gets its
@@ -432,6 +417,7 @@ exit 0
 EOF
 cat > "$ROOT/prerm.sh" <<'EOF'
 #!/bin/sh
+# @RESERVE@
 # Is the headless service the thing running MoonlightWeb here?
 service_active=""
 if command -v systemctl >/dev/null 2>&1 &&
@@ -487,17 +473,9 @@ if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
               /etc/pki/rpm-gpg/RPM-GPG-KEY-moonlightweb
     fi
 
-    # Give the media block back to the kernel's ephemeral ports (see postinst).
-    MEDIA_RANGE=48550-48573
-    if [ -n "$MEDIA_RANGE" ] && [ -f /etc/sysctl.d/60-moonlightweb.conf ]; then
-        PATH="$PATH:/usr/sbin:/sbin"
-        rm -f /etc/sysctl.d/60-moonlightweb.conf
-        key=net.ipv4.ip_local_reserved_ports
-        if cur=$(sysctl -n "$key" 2>/dev/null); then
-            new=$(printf ',%s,' "$cur" | sed -e "s/,$MEDIA_RANGE,/,/" -e 's/^,//' -e 's/,$//')
-            sysctl -w "$key=$new" >/dev/null 2>&1 || true
-        fi
-    fi
+    # Give the stream block back to the kernel's ephemeral ports, as far as
+    # nothing else holds it (mw_reserve, see postinst).
+    mw_reserve remove
 fi
 exit 0
 EOF
@@ -508,7 +486,6 @@ if [ "$EDITION" = dev ]; then
            -e "s|moonlightweb\.service|$NAME.service|g" \
            -e "s|443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp|$PORTS|g" \
            -e "s|^\( *\)MEDIA_RANGE=.*|\1MEDIA_RANGE=48574-48597|" \
-           -e "s|/etc/sysctl\.d/60-moonlightweb\.conf|/etc/sysctl.d/60-$NAME.conf|g" \
            -e "s|^\( *\)REPO_KEYS=.*|\1REPO_KEYS=|" \
            -e "s|moonlightweb --|$NAME --|g" \
            -e "s|enable --now moonlightweb\$|enable --now $NAME|" \
@@ -610,6 +587,141 @@ PRE
         exit 1
     fi
 fi
+
+# RESERVE: each edition's stream block kept out of the kernel's ephemeral ports.
+# net.ipv4.ip_local_reserved_ports is one list for the whole machine, and the
+# kernel merges ranges that touch: with both editions installed it shows
+# 48550-48597, where neither block can be found as text. So a list is only
+# ever read as a set of ports. The running list keeps whatever else is
+# reserved; the two files in sysctl.d (read at boot, the last one winning)
+# hold the blocks of the MoonlightWeb editions installed, and nothing else.
+# A removal gives back only the ports that are this edition's alone: not the
+# other edition's, not those another sysctl file reserves. These hooks run as
+# root: anything unexpected writes nothing, says so, and the package goes on.
+# Put in at the marker of both hooks after the DEV edition's rewriting above,
+# which never touches it; the edition is its only difference.
+cat > "$ROOT/reserve.sh" <<'EOF'
+mw_rsv_live=/proc/sys/net/ipv4/ip_local_reserved_ports
+mw_rsv_warn() { echo "MoonlightWeb: $1 - the reserved ports are left as they are" >&2; }
+# A list as the kernel writes one: ports and ranges, comma-separated, 1-65535.
+mw_rsv_ok() {
+    [ -z "$1" ] && return 0
+    printf '%s\n' "$1" | grep -Eq '^[0-9]{1,5}(-[0-9]{1,5})?(,[0-9]{1,5}(-[0-9]{1,5})?)*$' || return 1
+    printf '%s\n' "$1" | awk -F, '{ for (i = 1; i <= NF; i++) { k = split($i, r, "-"); a = r[1] + 0
+        b = (k > 1 ? r[2] + 0 : a); if (a < 1 || b > 65535 || a > b) exit 1 } }'
+}
+# (base + add) - del, written back the way the kernel writes it. Each argument
+# is a list mw_rsv_ok accepted, or empty.
+mw_rsv_calc() {
+    awk -v base="$1" -v add="$2" -v del="$3" '
+        function mark(l, v,   i, n, p, r, k, a, b) {
+            n = split(l, p, ",")
+            for (i = 1; i <= n; i++) {
+                if (p[i] == "") continue
+                k = split(p[i], r, "-"); a = r[1] + 0; b = (k > 1 ? r[2] + 0 : a)
+                for (; a <= b; a++) s[a] = v
+            }
+        }
+        BEGIN {
+            mark(base, 1); mark(add, 1); mark(del, 0); out = ""; a = 0
+            for (p = 1; p <= 65536; p++) {
+                if (p <= 65535 && s[p]) { if (!a) a = p }
+                else if (a) { out = out (out == "" ? "" : ",") (a == p - 1 ? a : a "-" (p - 1)); a = 0 }
+            }
+            print out
+        }'
+}
+mw_rsv_installed() {
+    [ "$(dpkg-query -W -f='${Status}' "$1" 2>/dev/null)" = "install ok installed" ] && return 0
+    command -v rpm >/dev/null 2>&1 && rpm -q --quiet "$1" 2>/dev/null
+}
+# What the other sysctl files give this key, read only (never ours two), in
+# mw_others; in mw_before, those read before ours at boot (name sorted before
+# 60-moonlightweb-dev.conf, the first of ours): our file sets the key after
+# them, so it says their ports too, or the boot would drop them. One read
+# after ours (or /etc/sysctl.conf, read last) sets mw_after.
+mw_rsv_others() {
+    mw_others=""; mw_before=""; mw_after=""
+    for mw_f in /etc/sysctl.conf /etc/sysctl.d/*.conf /run/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf; do
+        case "$mw_f" in /etc/sysctl.d/60-moonlightweb.conf | /etc/sysctl.d/60-moonlightweb-dev.conf) continue ;; esac
+        [ -f "$mw_f" ] || continue
+        mw_v=$(sed -n 's/^[[:space:]]*-\{0,1\}net[./]ipv4[./]ip_local_reserved_ports[[:space:]]*=//p' "$mw_f" | tail -n 1 | tr -d ' \t\r')
+        [ -n "$mw_v" ] || continue
+        mw_rsv_ok "$mw_v" || return 1
+        mw_others=${mw_others:+$mw_others,}$mw_v
+        if [ "$mw_f" != /etc/sysctl.conf ] &&
+           LC_ALL=C awk -v n="${mw_f##*/}" 'BEGIN { exit !(n < "60-moonlightweb-dev.conf") }'; then
+            mw_before=${mw_before:+$mw_before,}$mw_v
+        else
+            mw_after=1
+        fi
+    done
+    return 0
+}
+# One of our two files, rewritten whole: a plain file or none, never a link.
+mw_rsv_write() {
+    if [ -L "$1" ] || { [ -e "$1" ] && [ ! -f "$1" ]; }; then mw_rsv_warn "$1 is not a plain file"; return 1; fi
+    mw_t=$(mktemp /etc/sysctl.d/.moonlightweb.XXXXXX) || { mw_rsv_warn "no file can be written in /etc/sysctl.d"; return 1; }
+    if { echo "# Written by the MoonlightWeb packages: the stream blocks of the editions installed,"
+         echo "# kept from being handed out as ephemeral ports. Taken away with them."
+         echo "net.ipv4.ip_local_reserved_ports = $2"; } > "$mw_t" &&
+       chmod 0644 "$mw_t" && chown root:root "$mw_t" && mv -f "$mw_t" "$1"; then
+        return 0
+    fi
+    rm -f "$mw_t"; mw_rsv_warn "$1 could not be written"; return 1
+}
+# mw_reserve add (postinst) | remove (prerm, a real removal only)
+mw_reserve() {
+    mw_self=@EDITION@
+    if [ "$mw_self" = dev ]; then
+        mw_own=48574-48597; mw_other=48550-48573; mw_other_pkg=moonlightweb
+        mw_own_file=/etc/sysctl.d/60-moonlightweb-dev.conf; mw_other_file=/etc/sysctl.d/60-moonlightweb.conf
+    else
+        mw_own=48550-48573; mw_other=48574-48597; mw_other_pkg=moonlightweb-dev
+        mw_own_file=/etc/sysctl.d/60-moonlightweb.conf; mw_other_file=/etc/sysctl.d/60-moonlightweb-dev.conf
+    fi
+    [ -r "$mw_rsv_live" ] || return 0
+    mw_live=$(tr -d ' \t\n' < "$mw_rsv_live" 2>/dev/null) || return 0
+    mw_rsv_ok "$mw_live" || { mw_rsv_warn "the kernel's list is not as expected"; return 0; }
+    mw_rsv_others || { mw_rsv_warn "a sysctl file gives that list a value not as expected"; return 0; }
+    [ -n "$mw_after" ] && echo "MoonlightWeb: a sysctl file read after ours sets the reserved ports: the stream blocks may not be reserved after a reboot" >&2
+    mw_with=""
+    mw_rsv_installed "$mw_other_pkg" && mw_with=$mw_other
+    if [ "$1" = add ]; then
+        mw_new=$(mw_rsv_calc "$mw_live" "$mw_own" "")
+        mw_ours=$(mw_rsv_calc "$mw_own" "${mw_with:+$mw_with,}$mw_before" "")
+    else
+        mw_free=$(mw_rsv_calc "$mw_own" "" "${mw_with:+$mw_with,}$mw_others")
+        mw_new=$(mw_rsv_calc "$mw_live" "" "$mw_free")
+        mw_ours=""
+        [ -n "$mw_with" ] && mw_ours=$(mw_rsv_calc "$mw_with" "$mw_before" "")
+    fi
+    if [ "$mw_new" != "$mw_live" ] && ! { printf '%s\n' "$mw_new" > "$mw_rsv_live"; } 2>/dev/null; then
+        mw_rsv_warn "the kernel's list could not be written"; return 0
+    fi
+    if [ "$1" = add ]; then
+        mw_rsv_write "$mw_own_file" "$mw_ours"
+    elif [ -L "$mw_own_file" ] || [ -f "$mw_own_file" ]; then
+        rm -f "$mw_own_file"
+    fi
+    # The other edition's file says the same, or the last one read at boot
+    # would undo this one (and an earlier version wrote the merged list there).
+    if [ -n "$mw_with" ] && [ -e "$mw_other_file" ]; then
+        mw_rsv_write "$mw_other_file" "$mw_ours"
+    fi
+    return 0
+}
+EOF
+sed -i "s|@EDITION@|$EDITION|" "$ROOT/reserve.sh"
+for hook in postinst prerm; do
+    awk -v blk="$ROOT/reserve.sh" '
+        /^# @RESERVE@$/ { while ((getline line < blk) > 0) print line; n++; next }
+        { print }
+        END { if (n != 1) exit 3 }' "$ROOT/$hook.sh" > "$ROOT/$hook.sh.new" ||
+        { echo "error: no single reservation marker in the $hook" >&2; exit 1; }
+    mv "$ROOT/$hook.sh.new" "$ROOT/$hook.sh"
+done
+rm -f "$ROOT/reserve.sh"
 
 # Qt and OpenSSL are bundled, but linuxdeploy deliberately leaves the graphics
 # and font stack to the system — those libraries are driver- and distro-coupled
