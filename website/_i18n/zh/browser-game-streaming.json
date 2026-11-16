@@ -11,7 +11,7 @@
   "diff.3": "<strong>每台设备上都是同一个页面。</strong>Windows、macOS、Linux、ChromeOS、Android、iPhone、iPad、电视浏览器——一个客户端、一种外观、一套设置。",
   "diff.4": "<strong>自托管且开源。</strong>GPL-3.0，无需账户、无需订阅。串流是你的浏览器与你的 PC 之间点对点的直接连接。",
   "diff.5": "<strong>自有的捕获与编码引擎。</strong>装在游戏 PC 上，它立刻就是一台主机——它还能与 <a href=\"/sunshine-web-client.html\">Sunshine、Apollo、Wolf 和 MultiSeat</a> 主机配对。",
-  "diff.6": "<strong>最多四名玩家。</strong>邀请三位好友加入你 PC 上正在运行的游戏，每人使用自己的设备和浏览器，以及自己的手柄。",
+  "diff.6": "<strong>最多五名玩家。</strong>邀请四位好友加入你 PC 上正在运行的游戏，每人使用自己的设备和浏览器，以及自己的手柄。",
   "know.h": "值得了解",
   "know.1": "游戏 PC 运行 MoonlightWeb 服务器：Windows 10 或 11、Apple Silicon 上的 macOS，或 Linux，并配备能编码视频的 GPU。",
   "know.2": "可选的编解码器取决于你用来游玩的设备和浏览器：H264 到处都能用，HEVC 和 AV1 则在能硬件解码它们的地方可用。",

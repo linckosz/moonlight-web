@@ -11,7 +11,7 @@
   "diff.3": "<strong>Dieselbe Seite auf jedem Gerät.</strong> Windows, macOS, Linux, ChromeOS, Android, iPhone, iPad, TV-Browser — ein Client, ein Look, dieselben Einstellungen.",
   "diff.4": "<strong>Selbst gehostet und Open Source.</strong> GPL-3.0, kein Konto, kein Abo. Der Stream ist eine direkte Peer-to-Peer-Verbindung zwischen deinem Browser und deinem PC.",
   "diff.5": "<strong>Eine eigene Aufnahme- und Encoding-Engine.</strong> Auf dem Gaming-PC installiert, ist es sofort ein Host — und es koppelt sich auch mit Hosts von <a href=\"/sunshine-web-client.html\">Sunshine, Apollo, Wolf und MultiSeat</a>.",
-  "diff.6": "<strong>Bis zu vier Spieler.</strong> Lade drei Freunde in das Spiel ein, das schon auf deinem PC läuft — jeder von seinem eigenen Gerät und Browser aus, mit seinem eigenen Controller.",
+  "diff.6": "<strong>Bis zu fünf Spieler.</strong> Lade vier Freunde in das Spiel ein, das schon auf deinem PC läuft — jeder von seinem eigenen Gerät und Browser aus, mit seinem eigenen Controller.",
   "know.h": "Gut zu wissen",
   "know.1": "Auf dem Gaming-PC läuft der MoonlightWeb-Server: Windows 10 oder 11, macOS auf Apple Silicon oder Linux, mit einer GPU, die Video encodieren kann.",
   "know.2": "Welche Codecs angeboten werden, hängt vom Gerät und Browser ab, von dem aus du spielst: H264 funktioniert überall, HEVC und AV1 überall dort, wo sie per Hardware dekodiert werden.",

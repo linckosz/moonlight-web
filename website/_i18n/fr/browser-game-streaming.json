@@ -11,7 +11,7 @@
   "diff.3": "<strong>La même page sur chaque appareil.</strong> Windows, macOS, Linux, ChromeOS, Android, iPhone, iPad, navigateurs de TV — un seul client, une seule apparence, un seul jeu de réglages.",
   "diff.4": "<strong>Auto-hébergé et open source.</strong> GPL-3.0, sans compte, sans abonnement. Le flux est une connexion directe, pair-à-pair, entre votre navigateur et votre PC.",
   "diff.5": "<strong>Son propre moteur de capture et d’encodage.</strong> Installé sur le PC gamer, il en fait aussitôt un hôte — et il s’appaire aussi avec les hôtes <a href=\"/sunshine-web-client.html\">Sunshine, Apollo, Wolf et MultiSeat</a>.",
-  "diff.6": "<strong>Jusqu’à quatre joueurs.</strong> Invitez trois amis dans le jeu qui tourne déjà sur votre PC, chacun depuis son propre appareil et son navigateur, avec sa propre manette.",
+  "diff.6": "<strong>Jusqu’à cinq joueurs.</strong> Invitez quatre amis dans le jeu qui tourne déjà sur votre PC, chacun depuis son propre appareil et son navigateur, avec sa propre manette.",
   "know.h": "Bon à savoir",
   "know.1": "Le PC gamer fait tourner le serveur MoonlightWeb : Windows 10 ou 11, macOS sur Apple Silicon, ou Linux, avec un GPU capable d’encoder la vidéo.",
   "know.2": "Les codecs proposés dépendent de l’appareil et du navigateur depuis lesquels vous jouez : H264 fonctionne partout, HEVC et AV1 partout où ils sont décodés matériellement.",
