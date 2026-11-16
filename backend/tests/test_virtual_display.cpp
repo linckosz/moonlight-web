@@ -1213,4 +1213,48 @@ void run_virtual_display_tests()
         CHECK(launchBlockedByKeep(kept, QString(), true));
         CHECK(launchBlockedByKeep(kept, QString(), false));
     }
+
+    SECTION("VirtualDisplay — an owner's card of a display turned off brings the others back");
+    {
+        const QString kept = QStringLiteral("\\\\?\\DISPLAY#AAA#1&kept#{e6}");
+        const QString dark = QStringLiteral("\\\\?\\DISPLAY#BBB#1&dark#{e6}");
+        // During the grace (or a crash's): no stream on the kept display, none
+        // launching, the card's display detached and last drawn lit.
+        CHECK(launchWhileKept(Asker::Owner, kept, QString(), dark, false) ==
+              KeptLaunch::RestoreThenLaunch);
+        // The kept display still streamed, or a stream still launching.
+        CHECK(launchWhileKept(Asker::Owner, kept, QString(), dark, true) == KeptLaunch::Refuse);
+        // A guest: as before (its 409).
+        CHECK(launchWhileKept(Asker::Guest, kept, QString(), dark, false) == KeptLaunch::Launch);
+        // A display truly unplugged, never seen lit: as before.
+        CHECK(launchWhileKept(Asker::Owner, kept, QString(), QString(), false) ==
+              KeptLaunch::Launch);
+        CHECK(launchWhileKept(Asker::Owner, kept, QString(), QStringLiteral("a\tb"), false) ==
+              KeptLaunch::Launch);
+        // The kept display itself, or any display still active: as before.
+        CHECK(launchWhileKept(Asker::Owner, kept, kept, QString(), false) == KeptLaunch::Launch);
+        CHECK(launchWhileKept(Asker::Owner, kept, dark, dark, false) == KeptLaunch::Launch);
+        // A dark card that names the kept display: nothing to bring back.
+        CHECK(launchWhileKept(Asker::Owner, kept, QString(), kept, false) == KeptLaunch::Launch);
+        // The others on: as before.
+        CHECK(launchWhileKept(Asker::Owner, QString(), QString(), dark, false) ==
+              KeptLaunch::Launch);
+        // Matched as written: another case is another path.
+        CHECK(launchWhileKept(Asker::Owner, kept, QString(), kept.toLower(), false) ==
+              KeptLaunch::RestoreThenLaunch);
+    }
+
+    SECTION("VirtualDisplay — a kept display's grace acts only on the layout it was armed on");
+    // Run out, nothing streamed: the others back.
+    CHECK(keptGraceEnd(3, 3, true, false, false) == KeptGraceEnd::Restore);
+    // A stream still launching: once more.
+    CHECK(keptGraceEnd(3, 3, true, false, true) == KeptGraceEnd::Again);
+    // Streamed again (a reload): nothing, its own end arms the next grace.
+    CHECK(keptGraceEnd(3, 3, true, true, false) == KeptGraceEnd::Nothing);
+    CHECK(keptGraceEnd(3, 3, true, true, true) == KeptGraceEnd::Nothing);
+    // Nothing kept any more (a /start brought them back already).
+    CHECK(keptGraceEnd(3, 3, false, false, false) == KeptGraceEnd::Nothing);
+    // An old timer after a newer KeepOnly or RestoreLayout: nothing at all.
+    CHECK(keptGraceEnd(3, 4, true, false, false) == KeptGraceEnd::Nothing);
+    CHECK(keptGraceEnd(3, 5, true, false, true) == KeptGraceEnd::Nothing);
 }

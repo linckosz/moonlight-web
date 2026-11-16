@@ -112,6 +112,10 @@ public:
     void keepOnly(const QString& devicePath, Callback cb);
     /// The layout from before KeepOnly back. @p cb may be null.
     void restoreLayout(Callback cb);
+    /// One more on every keepOnly() and restoreLayout() asked (VDGRACE): a
+    /// kept display's grace armed before either does nothing when it runs out
+    /// (VirtualDisplay::keptGraceEnd).
+    quint64 layoutGeneration() const { return m_LayoutGeneration; }
     /// The display a real display's stream keeps on while the others are
     /// off, from the helper's marker; empty when none is (the others on, or
     /// off for ours).
@@ -202,6 +206,7 @@ private:
     VirtualDisplay::Request m_Request;
     QList<Callback> m_Callbacks; ///< who asked for the running operation
     QList<Pending> m_Queue;      ///< what comes after it
+    quint64 m_LayoutGeneration = 0;
     QString m_Error;
     QString m_Display;
     /// The mode the display was last turned on in by this process, so a

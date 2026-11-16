@@ -216,6 +216,7 @@ static constexpr qint64 kLaunchingCountsMs = 60 * 1000;
 // Set in main once the pool exists (VDEXCLALL): see there.
 static std::function<bool(int)> g_OtherStreamOn;
 static std::function<void(int)> g_RestoreKeptSoon;
+static std::function<bool(const QString&, bool*)> g_KeptStreamed;
 // The grace before the displays a real display's stream turned off come
 // back, as the virtual display's (VirtualDisplayJob::kReleaseGraceMs).
 static constexpr int kKeptReleaseGraceMs = 4000;
@@ -3053,16 +3054,41 @@ int main(int argc, char* argv[])
     // The others back once no stream is left on the display kept, after a
     // grace (@p graceMs): a reload or a take-over of the same display comes
     // back to the screens as they were, a crash's page in kCrashGraceMs.
-    g_RestoreKeptSoon = [&g_Pool](int graceMs) {
-        QTimer::singleShot(graceMs, qApp, [&g_Pool]() {
+    // Whether a stream shows the display kept (@p kept); @p launching, whether
+    // any stream is still on its way, on whichever display (VDGRACE).
+    g_KeptStreamed = [&g_Pool](const QString& kept, bool* launching) {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        bool streamed = false;
+        bool onItsWay = false;
+        for (int i = 0; i < g_Pool.size(); ++i) {
+            const SessionPool::Slot& sl = g_Pool.at(i);
+            if (!sl.worker.isNull() && sl.hostUuid == NativeHostBackend::hostUuid() &&
+                screenKeyForApp(sl.appId) == kept)
+                streamed = true;
+            const qint64 since = g_SlotLaunchingSinceMs.value(i, 0);
+            if (since > 0 && now - since < kLaunchingCountsMs) onItsWay = true;
+        }
+        if (launching) *launching = onItsWay;
+        return streamed;
+    };
+    // The others back once no stream is left on the display kept, after a
+    // grace (@p graceMs): a reload or a take-over of the same display comes
+    // back to the screens as they were, a crash's page in kCrashGraceMs. A
+    // stream still launching waits one more grace; a grace armed before a
+    // later KeepOnly or RestoreLayout does nothing (VDGRACE).
+    g_RestoreKeptSoon = [](int graceMs) {
+        const quint64 armedAt = VirtualDisplayJob::instance().layoutGeneration();
+        QTimer::singleShot(graceMs, qApp, [armedAt, graceMs]() {
             const QString kept = VirtualDisplayJob::keptDisplay();
-            if (kept.isEmpty()) return;
-            bool streamed = false;
-            for (const SessionPool::Slot& sl : g_Pool)
-                if (!sl.worker.isNull() && sl.hostUuid == NativeHostBackend::hostUuid() &&
-                    screenKeyForApp(sl.appId) == kept)
-                    streamed = true;
-            if (!VirtualDisplay::screenOthersComeBack(true, streamed)) return;
+            bool launching = false;
+            const bool streamed = !kept.isEmpty() && g_KeptStreamed(kept, &launching);
+            switch (VirtualDisplay::keptGraceEnd(armedAt,
+                                                 VirtualDisplayJob::instance().layoutGeneration(),
+                                                 !kept.isEmpty(), streamed, launching)) {
+            case VirtualDisplay::KeptGraceEnd::Nothing: return;
+            case VirtualDisplay::KeptGraceEnd::Again: g_RestoreKeptSoon(graceMs); return;
+            case VirtualDisplay::KeptGraceEnd::Restore: break;
+            }
             qInfo() << "[Session] no stream left on the display kept — the other displays "
                        "back on";
             VirtualDisplayJob::instance().restoreLayout(nullptr);
@@ -6406,6 +6432,9 @@ int main(int argc, char* argv[])
                                 if (!ok)
                                     qWarning().noquote()
                                         << "[Session] the other displays stay on:" << error;
+                                // Armed again under this layout: a launch that
+                                // ends with no stream still brings them back.
+                                if (ok && g_RestoreKeptSoon) g_RestoreKeptSoon(kKeptReleaseGraceMs);
                                 claimThenStart();
                             });
                     };

@@ -301,11 +301,13 @@ void VirtualDisplayJob::keepOnly(const QString& devicePath, Callback cb)
         if (cb) cb(false, QStringLiteral("not a display key"));
         return;
     }
+    ++m_LayoutGeneration;
     enqueue(Action::KeepOnly, 0, 0, 0, false, false, std::move(cb), devicePath);
 }
 
 void VirtualDisplayJob::restoreLayout(Callback cb)
 {
+    ++m_LayoutGeneration;
     enqueue(Action::RestoreLayout, 0, 0, 0, false, false, std::move(cb));
 }
 

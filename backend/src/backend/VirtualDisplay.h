@@ -584,6 +584,41 @@ bool screenOthersComeBack(bool offForScreen, bool keptStreamed);
 /// take the kept one's place.
 bool launchBlockedByKeep(const QString& keptKey, const QString& launchKey, bool launchIsOurs);
 
+/// What an owner's /start of a display's card does while a real display's
+/// stream has the others off (VDGRACE, 16/11/2026).
+enum class KeptLaunch
+{
+    Launch,            ///< as before: launched, or refused by the usual checks
+    RestoreThenLaunch, ///< the other displays back on first, then launched
+    Refuse,            ///< refused: the kept display is still streamed
+};
+
+/// launchWhileKept(): the others off for @p keptKey (empty when they are on);
+/// the display the card stands for among the active ones (@p liveKey, empty
+/// when Windows detached it), and as its card was last drawn lit (@p darkKey,
+/// empty when not); @p keptStreamed, a stream on the kept display or any
+/// stream still launching. Only the owner (@p asker) brings the others back,
+/// and only for a display that stream turned off, by its exact device path:
+/// a guest, an unplugged display or one never seen lit goes the usual way.
+KeptLaunch launchWhileKept(Asker asker, const QString& keptKey, const QString& liveKey,
+                           const QString& darkKey, bool keptStreamed);
+
+/// What a kept display's grace does when it runs out (VDGRACE).
+enum class KeptGraceEnd
+{
+    Nothing, ///< another layout since it was armed, nothing kept, or still streamed
+    Again,   ///< a stream is still launching: the same grace once more
+    Restore, ///< the other displays back on
+};
+
+/// keptGraceEnd(): the layout generation when the grace was armed
+/// (@p armedAt) and now (@p layoutNow, VirtualDisplayJob::layoutGeneration),
+/// whether a display is kept (@p kept), streamed (@p keptStreamed) and
+/// whether any stream is still launching (@p launching). A grace armed before
+/// a later KeepOnly or RestoreLayout never acts on what came after it.
+KeptGraceEnd keptGraceEnd(quint64 armedAt, quint64 layoutNow, bool kept, bool keptStreamed,
+                          bool launching);
+
 /// RestoreLayout, after the layout from before (@p layoutApplied) or
 /// Windows' extended one: whether our display is taken off the desktop. Only
 /// for an exclusive stream of ours (@p markerOurs) whose display is still

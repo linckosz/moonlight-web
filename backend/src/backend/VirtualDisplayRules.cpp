@@ -311,6 +311,23 @@ bool launchBlockedByKeep(const QString& keptKey, const QString& launchKey, bool 
     return launchKey != keptKey;
 }
 
+KeptLaunch launchWhileKept(Asker asker, const QString& keptKey, const QString& liveKey,
+                           const QString& darkKey, bool keptStreamed)
+{
+    if (keptKey.isEmpty() || !liveKey.isEmpty() || asker != Asker::Owner) return KeptLaunch::Launch;
+    // Matched as written: a display turned off by that stream, not the kept
+    // one, and not a name that only looks like one.
+    if (!validDevicePath(darkKey) || darkKey == keptKey) return KeptLaunch::Launch;
+    return keptStreamed ? KeptLaunch::Refuse : KeptLaunch::RestoreThenLaunch;
+}
+
+KeptGraceEnd keptGraceEnd(quint64 armedAt, quint64 layoutNow, bool kept, bool keptStreamed,
+                          bool launching)
+{
+    if (armedAt != layoutNow || !kept || keptStreamed) return KeptGraceEnd::Nothing;
+    return launching ? KeptGraceEnd::Again : KeptGraceEnd::Restore;
+}
+
 bool detachOursAfterRestore(bool markerOurs, bool layoutApplied, bool oursActive)
 {
     // The layout from before ours has it off already; whatever left it on —

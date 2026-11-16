@@ -734,6 +734,19 @@ void appendDarkDisplays(const QVector<NvApp>& physical, QVector<NvApp>& apps)
 
 } // namespace
 
+QString NativeHostBackend::darkDisplayKey(int appId)
+{
+#ifdef Q_OS_WIN
+    if (!QFile::exists(VirtualDisplay::othersOffPath())) return QString();
+    QMutexLocker lock(&s_LitMutex);
+    for (const NvApp& app : std::as_const(s_LitDisplays))
+        if (app.id() == appId) return app.device().value(QStringLiteral("key")).toString();
+#else
+    Q_UNUSED(appId);
+#endif
+    return QString();
+}
+
 void NativeHostBackend::getAppList(const QString& seatId, BackendAppListCallback cb)
 {
     Q_UNUSED(seatId);
