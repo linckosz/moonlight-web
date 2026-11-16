@@ -10347,8 +10347,12 @@ export class StreamView {
     static EDGE_TURN_IDLE_MS = 200;
     /** A turn never runs longer than this without a real move (backstop). */
     static EDGE_TURN_MAX_MS = 30000;
-    /** The turn's speed, in the CSS pixels a second movementX counts in. */
-    static EDGE_TURN_MIN_SPEED = 300;
+    /**
+     * The turn's speed, in the CSS pixels a second movementX counts in. The
+     * hand slows down as it reaches the edge, so the floor is what most turns
+     * run at: 300 felt slow on an iPad in Portal 2 (Bruno, 16/11/2026).
+     */
+    static EDGE_TURN_MIN_SPEED = 500;
     static EDGE_TURN_MAX_SPEED = 1500;
     /** The motion before the edge that sets the speed. */
     static EDGE_TURN_SAMPLE_MS = 100;

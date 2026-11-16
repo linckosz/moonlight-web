@@ -99,6 +99,22 @@ describe('edge turn in lock-free look', () => {
         expect(sent.every((m) => m.dy === 0)).toBe(true);
     });
 
+    it('turns no slower than the floor after a slow approach', () => {
+        const { v, sent } = view();
+        for (let i = 0; i < 10; i++) {
+            now += 10;
+            move(v, right() - 10 + i, 1); // 100 px/s
+        }
+        move(v, right(), 0);
+        sent.length = 0;
+        for (let i = 0; i < 10; i++) {
+            tick(10);
+            move(v, right(), 0);
+        }
+        // 100 ms at the floor.
+        expect(turned(sent)).toBe(StreamView.EDGE_TURN_MIN_SPEED / 10);
+    });
+
     it('stops when the hand stops pushing', () => {
         const { v, sent } = view();
         pushToRightEdge(v);
