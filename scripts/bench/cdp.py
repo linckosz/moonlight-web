@@ -113,9 +113,14 @@ class Cdp:
             time.sleep(0.05)
 
     def click_text(self, text, tag_hint=""):
+        # Only an element that is laid out (getClientRects not empty): a hidden
+        # one with the same text answers a zero rectangle, and the click then
+        # lands at the page's corner while the caller believes it went through.
+        # The start-of-stream shortcuts slide carries its own "Fullscreen".
         js = f"""(() => {{
             const els = [...document.querySelectorAll('{tag_hint or "*"}')].filter(e =>
-                e.children.length === 0 && e.textContent.trim() === {json.dumps(text)});
+                e.children.length === 0 && e.getClientRects().length > 0 &&
+                e.textContent.trim() === {json.dumps(text)});
             if (!els.length) return null;
             els[0].scrollIntoView({{block: 'center'}});
             const r = els[0].getBoundingClientRect();
@@ -329,9 +334,45 @@ def main():
         c.click(*pos)
         print("clicked", args[0], "at", pos)
     elif cmd == "fullscreen":
-        pos = c.click_text("Fullscreen")
+        # The stream header's own button, by id rather than by its text: the
+        # text also sits in the shortcuts slide, and a click that did not take
+        # went unnoticed until the probe stopped on "not visible and fullscreen"
+        # (15/11/2026). A standby view has a button of its own, so the one laid
+        # out is taken, and the click goes only where that button is the
+        # element under the point. Exits non-zero with what it saw whenever
+        # the page is not fullscreen afterwards.
+        if c.eval("!!document.fullscreenElement"):
+            print("fullscreen: already")
+            return
+        found = c.eval("""(() => {
+            const b = [...document.querySelectorAll('#btn-stream-fs')]
+                .find(e => e.getClientRects().length > 0);
+            if (!b) return {why: 'no fullscreen button laid out'};
+            b.scrollIntoView({block: 'center'});
+            const r = b.getBoundingClientRect();
+            if (r.width < 1 || r.height < 1) return {why: 'the fullscreen button has no size'};
+            const x = r.left + r.width / 2, y = r.top + r.height / 2;
+            const top = document.elementFromPoint(x, y);
+            if (!top || !b.contains(top)) {
+                const t = top ? top.tagName.toLowerCase() + (top.className ? '.' + String(top.className).trim().split(/\\s+/).join('.') : '') : 'nothing';
+                return {why: 'the fullscreen button is covered by ' + t};
+            }
+            return {pos: [x, y]};
+        })()""")
+        state_js = ("JSON.stringify({fs: !!document.fullscreenElement, visibility: document.visibilityState, "
+                    "cssFs: !!document.querySelector('.stream-css-fs')})")
+        if not found or not found.get("pos"):
+            why = (found or {}).get("why", "the page answered nothing")
+            raise SystemExit(f"fullscreen not asked: {why}; page {c.eval(state_js)}")
+        pos = found["pos"]
+        c.click(*pos)
         time.sleep(1.5)
-        print("fullscreen at", pos, "->", c.eval("!!document.fullscreenElement"))
+        state = c.eval(state_js)
+        if not c.eval("!!document.fullscreenElement"):
+            # cssFs true: requestFullscreen was refused and the page fell back
+            # to filling itself (StreamViewFullscreen._requestFullscreen).
+            raise SystemExit(f"fullscreen refused after the click at {pos}: page {state}")
+        print("fullscreen at", pos, "->", True, state)
     elif cmd == "exitfs":
         c.key_combo("x", "KeyX", 1 | 2 | 8)
         time.sleep(1)

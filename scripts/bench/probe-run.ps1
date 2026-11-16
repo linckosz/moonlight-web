@@ -185,7 +185,11 @@ if ($AlreadyParked) {
 $state = python cdp.py --port $DebugPort eval "document.visibilityState + ' fs=' + !!document.fullscreenElement"
 "visibility: $state"
 if ($state -notmatch '^visible fs=(True|true)') {
-    Write-Stopped 'the client page is not visible and fullscreen: nothing brings it to the front'; return
+    # What the page answered goes in the reason: "hidden" (another window is
+    # over it) and "fs=false" (the fullscreen click did not take) call for
+    # different things, and the line alone is what a run keeps (15/11/2026).
+    $seen = if ($state) { ($state | Out-String).Trim() } else { 'no answer from the page' }
+    Write-Stopped "the client page is not visible and fullscreen (it answered: $seen); nothing brings it to the front"; return
 }
 
 # No probe on the page at all: the launch reply did not carry latency_flag,

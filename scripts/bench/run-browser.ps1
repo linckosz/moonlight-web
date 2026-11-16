@@ -375,7 +375,14 @@ try {
             # 1080p HEVC that way — the log line "Per-request streaming settings" is
             # what gives it away, so it is checked below.
             $settingsPath = Join-Path $ResultsDir "settings-$($pass.id).json"
-            ($pass.settings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
+            # The overlay is what "negotiated" and "perf" below are read from, and
+            # it is off unless show_performance_stats is true: on a fresh profile
+            # a pass streamed and came back with {} and an empty perf (15/11/2026).
+            # Turned on here unless the pass sets it itself.
+            $passSettings = [ordered]@{}
+            foreach ($p in $pass.settings.PSObject.Properties) { $passSettings[$p.Name] = $p.Value }
+            if (-not $passSettings.Contains('show_performance_stats')) { $passSettings['show_performance_stats'] = $true }
+            ([pscustomobject]$passSettings | ConvertTo-Json -Compress) | Set-Content -Path $settingsPath -Encoding UTF8
             # The WebGL renderer's GPU preference, before the reload that follows.
             # Cleared when not asked for: the bench profile keeps its storage, and
             # a value left by the previous A/B would measure that one again.
@@ -425,7 +432,20 @@ try {
                 continue
             }
 
-            Cdp fullscreen | Out-Null
+            # Read, never thrown away: a click that did not take left the page
+            # windowed, and the probe then stopped on "not visible and
+            # fullscreen" with nothing to say why (15/11/2026). cdp.py exits
+            # non-zero with what the page showed; the pass is recorded with it
+            # and measures nothing.
+            $fs = try { Cdp fullscreen } catch { "$_" }
+            if ($fs -notmatch '(?m)^fullscreen(: already| at .*-> True)') {
+                Write-Warning "  fullscreen refused: $($fs.Trim())"
+                $row.error = "fullscreen refused: $($fs.Trim())"
+                $out += [pscustomobject]$row
+                ($row | ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+                continue
+            }
+            Write-Host "  $($fs.Trim())"
             Start-Sleep -Seconds 2
 
             # The NEGOTIATED settings, which are not always the ones asked for. Read off
@@ -451,6 +471,10 @@ try {
                 $probe = & powershell @probeArgs 2>&1 | Out-String
                 $row.probe = $probe.Trim()
                 $line = @($probe -split "`n" | Where-Object { $_ -match '"label"' }) | Select-Object -First 1
+                # Its check of the page, kept in the run's own words: $row is lost
+                # when a stopped series throws below.
+                $seen = @($probe -split "`n" | Where-Object { $_ -match '^visibility: ' }) | Select-Object -First 1
+                if ($seen) { Write-Host "  $($seen.Trim())" }
                 if ($line) { Write-Host "  probe      : $($line.Trim())" }
                 # No line at all is a probe that never started: not a measure, and
                 # nothing to say the pointer is where it should be. The run stops.
