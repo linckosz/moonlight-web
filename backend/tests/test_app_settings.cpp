@@ -122,6 +122,51 @@ void run_app_settings_tests()
     CHECK_EQ(s.iceTcp443(), false);             // not until the shared ports are the default
     CHECK_EQ(s.debugIceDropUdp(), false);       // a bench switch, never on by itself
     CHECK_EQ(s.debugDevStandardPorts(), false); // and so is this one
+    // The streams' shared ports: on by themselves only in a build compiled
+    // as the DEV edition. What the file says wins in both kinds of build,
+    // and what is not a boolean asks for nothing in either.
+    for (const bool devBuild : {false, true}) {
+        const auto absent =
+            AppSettings::iceUdpMuxChoice(QJsonValue(QJsonValue::Undefined), devBuild);
+        CHECK_EQ(absent.on, devBuild);
+        CHECK_EQ(absent.byDefault, devBuild);
+        const auto yes = AppSettings::iceUdpMuxChoice(QJsonValue(true), devBuild);
+        CHECK_EQ(yes.on, true);
+        CHECK_EQ(yes.byDefault, false);
+        const auto no = AppSettings::iceUdpMuxChoice(QJsonValue(false), devBuild);
+        CHECK_EQ(no.on, false);
+        CHECK_EQ(no.byDefault, false);
+        for (const QJsonValue& odd :
+             {QJsonValue(QJsonValue::Null), QJsonValue(QStringLiteral("true")), QJsonValue(1)}) {
+            const auto other = AppSettings::iceUdpMuxChoice(odd, devBuild);
+            CHECK_EQ(other.on, false);
+            CHECK_EQ(other.byDefault, false);
+        }
+    }
+    // This suite is not the DEV edition: off while the file says nothing,
+    // and the file is never given the key by the server itself.
+    CHECK_EQ(s.iceUdpMux(), false);
+    CHECK_EQ(s.iceUdpMuxByDefault(), false);
+    {
+        QFile f(s.m_FilePath);
+        CHECK(f.open(QIODevice::ReadOnly));
+        QJsonObject edited = QJsonDocument::fromJson(f.readAll()).object();
+        f.close();
+        CHECK(!edited.contains("ice_udp_mux"));
+        const QByteArray asFound = QJsonDocument(edited).toJson();
+        for (const bool asked : {true, false}) {
+            edited["ice_udp_mux"] = asked;
+            CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(QJsonDocument(edited).toJson());
+            f.close();
+            CHECK_EQ(s.iceUdpMux(), asked);
+            CHECK_EQ(s.iceUdpMuxByDefault(), false);
+        }
+        CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(asFound);
+        f.close();
+        CHECK_EQ(s.iceUdpMux(), false);
+    }
     s.setHdrEnabled(true);
     CHECK_EQ(s.hdrEnabled(), true);
     s.setChroma444Enabled(true);

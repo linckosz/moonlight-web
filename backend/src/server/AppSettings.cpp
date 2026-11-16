@@ -1024,10 +1024,36 @@ bool AppSettings::iceTcpPassive() const
     return obj.value("ice_tcp_passive").toBool(true);
 }
 
+AppSettings::IceUdpMuxChoice AppSettings::iceUdpMuxChoice(const QJsonValue& stored, bool devBuild)
+{
+    if (stored.isBool()) return {stored.toBool(), false};
+    // Nothing in the file: the build's default. Something that is not a
+    // boolean is no wish for a port.
+    if (stored.isUndefined()) return {devBuild, devBuild};
+    return {false, false};
+}
+
+// The DEV edition's default, under Windows only for now: a real stream on
+// the shared ports is still to be seen under Linux and macOS.
+static bool muxOnByDefault()
+{
+#ifdef Q_OS_WIN
+    return mw::edition::isDevBuild();
+#else
+    return false;
+#endif
+}
+
 bool AppSettings::iceUdpMux() const
 {
     QJsonObject obj = readAll();
-    return obj.value("ice_udp_mux").toBool(false);
+    return iceUdpMuxChoice(obj.value("ice_udp_mux"), muxOnByDefault()).on;
+}
+
+bool AppSettings::iceUdpMuxByDefault() const
+{
+    QJsonObject obj = readAll();
+    return iceUdpMuxChoice(obj.value("ice_udp_mux"), muxOnByDefault()).byDefault;
 }
 
 bool AppSettings::iceTcp443() const

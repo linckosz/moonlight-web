@@ -2764,7 +2764,8 @@ int main(int argc, char* argv[])
     SessionPool g_Pool(signalingPort, kSlotPlan.extraBase, kTotalSlots, kMaxSlots);
 
     // The UDP ports every stream shares (settings.json ice_udp_mux; a
-    // prototype, off unless asked for). Made here, ahead of the router's
+    // prototype, off unless asked for, or unless the build is the DEV
+    // edition and the file says nothing). Made here, ahead of the router's
     // allocator, which reaches it from a thread of its own and must go first;
     // started further down, with the allocator (IceMuxPorts).
     IceMux g_IceMux;
@@ -3503,6 +3504,15 @@ int main(int argc, char* argv[])
             IceMux::setShared(&g_IceMux);
             routerPorts.setStreamMux([&g_IceMux](uint16_t port) { return g_IceMux.holds(port); });
             muxRouter.attach(&muxPorts);
+            // The DEV edition's default, not a line of settings.json: said once,
+            // with the port and the way to turn it off.
+            if (appSettings.iceUdpMuxByDefault()) {
+                const QString line =
+                    QStringLiteral("[IceMux] on by the DEV edition's default: streams share UDP "
+                                   "port %1; \"ice_udp_mux\": false in settings.json turns it off")
+                        .arg(g_IceMux.port(IceMux::kBlock));
+                qInfo().noquote() << line;
+            }
             // A switch of the latency bench, in the environment, never for a
             // user: MW_ICEMUX_STATS=1 logs what the mux did and what the
             // process cost, every ten seconds (the workers, which inherit it,

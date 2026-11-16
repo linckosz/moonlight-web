@@ -23,6 +23,7 @@
 #include <QStringList>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonValue>
 
 #include "../streaming/StreamConfig.h"
 
@@ -125,7 +126,25 @@ public:
     // the streams' UDP ports itself and keeps them, and every stream worker's
     // ICE agent shares them; without it each stream binds a port of its own,
     // as before. Read once, when the server starts.
+    // A build compiled as the DEV edition has it on when the file says
+    // nothing: that edition is where the shared ports are tried first. Only
+    // the default differs. A true or a false in the file is obeyed in every
+    // build, and a --dev run of the release build is not the DEV edition.
     bool iceUdpMux() const;
+    /// Whether iceUdpMux() is true with nothing in the file asking for it:
+    /// said once in the log when the server starts, with the way to turn it
+    /// off.
+    bool iceUdpMuxByDefault() const;
+    /// The rule of the two, free of the file and of the build: what
+    /// "ice_udp_mux" holds (undefined when the key is absent), in a build
+    /// compiled as the DEV edition or not. A value that is not a boolean
+    /// asks for nothing: off, in every build.
+    struct IceUdpMuxChoice
+    {
+        bool on = false;
+        bool byDefault = false;
+    };
+    static IceUdpMuxChoice iceUdpMuxChoice(const QJsonValue& stored, bool devBuild);
     // ── TCP 443 on the router ────────────────────────────────────────────────
     // JSON bool "ice_tcp_443", file-only, DEFAULT false and not seeded for as
     // long as "ice_udp_mux" is not. With it, and with ice_udp_mux and
