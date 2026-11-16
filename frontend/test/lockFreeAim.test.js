@@ -98,3 +98,63 @@ describe('lock-free look on a tablet', () => {
         expect(v._clientCursorPos).toEqual({ x: 1919, y: 0 });
     });
 });
+
+/**
+ * IPADHYB: lock-free look sends deltas only while the host hides its pointer.
+ * With it shown (a desktop, a menu), the moves go out absolute, so the host's
+ * pointer stays under the viewer's own, which iPadOS draws and the page can
+ * neither move nor hide.
+ */
+describe('lock-free look follows whether the host shows its pointer', () => {
+    function refused({ drawn = true, shown = true } = {}) {
+        const r = view();
+        r.v._onGamingClick({ preventDefault() {}, clientX: 480, clientY: 270 });
+        r.v._pointerLockRefused = true;
+        r.v._hostDrawsCursor = drawn;
+        r.v._hostCursorVisible = shown;
+        r.sent.length = 0;
+        return r;
+    }
+    const move = (v, x, y, buttons = 0) =>
+        v._onGamingMouseMove({ movementX: 7, movementY: 3, clientX: x, clientY: y, buttons });
+
+    it('moves the host pointer to the viewer one while it is shown', () => {
+        const { v, sent } = refused();
+        move(v, 240, 135);
+        expect(sent).toEqual([
+            { type: 'mousemove', x: 240, y: 135, referenceWidth: 960, referenceHeight: 540 },
+        ]);
+        expect(v._clientCursorPos).toEqual({ x: 480, y: 270 });
+        // The host's word is late there: the viewer's pointer owns the place.
+        v._clientCursorHostSaid({ x: 10, y: 10, visible: true });
+        expect(v._clientCursorPos).toEqual({ x: 480, y: 270 });
+    });
+
+    it('sends deltas while the host hides its pointer', () => {
+        const { v, sent } = refused({ shown: false });
+        move(v, 240, 135);
+        expect(sent).toEqual([{ type: 'mousemove', dx: 7, dy: 3 }]);
+    });
+
+    it('keeps deltas when the host never says whether it shows it', () => {
+        const { v, sent } = refused({ drawn: false, shown: false });
+        move(v, 240, 135);
+        expect(sent).toEqual([{ type: 'mousemove', dx: 7, dy: 3 }]);
+    });
+
+    it('switches with the host pointer, but not in the middle of a press', () => {
+        const { v, sent } = refused();
+        move(v, 240, 135, 1);
+        // Windows hides the pointer during some drags: the drag stays absolute.
+        v._hostCursorVisible = false;
+        move(v, 250, 140, 1);
+        expect(sent.map((m) => 'x' in m)).toEqual([true, true]);
+        // Buttons up: the hidden pointer means a game's camera, deltas.
+        move(v, 260, 145, 0);
+        expect(sent[2]).toEqual({ type: 'mousemove', dx: 7, dy: 3 });
+        // Shown again: back under the viewer's pointer.
+        v._hostCursorVisible = true;
+        move(v, 300, 200, 0);
+        expect(sent[3]).toMatchObject({ x: 300, y: 200 });
+    });
+});

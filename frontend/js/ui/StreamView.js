@@ -9604,11 +9604,16 @@ export class StreamView {
                 if (this._rawPointerLive()) return;
                 this._sendRelativeMouse(e.movementX, e.movementY);
                 this._noteMouseSent(e);
-            } else if (this._pointerLockRefused && this._lockFreeLook) {
+            } else if (
+                this._pointerLockRefused &&
+                this._lockFreeLook &&
+                this._lookFreeByDeltas(e)
+            ) {
                 // Lock-free look (iOS, or key mw_lookfree): no lock to be had, so the browser's own
                 // motion goes out relative — the game turns as long as the
                 // browser reports movement, edge or not. The host's cursor no
-                // longer follows the local one: a look mode, not for menus.
+                // longer follows the local one: a look mode, not for menus —
+                // so only while the host hides its pointer (_lookFreeByDeltas).
                 if (e.movementX || e.movementY) {
                     this._sendRelativeMouse(e.movementX, e.movementY);
                     this._noteMouseSent(e);
@@ -10287,8 +10292,15 @@ export class StreamView {
         // that Windows' own speed and acceleration reshape, so the drawing is
         // put back on the host's word at every report — the click lands where
         // the host's pointer really is (IPADLOOK, 15/11/2026). Between two
-        // reports the deltas move it (see _onGamingMouseMove).
-        const lookFree = this._gamingMode && this._pointerLockRefused && this._lockFreeLook;
+        // reports the deltas move it (see _onGamingMouseMove). Only while the
+        // moves go out as deltas: in between they are absolute again
+        // (_lookFreeByDeltas), and the drawing follows the viewer's pointer;
+        // before the first move has said which, the deltas are assumed.
+        const lookFree =
+            this._gamingMode &&
+            this._pointerLockRefused &&
+            this._lockFreeLook &&
+            this._lookFreeDeltas !== false;
         if (this._clientCursorPos && !lookFree) return;
         if (msg.visible === false) return;
         let x = Number(msg.x),
@@ -10302,6 +10314,31 @@ export class StreamView {
         if (fh > 0) y = Math.max(0, Math.min(fh - 1, y));
         this._clientCursorPos = { x, y };
         this._placeClientCursor();
+    }
+
+    /**
+     * Whether a move in lock-free look goes out as a delta (true) or as an
+     * absolute position (false), and so whether the host's pointer is moved
+     * by the motion or put under the viewer's own (IPADHYB, 16/11/2026).
+     *
+     * The deltas are for a game that hides the pointer and turns the camera
+     * with the motion: there no edge must stop it. With the host's pointer
+     * shown — a desktop, a menu — deltas only made two pointers: the viewer's
+     * own, which iPadOS draws and the page can neither move nor hide, and the
+     * host's, moved by the same motion reshaped by Windows' speed and
+     * acceleration and stopped at the screen's edges. The two drifted apart
+     * (Bruno, iPad, 16/11/2026). Absolute positions keep them one.
+     *
+     * Only a host that sends its pointer's shape says whether it shows it
+     * (`cursor`); without that word the deltas stay, as before. And a press
+     * keeps the way it began until every button is up: Windows hides the
+     * pointer for the whole of some drags (a title bar, 17/09/2026), and
+     * switching mid-drag would drop the window somewhere else.
+     */
+    _lookFreeByDeltas(e) {
+        const hidden = !(this._hostDrawsCursor && this._hostCursorVisible);
+        if (!e.buttons || this._lookFreeDeltas === undefined) this._lookFreeDeltas = hidden;
+        return this._lookFreeDeltas;
     }
 
     /** Draw (or hide) the pointer where we think it is. */
