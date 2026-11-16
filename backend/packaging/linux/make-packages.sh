@@ -48,9 +48,12 @@ EDITION=${4:-prod}
 # browser on a network that lets only such ports out still streams over UDP.
 # The tunnel binds its own UDP port among the same eight. On the port the
 # streams share, a datagram that belongs to no stream is dropped.
-# The DEV edition listens on its own TCP ports and leaves the media block alone:
-# production opens it, and a DEV uninstall closing it would cut production off.
-# Its tunnel holes are its own block (kDevTunnelPool), so it opens that.
+# The DEV edition never touches these rules: a DEV uninstall closing the media
+# block would cut production off. It opens what it uses (its own TCP ports, its
+# tunnel block kDevTunnelPool, and the stream block, which its streams use as
+# production's do) under a name of its own, a ufw application profile or a
+# firewalld service (the DEV block near the end of this script). Its PORTS
+# below are only what an earlier DEV wrote as plain rules.
 case "$EDITION" in
     prod) NAME=moonlightweb;     APP=MoonlightWeb;
           PORTS="443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp" ;;
@@ -231,6 +234,7 @@ MEDIA_RANGE=48550-48573
 # (Debian/Ubuntu) only; the AUR hook (moonlightweb-bin.install) does the same.
 # 48010:48033/udp was the media block up to 0.3.0, on Sunshine's RTSP port: an
 # upgrade closes it.
+# firewall-begin (the DEV edition puts its own block here: see below)
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
     for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp; do
         firewall-cmd --permanent --add-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
@@ -243,6 +247,7 @@ elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Statu
     done
     [ -n "$MEDIA_RANGE" ] && ufw delete allow 48010:48033/udp >/dev/null 2>&1
 fi
+# firewall-end
 
 # Reserve the media block from the kernel's ephemeral ports (32768-60999 by
 # default), so no outgoing connection is handed one of them at random and the
@@ -459,6 +464,7 @@ if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
         systemctl disable moonlightweb.service >/dev/null 2>&1 || true
     fi
 
+    # firewall-begin (the DEV edition puts its own block here: see below)
     if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
         for p in 443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp; do
             firewall-cmd --permanent --remove-port="$(echo "$p" | tr : -)" >/dev/null 2>&1 || true
@@ -469,6 +475,7 @@ if [ "${1:-}" != "upgrade" ] && [ "${1:-0}" != "1" ]; then
             ufw delete allow "$p" >/dev/null 2>&1 || true
         done
     fi
+    # firewall-end
 
     # The repository postinst added (production only; see there). Left on an
     # upgrade, which needs it; taken away with the package.
@@ -508,6 +515,94 @@ if [ "$EDITION" = dev ]; then
            "$ROOT/postinst.sh" "$ROOT/prerm.sh"
     if grep -n '/opt/moonlightweb/\|moonlightweb\.service' "$ROOT/postinst.sh" "$ROOT/prerm.sh"; then
         echo "error: a DEV hook still names the production package (above)" >&2
+        exit 1
+    fi
+
+    # The DEV edition's firewall rules go under a name of its own: a ufw
+    # application profile and a firewalld service, both files of this package.
+    # They hold every port it uses: HTTPS and HTTP, its tunnel block in TCP, and
+    # the whole stream block in UDP and TCP — its shared port is walked down
+    # from 48573 and a slot with a socket of its own binds 48550 + slot
+    # (network/RouterPortPools.h). Production opens the same stream block under
+    # plain port rules of its own: each package adds and takes away only its
+    # own, so neither ever closes the other's. Up to 0.4.4 this edition wrote
+    # three plain rules (48443/tcp, 48080/tcp, 46064:46095/tcp, numbers
+    # production never opens): they go once the named rule is in, never before,
+    # so no port closes on the way.
+    mkdir -p "$PKG/etc/ufw/applications.d" "$PKG/usr/lib/firewalld/services"
+    cat > "$PKG/etc/ufw/applications.d/moonlightweb-dev" <<'UFW'
+[MoonlightWebDev]
+title=MoonlightWeb DEV edition
+description=MoonlightWeb DEV: HTTPS and HTTP, its tunnel in TCP, the stream block in UDP and TCP
+ports=48443,48080/tcp|46064:46095/tcp|48550:48573/udp|48550:48573/tcp
+UFW
+    cat > "$PKG/usr/lib/firewalld/services/moonlightweb-dev.xml" <<'FWD'
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>MoonlightWeb DEV</short>
+  <description>MoonlightWeb DEV edition: HTTPS and HTTP, its tunnel in TCP, the stream block in UDP and TCP.</description>
+  <port protocol="tcp" port="48443"/>
+  <port protocol="tcp" port="48080"/>
+  <port protocol="tcp" port="46064-46095"/>
+  <port protocol="udp" port="48550-48573"/>
+  <port protocol="tcp" port="48550-48573"/>
+</service>
+FWD
+    cat > "$ROOT/dev-firewall-postinst" <<'POST'
+# The DEV edition's ports, under its own name (make-packages.sh says why).
+if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --reload >/dev/null 2>&1 || true
+    firewall-cmd --permanent --add-service=moonlightweb-dev >/dev/null 2>&1 || true
+    if firewall-cmd --permanent --query-service=moonlightweb-dev >/dev/null 2>&1; then
+        for p in 48443/tcp 48080/tcp 46064-46095/tcp; do
+            firewall-cmd --permanent --remove-port="$p" >/dev/null 2>&1 || true
+        done
+    else
+        echo "warning: the firewalld service moonlightweb-dev could not be added; the earlier port rules are kept" >&2
+    fi
+    firewall-cmd --reload >/dev/null 2>&1 || true
+elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+    ufw app update MoonlightWebDev >/dev/null 2>&1 || true
+    ufw allow MoonlightWebDev >/dev/null 2>&1 || true
+    if ufw status 2>/dev/null | grep -q '^MoonlightWebDev '; then
+        for p in 48443/tcp 48080/tcp 46064:46095/tcp; do
+            ufw delete allow "$p" >/dev/null 2>&1 || true
+        done
+    else
+        echo "warning: the ufw profile MoonlightWebDev could not be allowed; the earlier port rules are kept" >&2
+    fi
+fi
+POST
+    cat > "$ROOT/dev-firewall-prerm" <<'PRE'
+    # The DEV edition's own rules only: its profile or service, and the plain
+    # rules an earlier DEV wrote if they are still there. Production's are other
+    # rules, and stay.
+    if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+        firewall-cmd --permanent --remove-service=moonlightweb-dev >/dev/null 2>&1 || true
+        for p in 48443/tcp 48080/tcp 46064-46095/tcp; do
+            firewall-cmd --permanent --remove-port="$p" >/dev/null 2>&1 || true
+        done
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    elif command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+        ufw delete allow MoonlightWebDev >/dev/null 2>&1 || true
+        for p in 48443/tcp 48080/tcp 46064:46095/tcp; do
+            ufw delete allow "$p" >/dev/null 2>&1 || true
+        done
+    fi
+PRE
+    # Production's block between the two markers is replaced by the DEV's
+    for hook in postinst prerm; do
+        awk -v blk="$ROOT/dev-firewall-$hook" '
+            BEGIN { while ((getline line < blk) > 0) body = body line "\n" }
+            /# firewall-begin/ { printf "%s", body; skip = 1; n++; next }
+            /# firewall-end/ { skip = 0; e++; next }
+            !skip
+            END { if (n != 1 || e != 1 || skip) exit 3 }' "$ROOT/$hook.sh" > "$ROOT/$hook.sh.new" ||
+            { echo "error: no single firewall block in the DEV $hook" >&2; exit 1; }
+        mv "$ROOT/$hook.sh.new" "$ROOT/$hook.sh"
+    done
+    if grep -n '48550:48573/udp 48550:48573/tcp 3478' "$ROOT/postinst.sh" "$ROOT/prerm.sh"; then
+        echo "error: a DEV hook still opens or closes production's ports (above)" >&2
         exit 1
     fi
 fi
