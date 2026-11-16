@@ -217,6 +217,7 @@ static constexpr qint64 kLaunchingCountsMs = 60 * 1000;
 static std::function<bool(int)> g_OtherStreamOn;
 static std::function<void(int)> g_RestoreKeptSoon;
 static std::function<bool(const QString&, bool*)> g_KeptStreamed;
+static std::function<void(const HttpRequest&, ResponseCallback)> g_StartHostAgain;
 // The grace before the displays a real display's stream turned off come
 // back, as the virtual display's (VirtualDisplayJob::kReleaseGraceMs).
 static constexpr int kKeptReleaseGraceMs = 4000;
@@ -6193,9 +6194,53 @@ int main(int argc, char* argv[])
             const QString launchScreenKey = host->backendType == NativeHostBackend::typeName()
                                                 ? screenKeyForApp(appId)
                                                 : QString();
+            const QString keptKey = host->backendType == NativeHostBackend::typeName()
+                                        ? VirtualDisplayJob::keptDisplay()
+                                        : QString();
+            // The owner's card of a display that stream turned off, every
+            // refusal above passed (VDGRACE, 16/11/2026): once no stream is
+            // left on the display kept — its grace running, or a crash's —
+            // and none is launching, the others come back first, through the
+            // display job (two /start share one). The launch then starts
+            // again from the top, once the card's display is active by the
+            // same device path. A standby leg asks nothing of the displays.
+            if (!keptKey.isEmpty() && !standby && launchScreenKey.isEmpty() &&
+                NativeHostBackend::isDisplayCard(appId) && g_KeptStreamed && g_StartHostAgain) {
+                bool launching = false;
+                const bool streamed = g_KeptStreamed(keptKey, &launching);
+                const QString darkKey = NativeHostBackend::darkDisplayKey(appId);
+                if (VirtualDisplay::launchWhileKept(
+                        VirtualDisplay::Asker::Owner, keptKey, launchScreenKey, darkKey,
+                        streamed || launching) == VirtualDisplay::KeptLaunch::RestoreThenLaunch) {
+                    worker->deleteLater();
+                    qInfo() << "[Session] display card" << appId
+                            << "was turned off by a stream that is gone — the other displays "
+                               "back on first";
+                    VirtualDisplayJob::instance().restoreLayout([req, respond, appId, darkKey](
+                                                                    bool ok, const QString& error) {
+                        if (!ok || !VirtualDisplayJob::keptDisplay().isEmpty()) {
+                            qWarning().noquote()
+                                << "[Session] the other displays did not come back:" << error;
+                            respond(HttpResponse::error(
+                                409, QStringLiteral(
+                                         "The PC's other screens could not be turned back on")));
+                            return;
+                        }
+                        QString why;
+                        if (NativeHostBackend::displayKeyForApp(appId, &why) != darkKey) {
+                            respond(HttpResponse::error(
+                                409, QStringLiteral("That display is no longer connected")));
+                            return;
+                        }
+                        g_StartHostAgain(req, respond);
+                    });
+                    return;
+                }
+                // Refused while the kept display is streamed, or not one that
+                // stream turned off: the refusal below, as before.
+            }
             if (host->backendType == NativeHostBackend::typeName() &&
-                VirtualDisplay::launchBlockedByKeep(VirtualDisplayJob::keptDisplay(),
-                                                    launchScreenKey,
+                VirtualDisplay::launchBlockedByKeep(keptKey, launchScreenKey,
                                                     NativeHostBackend::usesVirtualDisplay(appId))) {
                 worker->deleteLater();
                 respond(HttpResponse::error(
@@ -6556,6 +6601,10 @@ int main(int argc, char* argv[])
     // "This PC's sign-in screen", the card offered in its place, streams the
     // console's sign-in screen instead; once the user has signed in through
     // it, the same card streams the PC's screen the same way.
+    // A launch that brought the other displays back first starts again
+    // from the top (VDGRACE): see where startHost refuses a launch while a
+    // real display is kept.
+    g_StartHostAgain = startHost;
     // Quitting: no stream starts, nothing is touched on the host (QuitRefusal.h).
     // Asked before LaunchGate: a launch that cannot succeed spends no challenge
     // and counts no refusal.
