@@ -4,7 +4,7 @@ Status: prototype, behind `"ice_udp_mux": true` in settings.json (default false,
 not seeded). UDP only. The rest of this note says what exists; the last section
 says what does not yet.
 
-A build compiled as the DEV edition, under Windows and Linux for now, has it on
+A build compiled as the DEV edition, under Windows, Linux and macOS, has it on
 when the file says nothing: that edition is where the shared ports are tried
 before a release has them. Only the default differs: `"ice_udp_mux": false`
 turns it off there as anywhere, a value that is not a boolean asks for nothing,
@@ -456,8 +456,8 @@ is never handed, or taken, as the other's.
 Every one of these leaves the stream on a socket of its own, as without the
 mux:
 
-- `ice_udp_mux` false, or absent outside the DEV edition under Windows and
-  Linux;
+- `ice_udp_mux` false, or absent outside the DEV edition (Windows, Linux and
+  macOS);
 - no port of the stream block can be bound when the server starts;
 - a port that serves keeps failing to read (the reading thread leaves it alone,
   tries it again every second and says so once): streams that start meanwhile;

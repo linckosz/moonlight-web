@@ -1033,11 +1033,11 @@ AppSettings::IceUdpMuxChoice AppSettings::iceUdpMuxChoice(const QJsonValue& stor
     return {false, false};
 }
 
-// The DEV edition's default, under Windows and Linux for now: a real stream
-// on the shared ports is still to be seen under macOS.
+// The DEV edition's default, on the systems where a real stream on the shared
+// ports has been seen: Windows, Linux and macOS.
 static bool muxOnByDefault()
 {
-#if defined(Q_OS_WIN) || defined(Q_OS_LINUX)
+#if defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
     return mw::edition::isDevBuild();
 #else
     return false;
