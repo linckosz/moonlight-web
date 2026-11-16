@@ -178,7 +178,7 @@ All are reached through the **single HTTPS port** — `HttpServer` recognizes th
 | `/ws` | **Signaling** for WebRTC: JSON SDP offers/answers + ICE candidates, per-session (stream slot 0). |
 | `/ws/stream` | **Fallback WSS transport**: binary multiplexed video/audio/input when WebRTC can't connect (slot 0). |
 | `/ws1`, `/ws1/stream` | The same two surfaces for **stream slot 1** — the standby leg of seamless quality switching. Both slots' worker children can listen at once. |
-| `/ws2`…`/ws4` (+ `/stream`) | One pair per **invited player**. Gated on the `mw_player` cookie of *that* slot's live share activation — a session cookie and even a loopback peer are refused here. |
+| `/ws2`…`/ws5` (+ `/stream`) | One pair per **invited player**. Gated on the `mw_player` cookie of *that* slot's live share activation — a session cookie and even a loopback peer are refused here. |
 | `/ws/control` | **Control channel**: every open tab holds one; used to redirect a tab to `/admin` on a second app launch (single-tab dedup). |
 
 The frontend always builds WS URLs from `window.location.host` (page origin) — required for non-default external ports (port parity / multi-instance NAT).
