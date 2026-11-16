@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 // The platform-free half of VirtualDisplay: names, the request/result files,
 // the driver's settings XML. Kept apart from VirtualDisplay.cpp so the
@@ -777,6 +778,24 @@ QPoint placeBeside(const QList<DesktopRect>& others)
         if (!edge || right > edgeRight || (right == edgeRight && r.y < edge->y)) edge = &r;
     }
     return edge ? QPoint(edge->x + edge->width, edge->y) : QPoint(0, 0);
+}
+
+std::optional<QList<QPoint>> movedToOrigin(const QList<QPoint>& origins, int kept)
+{
+    if (kept < 0 || kept >= origins.size()) return std::nullopt;
+    const qint64 dx = -qint64(origins.at(kept).x());
+    const qint64 dy = -qint64(origins.at(kept).y());
+    constexpr qint64 lo = std::numeric_limits<qint32>::min();
+    constexpr qint64 hi = std::numeric_limits<qint32>::max();
+    QList<QPoint> moved;
+    moved.reserve(origins.size());
+    for (const QPoint& o : origins) {
+        const qint64 x = qint64(o.x()) + dx;
+        const qint64 y = qint64(o.y()) + dy;
+        if (x < lo || x > hi || y < lo || y > hi) return std::nullopt;
+        moved.append(QPoint(int(x), int(y)));
+    }
+    return moved;
 }
 
 } // namespace VirtualDisplay

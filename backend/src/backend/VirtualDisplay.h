@@ -776,6 +776,14 @@ struct DesktopRect
 /// and at its place, ours here — and saves that one as the set's.
 QPoint placeBeside(const QList<DesktopRect>& others);
 
+/// The source origins of a layout that keeps one display only (KeepOnly), all
+/// moved by the same amount so that the kept one (@p kept, its index) is at
+/// (0, 0): Windows makes the display there the primary, and a layout with none
+/// there is refused ("The parameter is incorrect"). Every place relative to
+/// another stays. Empty when @p kept is out of range or a move leaves the range
+/// of a desktop coordinate (32 bits): no layout, nothing changed.
+std::optional<QList<QPoint>> movedToOrigin(const QList<QPoint>& origins, int kept);
+
 // ── Paths ───────────────────────────────────────────────────────────────────
 
 /// Per-user staging directory. Not %TEMP%: it holds files an elevated process

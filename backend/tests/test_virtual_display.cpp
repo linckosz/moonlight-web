@@ -26,6 +26,7 @@
 #include <QTemporaryDir>
 
 #include <iterator>
+#include <limits>
 
 // The pure half of "MoonlightWeb Virtual Display": what an elevated helper
 // will act on (the request file), what it answers (the result file), what it
@@ -1035,6 +1036,36 @@ void run_virtual_display_tests()
         chose.insert("others_off", 1);
         CHECK(ownerWantsOthersOff(true, chose, true));
         CHECK(!ownerWantsOthersOff(true, chose, false));
+    }
+
+    SECTION("VirtualDisplay — the one display kept moves to the origin");
+    {
+        // The PC's second screen, left of the primary (DualRTX, 16/11/2026):
+        // kept alone, it goes to (0, 0) and the primary moves with it.
+        const auto left = movedToOrigin({QPoint(-2048, 0), QPoint(0, 0)}, 0);
+        CHECK(left.has_value());
+        CHECK(*left == QList<QPoint>({QPoint(0, 0), QPoint(2048, 0)}));
+        // Right of it, and below: the same, the other way.
+        const auto right = movedToOrigin({QPoint(0, 0), QPoint(2560, -300)}, 1);
+        CHECK(right.has_value());
+        CHECK(*right == QList<QPoint>({QPoint(-2560, 300), QPoint(0, 0)}));
+        // The primary itself, or ours made primary before (Request::exclusive):
+        // nothing moves.
+        const QList<QPoint> primary{QPoint(0, 0), QPoint(-2048, 0), QPoint(2048, 1152)};
+        const auto same = movedToOrigin(primary, 0);
+        CHECK(same.has_value());
+        CHECK(*same == primary);
+        // Every place relative to another stays, with three screens too.
+        const auto three = movedToOrigin({QPoint(-1920, 0), QPoint(0, 0), QPoint(1920, -200)}, 2);
+        CHECK(three.has_value());
+        CHECK(*three == QList<QPoint>({QPoint(-3840, 200), QPoint(-1920, 200), QPoint(0, 0)}));
+        // No layout when a move would leave 32 bits, or the index is none.
+        CHECK(!movedToOrigin({QPoint(std::numeric_limits<int>::min(), 0), QPoint(1, 0)}, 1));
+        CHECK(!movedToOrigin({QPoint(std::numeric_limits<int>::max(), 0), QPoint(-1, 0)}, 1));
+        CHECK(!movedToOrigin({QPoint(0, std::numeric_limits<int>::min()), QPoint(0, 0)}, 0));
+        CHECK(!movedToOrigin({QPoint(0, 0)}, 1));
+        CHECK(!movedToOrigin({QPoint(0, 0)}, -1));
+        CHECK(!movedToOrigin({}, 0));
     }
 
     SECTION("VirtualDisplay — the cards of the displays a stream turned off");

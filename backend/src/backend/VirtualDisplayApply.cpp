@@ -1329,9 +1329,13 @@ bool makePrimary(const QString& devicePath, bool save, QString* error)
         save, error);
 }
 
-/// Every display but ours at @p devicePath off (Request::exclusive), never
-/// saved (VirtualDisplay::savesLayout): Windows' database keeps them on, and
-/// replays that the moment ours goes, whoever switches it off.
+/// Every display but the one at @p devicePath off (Request::exclusive, and
+/// KeepOnly), never saved (VirtualDisplay::savesLayout): Windows' database
+/// keeps them on, and replays that the moment ours goes, whoever switches it
+/// off. The one kept is moved to (0, 0) in the same change, every source with
+/// it (VirtualDisplay::movedToOrigin): a layout with no display there is
+/// refused, and one of the PC's own displays left of the primary is at
+/// (-width, 0). Ours is the primary already (makePrimary), and stays put.
 /// @return how many went off; -1 on failure.
 int keepOnlyOurs(const QString& devicePath, QString* error)
 {
@@ -1339,11 +1343,35 @@ int keepOnlyOurs(const QString& devicePath, QString* error)
     const bool ok = applyDisplayConfig(
         [&](std::vector<DISPLAYCONFIG_PATH_INFO>& paths,
             std::vector<DISPLAYCONFIG_MODE_INFO>& modes, QString* err) {
-            Q_UNUSED(modes);
             const int ours = pathIndexFor(paths, devicePath);
             if (ours < 0) {
                 *err = QStringLiteral("the display is not in the active configuration");
                 return false;
+            }
+            const UINT32 src = paths[size_t(ours)].sourceInfo.modeInfoIdx;
+            if (src == DISPLAYCONFIG_PATH_MODE_IDX_INVALID || src >= modes.size() ||
+                modes[src].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) {
+                *err = QStringLiteral("the display has no source mode");
+                return false;
+            }
+            QList<QPoint> origins;
+            QList<size_t> sources;
+            int kept = -1;
+            for (size_t i = 0; i < modes.size(); ++i) {
+                if (modes[i].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) continue;
+                if (i == src) kept = int(origins.size());
+                const POINTL at = modes[i].sourceMode.position;
+                origins.append(QPoint(int(at.x), int(at.y)));
+                sources.append(i);
+            }
+            const std::optional<QList<QPoint>> moved = VirtualDisplay::movedToOrigin(origins, kept);
+            if (!moved) {
+                *err = QStringLiteral("the display cannot be moved to the desktop's origin");
+                return false;
+            }
+            for (int i = 0; i < sources.size(); ++i) {
+                modes[sources.at(i)].sourceMode.position.x = LONG(moved->at(i).x());
+                modes[sources.at(i)].sourceMode.position.y = LONG(moved->at(i).y());
             }
             off = int(paths.size()) - 1;
             paths = {paths[size_t(ours)]};
