@@ -10491,8 +10491,8 @@ export class StreamView {
      * moving towards that edge (V4) — a pointer that slides into it sideways
      * arms nothing. Once the pointer has rested there for EDGE_TURN_REST_MS,
      * the turn runs at the speed the hand had, until a real move (more than
-     * EDGE_TURN_REAL_PX: the turn rests again, and starts again after the
-     * same rest), a move away from the edge, leaving the band, the edge
+     * EDGE_TURN_REAL_PX: one towards the edge rests it again, and it starts
+     * again after the same rest; any other disarms it), leaving the band, the edge
      * itself (iPadOS takes it: no turn until the pointer has left the band,
      * V2) or EDGE_TURN_VERT_MAX_MS. Its deltas are a real move's, on the same
      * timer as the sideways turn (V5, V6).
@@ -10534,22 +10534,28 @@ export class StreamView {
         let sum = 0;
         // The net motion towards the edge: a jitter back and forth sums to nothing.
         for (const p of this._edgeTurnSamplesY) sum += p.dy * dir;
+        // Towards the edge, by more than a jitter over the sample window: a
+        // pointer that slides in sideways arms nothing (V4).
+        const towards = dy * dir > 0 && sum > StreamView.EDGE_TURN_REAL_PX;
         if (turn && turn.dir === dir) {
             if (!real) return;
-            // The hand's own move: the turn rests again (V3).
+            // The hand's own move (V3): towards the edge, the turn rests
+            // again, armed; any other — aiming sideways in the band — and it
+            // is disarmed until the next move towards the edge (R1, SR).
+            if (!towards) {
+                stopY();
+                return;
+            }
             if (turn.active) {
                 turn.active = false;
                 console.log('[StreamView] Mouse: edge turn stopped');
             }
             turn.restSince = now;
-            if (dy * dir > 0) turn.speed = StreamView._edgeTurnSpeed(Math.max(sum, 0));
+            turn.speed = StreamView._edgeTurnSpeed(sum);
             return;
         }
         stopY();
-        // Towards the edge, by more than a jitter over the sample window: a
-        // pointer that slides in sideways arms nothing (V4).
-        if (!(dy * dir > 0) || sum <= StreamView.EDGE_TURN_REAL_PX || !this._edgeTurnMayRun())
-            return;
+        if (!towards || !this._edgeTurnMayRun()) return;
         this._edgeTurn = {
             axis: 'y',
             dir,

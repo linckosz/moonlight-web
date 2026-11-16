@@ -185,17 +185,46 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         expect(vertical(sent)).toBeLessThan(0);
     });
 
-    it('rests again after a real move, and starts again after the same rest', () => {
+    it('rests again after a real move towards the edge, and starts again after the same rest', () => {
         const { v, sent } = view();
         approachTop(v);
         restThenTurn();
-        move(v, 510, 40, 10, 0);
+        now += 10;
+        move(v, 500, 40, 0, -6);
         expect(v._edgeTurn?.active).toBe(false);
         sent.length = 0;
         ticks(Math.floor((StreamView.EDGE_TURN_REST_MS - 1) / 16));
         expect(vertical(sent)).toBe(0);
         restThenTurn();
         expect(vertical(sent)).toBeLessThan(0);
+    });
+
+    it('is disarmed by aiming sideways in the band (R1)', () => {
+        const { v, sent } = view();
+        approachTop(v);
+        restThenTurn();
+        move(v, 510, 40, 10, 0);
+        expect(v._edgeTurn).toBe(null);
+        sent.length = 0;
+        tick(300);
+        ticks(20);
+        expect(vertical(sent)).toBe(0);
+        // Armed again by the next move towards the edge only.
+        now += 200;
+        approachTop(v);
+        sent.length = 0;
+        restThenTurn();
+        expect(vertical(sent)).toBeLessThan(0);
+    });
+
+    it("is disarmed by a resting pointer's sideways move before it ever turned", () => {
+        const { v, sent } = view();
+        approachTop(v);
+        move(v, 510, 46, 10, 0);
+        expect(v._edgeTurn).toBe(null);
+        sent.length = 0;
+        restThenTurn(20);
+        expect(vertical(sent)).toBe(0);
     });
 
     it('is disarmed by a real move away from the edge', () => {
