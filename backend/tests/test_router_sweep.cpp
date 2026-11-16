@@ -1336,4 +1336,46 @@ void run_router_sweep_tests()
             CHECK_EQ(b.gw.table.size(), 2);
         }
     }
+
+    SECTION("RouterSweep: what the list leaves out is counted, in numbers only");
+    {
+        using Count = RouterPortCore::SweepCount;
+        const auto same = [](const Count& a, int lines, int elsewhere, int held) {
+            return a.lines == lines && a.elsewhere == elsewhere && a.held == held;
+        };
+        // No record: nothing, and nothing counted
+        {
+            TableGateway gw;
+            RouterPortCore core(gw, kAlwaysFree);
+            Count count{7, 7, 7};
+            CHECK(core.sweepList(&count).isEmpty());
+            CHECK(same(count, 0, 0, 0));
+        }
+        // Every line looked at
+        {
+            Bench b;
+            b.left(tunnelLine(3479));
+            b.left(mediaLine(1, 46101));
+            Count count;
+            CHECK_EQ(b.core.sweepList(&count).size(), 2);
+            CHECK(same(count, 2, 0, 0));
+        }
+        // One under another address of this machine, two of a port this run holds
+        {
+            Bench b;
+            Hole before = tunnelLine(3480);
+            before.lan = QStringLiteral("192.168.1.21");
+            b.left(before);
+            b.left(mediaLine(2, 46102));
+            const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+            CHECK(r.ok && r.claim.external == 3478);
+            Count count;
+            const QList<Hole> list = b.core.sweepList(&count);
+            CHECK(list == QList<Hole>{mediaLine(2, 46102)});
+            CHECK(same(count, 4, 1, 2));
+            CHECK_EQ(count.lines - count.elsewhere - count.held, list.size());
+            // Without the count asked for, the same list
+            CHECK(b.core.sweepList() == list);
+        }
+    }
 }
