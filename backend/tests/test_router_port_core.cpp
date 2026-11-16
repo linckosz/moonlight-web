@@ -29,6 +29,7 @@ struct FakeGateway : IUpnpGateway
         uint16_t internal = 0;
         /// Seconds left; 0 = permanent.
         uint32_t lease = 0;
+        QString description;
     };
 
     QString lan = QStringLiteral("192.168.1.20");
@@ -52,13 +53,13 @@ struct FakeGateway : IUpnpGateway
 
     void foreign(uint16_t port, const QString& client)
     {
-        table.insert({port, QStringLiteral("UDP")}, {client, port});
+        table.insert({port, QStringLiteral("UDP")}, {client, port, 0, {}});
     }
 
     /// A neighbour's TCP forward alone: a web server, a game, someone's own tunnel.
     void foreignTcp(uint16_t port, const QString& client)
     {
-        table.insert({port, QStringLiteral("TCP")}, {client, port});
+        table.insert({port, QStringLiteral("TCP")}, {client, port, 0, {}});
     }
 
     /// Time passes: leases count down, and an entry whose lease runs out is gone.
@@ -78,7 +79,7 @@ struct FakeGateway : IUpnpGateway
 
     QString lanAddress() const override { return lan; }
 
-    bool add(uint16_t ext, uint16_t in, uint32_t leaseSec, const QString&,
+    bool add(uint16_t ext, uint16_t in, uint32_t leaseSec, const QString& description,
              const QString& proto) override
     {
         ++adds;
@@ -89,7 +90,7 @@ struct FakeGateway : IUpnpGateway
         if (ignoresRenewal && table.contains(key) && table[key].client == lan &&
             table[key].internal == in)
             return true;
-        table[key] = {lan, in, leaseSec};
+        table[key] = {lan, in, leaseSec, description};
         return true;
     }
 
@@ -101,6 +102,7 @@ struct FakeGateway : IUpnpGateway
         out.client = table[key].client;
         out.internalPort = table[key].internal;
         out.leaseLeft = static_cast<int>(table[key].lease);
+        out.description = table[key].description;
         return Lookup::Found;
     }
 
@@ -110,6 +112,45 @@ struct FakeGateway : IUpnpGateway
         return table.remove(qMakePair(ext, proto)) > 0;
     }
 };
+
+/// A record of this installation's, in memory: what proves an entry it left
+/// behind its own (RouterHoles.h). The sweep tests have the rest of it.
+struct TagRecord : mw::routerholes::IRecord
+{
+    QList<mw::routerholes::Hole> lines;
+
+    QString tag() const override { return QStringLiteral("a3f9c1"); }
+    QList<mw::routerholes::Hole> holes() const override { return lines; }
+    bool find(uint16_t external, bool tcp, mw::routerholes::Hole& out) const override
+    {
+        for (const auto& line : lines) {
+            if (line.external != external || line.tcp != tcp) continue;
+            out = line;
+            return true;
+        }
+        return false;
+    }
+    void note(const mw::routerholes::Hole& hole) override
+    {
+        for (auto& line : lines) {
+            if (line.external != hole.external || line.tcp != hole.tcp) continue;
+            line = hole;
+            return;
+        }
+        lines.append(hole);
+    }
+    void strike(uint16_t external, bool tcp) override
+    {
+        for (qsizetype i = 0; i < lines.size(); ++i) {
+            if (lines.at(i).external != external || lines.at(i).tcp != tcp) continue;
+            lines.removeAt(i);
+            return;
+        }
+    }
+};
+
+/// The words of an entry of the streams' shared ports this installation wrote
+const QString kOurStreams = QStringLiteral("MoonlightWeb streams a3f9c1");
 
 RouterPortCore::Request tunnelRequest(const QList<uint16_t>& remembered = {})
 {
@@ -278,7 +319,9 @@ void run_router_port_core_tests()
         CHECK(r.skipped.first().reason == Reason::Foreign);
     }
 
-    // ── Our own stale entry after a DHCP renumbering is taken back ────────
+    // ── An entry at the address this host had before a DHCP renumbering is
+    //    another machine's, unless its tag says otherwise: without a record
+    //    nothing does (the RouterSweep tests take one back by its tag) ──────
     {
         FakeGateway gw;
         gw.foreign(3478, QStringLiteral("192.168.1.77")); // what we were
@@ -287,10 +330,11 @@ void run_router_port_core_tests()
 
         const auto r = core.claim(tunnelRequest({3478}));
         CHECK(r.ok);
-        CHECK_EQ(r.claim.external, uint16_t(3478));
-        CHECK_EQ(r.reclaimedFrom, QString("192.168.1.77"));
+        CHECK_EQ(r.claim.external, uint16_t(3479));
+        CHECK(r.reclaimedFrom.isEmpty());
+        CHECK(r.skipped.first().reason == Reason::Foreign);
         CHECK_EQ(gw.table[qMakePair(uint16_t(3478), QStringLiteral("UDP"))].client,
-                 QString("192.168.1.20"));
+                 QString("192.168.1.77"));
     }
 
     // ── A port another program holds on this machine is skipped ──────────
@@ -468,24 +512,28 @@ void run_router_port_core_tests()
                  mw::routerports::kLeaseSec);
     }
 
-    // ── An entry this host left behind (killed, not stopped) is made
-    //    afresh, not kept on its old lease ───────────────────────────────
+    // ── An entry at this host's address that it does not hold: another
+    //    edition on this machine may have written it, and without a record
+    //    nothing proves it this installation's. Passed over, said without
+    //    an address, and left as it is (the RouterSweep tests take back one
+    //    that carries the tag, afresh rather than on its old lease) ───────
     {
-        using mw::routerports::kLeaseSec;
         const auto udp = qMakePair(uint16_t(3478), QStringLiteral("UDP"));
         const auto tcp = qMakePair(uint16_t(3478), QStringLiteral("TCP"));
         FakeGateway gw;
         gw.ignoresRenewal = true;
-        gw.table.insert(udp, {gw.lan, 3478, 200}); // minutes from running out
-        gw.table.insert(tcp, {gw.lan, 3478, 200});
+        gw.table.insert(udp, {gw.lan, 3478, 200, {}}); // minutes from running out
+        gw.table.insert(tcp, {gw.lan, 3478, 200, {}});
         RouterPortCore core(gw, kAlwaysFree);
 
         const auto r = core.claim(tunnelRequest({3478}));
         CHECK(r.ok);
-        CHECK_EQ(r.claim.external, uint16_t(3478));
-        CHECK(r.claim.tcp);
-        CHECK_EQ(gw.table[udp].lease, kLeaseSec);
-        CHECK_EQ(gw.table[tcp].lease, kLeaseSec);
+        CHECK_EQ(r.claim.external, uint16_t(3479));
+        CHECK_EQ(r.skipped.size(), 1);
+        CHECK(r.skipped.first().reason == Reason::OtherInstallation);
+        CHECK(r.skipped.first().owner.isEmpty());
+        CHECK_EQ(gw.table[udp].lease, uint32_t(200));
+        CHECK_EQ(gw.table[tcp].lease, uint32_t(200));
     }
 
     // ── The switch to permanent mappings takes on such a router too ──────
@@ -585,16 +633,18 @@ void run_router_port_core_tests()
         CHECK(gw.table.contains(tcp));
         CHECK_EQ(gw.table[tcp].client, neighbour);
 
-        // A router that keeps its old lease on a write (#37) is re-added by
-        // remove-then-add: never on the neighbour's entry.
+        // A leftover at this host's address that nothing proves its own
+        // (no record) is passed over: the neighbour's TCP entry beside it is
+        // never touched either way (the RouterSweep tests remove and add one
+        // of this installation's again, on a router that keeps its lease).
         FakeGateway mini;
         mini.ignoresRenewal = true;
-        mini.table.insert({48550, QStringLiteral("UDP")}, {mini.lan, 48550, kLeaseSec / 2});
+        mini.table.insert({48550, QStringLiteral("UDP")}, {mini.lan, 48550, kLeaseSec / 2, {}});
         mini.foreignTcp(48550, neighbour);
         RouterPortCore kept(mini, kAlwaysFree);
         const auto k = kept.claim(mediaRequest(0));
         CHECK(k.ok);
-        CHECK(!k.claim.tcp);
+        CHECK_EQ(k.claim.external, uint16_t(46100));
         CHECK(mini.table.contains(tcp));
         CHECK_EQ(mini.table[tcp].client, neighbour);
 
@@ -628,6 +678,20 @@ void run_router_port_core_tests()
         CHECK(kDevTunnelPoolBegin <= kDevTunnelPoolEnd);
         CHECK(kDevTunnelPoolEnd < kMediaPoolBegin);
         CHECK(kDevTunnelPoolEnd - kDevTunnelPoolBegin + 1 >= kTunnelPortCap);
+        // A DEV identity's stream block sits right above the installed host's,
+        // as clear of everything else, and its media pool past the installed
+        // host's, room for a slot each: the two never ask for one number.
+        CHECK_EQ(kDevMediaBasePort, uint16_t(kMediaBasePort + kMediaPortCount));
+        CHECK(kDevMediaBasePort + kMediaPortCount - 1 < 48984);
+        CHECK(kMediaPoolEnd < kDevMediaPoolBegin);
+        CHECK(kDevMediaPoolEnd < 47984);
+        CHECK(kDevMediaPoolEnd - kDevMediaPoolBegin + 1 >= kMediaPortCount);
+        for (int p = kMediaBasePort; p < kDevMediaBasePort + kMediaPortCount; ++p)
+            CHECK(inMediaBlock(false, p) != inMediaBlock(true, p));
+        for (int p = kMediaPoolBegin; p <= kDevMediaPoolEnd; ++p)
+            CHECK(!(inMediaPool(false, p) && inMediaPool(true, p)));
+        CHECK_EQ(mediaBasePort(false), kMediaBasePort);
+        CHECK_EQ(mediaBasePort(true), kDevMediaBasePort);
     }
 
     // ── A --dev beside the installed host never asks for the installed
@@ -800,11 +864,13 @@ void run_router_port_core_tests()
         CHECK(!gw.table.contains(udp(kMediaBasePort)) && !gw.table.contains(tcp(kMediaBasePort)));
 
         // The same on a router that ignores a renewal and gets the entries
-        // afresh.
+        // afresh, from an entry this installation left behind (its tag says so).
         FakeGateway deco;
         deco.ignoresRenewal = true;
-        deco.table.insert(udp(3478), {deco.lan, 3478, 200});
+        deco.table.insert(udp(3478), {deco.lan, 3478, 200, kOurStreams});
+        TagRecord decoRecord;
         RouterPortCore core2(deco, kAlwaysFree);
+        core2.setRecord(&decoRecord);
         const auto c = core2.claim(RouterPortCore::muxRequest(false, kStandard, {}));
         CHECK(c.ok);
         CHECK(c.claim.tcp);
@@ -945,8 +1011,10 @@ void run_router_port_core_tests()
         } fickle;
         fickle.ignoresRenewal = true;
         const auto left = qMakePair(uint16_t(3478), QStringLiteral("UDP"));
-        fickle.table.insert(left, {fickle.lan, 3478, 200});
+        fickle.table.insert(left, {fickle.lan, 3478, 200, kOurStreams});
+        TagRecord fickleRecord;
         RouterPortCore core6(fickle, kNever);
+        core6.setRecord(&fickleRecord);
         const auto r6 = core6.claim(request());
         CHECK(r6.ok);
         CHECK_EQ(r6.claim.external, uint16_t(3479));
@@ -995,8 +1063,10 @@ void run_router_port_core_tests()
         bound.clear();
         Fickle fickle2;
         fickle2.ignoresRenewal = true;
-        fickle2.table.insert(left, {fickle2.lan, 3478, 200});
+        fickle2.table.insert(left, {fickle2.lan, 3478, 200, kOurStreams});
+        TagRecord fickle2Record;
         RouterPortCore core10(fickle2, kNever);
+        core10.setRecord(&fickle2Record);
         const auto r10 = core10.claim(request());
         CHECK(r10.ok);
         CHECK_EQ(r10.claim.external, uint16_t(3479));
@@ -1053,13 +1123,14 @@ void run_router_port_core_tests()
         CHECK_EQ(next.claim.external, uint16_t(3479));
     }
 
-    // ── A --dev shares one port, from the top of the block, and never a
+    // ── A --dev shares one port, from the top of its own block, and never a
     //    conferencing port; the installed host's walk and its own never meet ─
     {
         using namespace mw::routerports;
         const int kStandard = RouterPortCore::kMuxStandard;
         const int kBlock = RouterPortCore::kMuxBlock;
-        const uint16_t top = static_cast<uint16_t>(kMediaBasePort + kMediaPortCount - 1);
+        const uint16_t top = static_cast<uint16_t>(kDevMediaBasePort + kMediaPortCount - 1);
+        const uint16_t installedTop = static_cast<uint16_t>(kMediaBasePort + kMediaPortCount - 1);
 
         for (const uint16_t p : kTunnelPreferred) {
             CHECK(RouterPortCore::muxPortAllowed(false, kStandard, p));
@@ -1069,7 +1140,7 @@ void run_router_port_core_tests()
         CHECK(!RouterPortCore::muxPortAllowed(false, kStandard, kTunnelPoolBegin));
         CHECK(!RouterPortCore::muxPortAllowed(false, kStandard, kMediaBasePort));
         CHECK(!RouterPortCore::muxPortAllowed(false, 2, kMediaBasePort));
-        // Every port of the block belongs to one walk at most, never to both.
+        // Every port of the two blocks belongs to one walk at most, never to both.
         int installedPorts = 0, devPorts = 0;
         for (int p = kMediaBasePort; p <= top; ++p) {
             const bool installed = RouterPortCore::muxPortAllowed(false, kBlock, uint16_t(p));
@@ -1084,9 +1155,18 @@ void run_router_port_core_tests()
         CHECK(RouterPortCore::muxPortAllowed(false, kBlock, kMediaBasePort));
         CHECK(RouterPortCore::muxPortAllowed(true, kBlock, top));
         CHECK(!RouterPortCore::muxPortAllowed(true, kBlock, kMediaBasePort));
+        CHECK(!RouterPortCore::muxPortAllowed(true, kBlock, kDevMediaBasePort));
         CHECK(!RouterPortCore::muxPortAllowed(false, kBlock, top));
         CHECK(!RouterPortCore::muxPortAllowed(false, kBlock, uint16_t(kMediaBasePort - 1)));
         CHECK(!RouterPortCore::muxPortAllowed(true, kBlock, uint16_t(top + 1)));
+        // Where a DEV drew its shared port from while it bound the installed
+        // host's block: neither walk's any more
+        CHECK(!RouterPortCore::muxPortAllowed(true, kBlock, installedTop));
+        CHECK(!RouterPortCore::muxPortAllowed(false, kBlock, installedTop));
+        CHECK(inEarlierDevMuxStretch(installedTop));
+        CHECK(inEarlierDevMuxStretch(uint16_t(installedTop - kMuxBlockSpan + 1)));
+        CHECK(!inEarlierDevMuxStretch(uint16_t(installedTop - kMuxBlockSpan)));
+        CHECK(!inEarlierDevMuxStretch(top));
 
         // No conferencing port for a --dev: no candidate, and the router is
         // not asked a thing — whatever the --dev remembers.
@@ -1098,8 +1178,10 @@ void run_router_port_core_tests()
         CHECK_EQ(gw.adds, 0);
         CHECK(gw.table.isEmpty());
 
-        // Its one port: the top of the block, then down.
-        const auto req = RouterPortCore::muxRequest(true, kBlock, {kMediaBasePort, 3478});
+        // Its one port: the top of its block, then down. What it remembers
+        // of the installed host's block is not asked for again.
+        const auto req =
+            RouterPortCore::muxRequest(true, kBlock, {kMediaBasePort, 3478, installedTop});
         CHECK(req.remembered.isEmpty());
         CHECK_EQ(req.preferred.size(), qsizetype(kMuxBlockSpan));
         CHECK_EQ(req.preferred.first(), top);
@@ -1129,13 +1211,12 @@ void run_router_port_core_tests()
     {
         using namespace mw::routerports;
         const int kBlock = RouterPortCore::kMuxBlock;
-        const uint16_t top = uint16_t(kMediaBasePort + kMediaPortCount - 1);
-        // Without the mux, and for a DEV identity with it: the slot's number,
-        // as ever.
+        // Without the mux, and for a DEV identity with it: the slot's number
+        // in its identity's block.
         for (int slot = 0; slot < kMediaPortCount; ++slot) {
             CHECK_EQ(slotMediaPort(slot, false, false), uint16_t(kMediaBasePort + slot));
-            CHECK_EQ(slotMediaPort(slot, false, true), uint16_t(kMediaBasePort + slot));
-            CHECK_EQ(slotMediaPort(slot, true, true), uint16_t(kMediaBasePort + slot));
+            CHECK_EQ(slotMediaPort(slot, false, true), uint16_t(kDevMediaBasePort + slot));
+            CHECK_EQ(slotMediaPort(slot, true, true), uint16_t(kDevMediaBasePort + slot));
         }
         // With it, the installed host's slots start where the mux's stretch ends.
         CHECK_EQ(slotMediaPort(0, true, false), uint16_t(kMediaBasePort + kMuxBlockSpan));
@@ -1143,8 +1224,9 @@ void run_router_port_core_tests()
             QSet<uint16_t> seen;
             for (int slot = 0; slot < kMediaPortCount; ++slot) {
                 const uint16_t port = slotMediaPort(slot, true, dev);
-                // A port of the block, each slot its own.
-                CHECK(port >= kMediaBasePort && port <= top);
+                // A port of its identity's block, never of the other's, each
+                // slot its own.
+                CHECK(inMediaBlock(dev, port) && !inMediaBlock(!dev, port));
                 CHECK(!seen.contains(port));
                 seen.insert(port);
                 // The first slots, the ones a host runs, never sit in the
@@ -1180,12 +1262,22 @@ void run_router_port_core_tests()
             RouterPortCore::mediaRequest(false, false, 3, third, 3478, false).remembered.isEmpty());
         CHECK(RouterPortCore::mediaRequest(false, false, 3, third, 48010, false)
                   .remembered.isEmpty());
-        CHECK(RouterPortCore::mediaPortAllowed(kMediaBasePort));
-        CHECK(RouterPortCore::mediaPortAllowed(kMediaPoolBegin));
-        CHECK(RouterPortCore::mediaPortAllowed(kMediaPoolEnd));
-        CHECK(!RouterPortCore::mediaPortAllowed(uint16_t(kMediaPoolEnd + 1)));
-        CHECK(!RouterPortCore::mediaPortAllowed(uint16_t(kMediaBasePort + kMediaPortCount)));
-        CHECK(!RouterPortCore::mediaPortAllowed(0));
+        CHECK(RouterPortCore::mediaPortAllowed(false, kMediaBasePort));
+        CHECK(RouterPortCore::mediaPortAllowed(false, kMediaPoolBegin));
+        CHECK(RouterPortCore::mediaPortAllowed(false, kMediaPoolEnd));
+        CHECK(!RouterPortCore::mediaPortAllowed(false, uint16_t(kMediaPoolEnd + 1)));
+        CHECK(!RouterPortCore::mediaPortAllowed(false, uint16_t(kMediaBasePort + kMediaPortCount)));
+        CHECK(!RouterPortCore::mediaPortAllowed(false, 0));
+        // A DEV identity's: its own block and pool, and neither of the
+        // installed host's
+        CHECK(RouterPortCore::mediaPortAllowed(true, kDevMediaBasePort));
+        CHECK(RouterPortCore::mediaPortAllowed(true, kDevMediaPoolBegin));
+        CHECK(RouterPortCore::mediaPortAllowed(true, kDevMediaPoolEnd));
+        CHECK(!RouterPortCore::mediaPortAllowed(true, kMediaBasePort));
+        CHECK(!RouterPortCore::mediaPortAllowed(true, kMediaPoolBegin));
+        CHECK(!RouterPortCore::mediaPortAllowed(true, uint16_t(kDevMediaPoolEnd + 1)));
+        CHECK(!RouterPortCore::mediaPortAllowed(false, kDevMediaBasePort));
+        CHECK(!RouterPortCore::mediaPortAllowed(false, kDevMediaPoolBegin));
         // The same request the tests above make by hand.
         const auto byHand = mediaRequest(3, 46120);
         CHECK(byHand.remembered == plain.remembered && byHand.preferred == plain.preferred);
@@ -1202,12 +1294,47 @@ void run_router_port_core_tests()
         // Without the mux it would have been.
         CHECK(RouterPortCore::mediaRequest(false, false, 0, kMediaBasePort, kMediaBasePort, false)
                   .remembered == QList<uint16_t>{kMediaBasePort});
-        // A DEV identity's stretch is the top of the block.
-        const uint16_t top = uint16_t(kMediaBasePort + kMediaPortCount - 1);
+        // A DEV identity's stretch is the top of its own block, and its pool
+        // its own: what it had of the installed host's numbers, before it had
+        // a block of its own, is never asked for again.
+        const uint16_t top = uint16_t(kDevMediaBasePort + kMediaPortCount - 1);
         const auto devSlot =
-            RouterPortCore::mediaRequest(true, true, 0, kMediaBasePort, top, false);
+            RouterPortCore::mediaRequest(true, true, 0, kDevMediaBasePort, top, false);
         CHECK(devSlot.remembered.isEmpty());
-        CHECK(devSlot.preferred == QList<uint16_t>{kMediaBasePort});
+        CHECK(devSlot.preferred == QList<uint16_t>{kDevMediaBasePort});
+        CHECK_EQ(devSlot.poolBegin, kDevMediaPoolBegin);
+        CHECK_EQ(devSlot.poolEnd, kDevMediaPoolEnd);
+        for (const uint16_t before : {kMediaPoolBegin, uint16_t(kMediaBasePort + 1)})
+            CHECK(RouterPortCore::mediaRequest(false, true, 1, uint16_t(kDevMediaBasePort + 1),
+                                               before, false)
+                      .remembered.isEmpty());
+        CHECK(RouterPortCore::mediaRequest(false, true, 1, uint16_t(kDevMediaBasePort + 1),
+                                           kDevMediaPoolBegin, false)
+                  .remembered == QList<uint16_t>{kDevMediaPoolBegin});
+        // A release and a DEV on one machine, one address, one router: each
+        // slot 0 in its own block, never on one number.
+        {
+            FakeGateway gw;
+            RouterPortCore installed(gw, kAlwaysFree);
+            RouterPortCore dev(gw, kAlwaysFree);
+            const auto a = installed.claim(
+                RouterPortCore::mediaRequest(false, false, 0, kMediaBasePort, 46100, false));
+            CHECK(a.ok && a.claim.external == 46100 && a.claim.internal == kMediaBasePort);
+            const auto d = dev.claim(
+                RouterPortCore::mediaRequest(false, true, 0, kDevMediaBasePort, 46100, false));
+            CHECK(d.ok && d.claim.external == kDevMediaBasePort &&
+                  d.claim.internal == kDevMediaBasePort);
+            CHECK_EQ(gw.table[qMakePair(uint16_t(46100), QStringLiteral("UDP"))].internal,
+                     kMediaBasePort);
+            // Its own number taken by a neighbour: its own pool, not the other's
+            FakeGateway busy;
+            busy.foreign(kDevMediaBasePort, QStringLiteral("192.168.1.34"));
+            RouterPortCore dev2(busy, kAlwaysFree);
+            CHECK_EQ(dev2.claim(RouterPortCore::mediaRequest(false, true, 0, kDevMediaBasePort, 0,
+                                                             false))
+                         .claim.external,
+                     kDevMediaPoolBegin);
+        }
 
         // Whoever asks first, the mux finds its number free of this host's
         // own slots.

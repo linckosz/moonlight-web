@@ -227,15 +227,24 @@ bool allowed(bool devInstance, const Hole& hole)
         return hole.slot == -1 && hole.internal == hole.external &&
                RouterPortCore::tunnelPortAllowed(devInstance, hole.external);
     case Kind::Streams:
-        return hole.slot == -1 && hole.internal == hole.external &&
-               (RouterPortCore::muxPortAllowed(devInstance, RouterPortCore::kMuxStandard,
-                                               hole.external) ||
-                RouterPortCore::muxPortAllowed(devInstance, RouterPortCore::kMuxBlock,
-                                               hole.external));
+        if (hole.slot != -1 || hole.internal != hole.external) return false;
+        if (RouterPortCore::muxPortAllowed(devInstance, RouterPortCore::kMuxStandard,
+                                           hole.external) ||
+            RouterPortCore::muxPortAllowed(devInstance, RouterPortCore::kMuxBlock, hole.external))
+            return true;
+        // A DEV identity's shared port from when it bound the installed
+        // host's block: its own to take back, by its tag, never asked again
+        return devInstance && !hole.old && mw::routerports::inEarlierDevMuxStretch(hole.external);
     case Kind::Media:
-        return hole.slot >= 0 && hole.slot < mw::routerports::kMediaPortCount &&
-               mw::routerports::inMediaBlock(hole.internal) &&
-               RouterPortCore::mediaPortAllowed(hole.external);
+        if (hole.slot < 0 || hole.slot >= mw::routerports::kMediaPortCount) return false;
+        if (mw::routerports::inMediaBlock(devInstance, hole.internal) &&
+            RouterPortCore::mediaPortAllowed(devInstance, hole.external))
+            return true;
+        // A slot's hole of a DEV identity from when it bound the installed
+        // host's block and drew from its pool: its own to take back (by its
+        // tag, or as an entry of a version that put none), never asked again
+        return devInstance && mw::routerports::inMediaBlock(false, hole.internal) &&
+               RouterPortCore::mediaPortAllowed(false, hole.external);
     case Kind::Tcp443:
         // That one number, in TCP, towards an installed host's block port
         return !devInstance && hole.tcp && hole.external == 443 && hole.slot == -1 &&

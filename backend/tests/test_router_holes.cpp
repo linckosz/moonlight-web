@@ -68,6 +68,14 @@ Hole media(int slot, uint16_t external, bool isTcp = false)
     return line;
 }
 
+/// A DEV identity's slot hole: to its own block
+Hole devMedia(int slot, uint16_t external, bool isTcp = false)
+{
+    Hole line = media(slot, external, isTcp);
+    line.internal = static_cast<uint16_t>(mw::routerports::kDevMediaBasePort + slot);
+    return line;
+}
+
 /// A record as serialize() writes it, to be spoiled one key at a time.
 QJsonObject wholeRecord()
 {
@@ -151,24 +159,52 @@ void run_router_holes_tests()
         elsewhere.internal = 22;
         CHECK(!allowed(false, elsewhere));
         // Nobody's numbers
-        for (const int port : {22, 80, 443, 3389, 3477, 3482, 46032, int(kKnownQuestionPort), 46200,
-                               47984, 48010, 48574, 65535}) {
+        for (const int port : {22, 80, 443, 3389, 3477, 3482, 46032, int(kKnownQuestionPort), 46232,
+                               47984, 48010, 48598, 65535}) {
             CHECK(!allowed(false, tunnel(uint16_t(port))));
             CHECK(!allowed(true, tunnel(uint16_t(port))));
             CHECK(!allowed(false, streams(uint16_t(port))));
             CHECK(!allowed(true, streams(uint16_t(port))));
         }
-        // The shared ports: the conferencing list and the foot of the block
-        // for the installed host, the top of the block for a DEV identity
+        // The shared ports: the conferencing list and the foot of its block
+        // for the installed host, the top of its own block for a DEV identity
         CHECK(allowed(false, streams(3478)) && allowed(false, streams(kMediaBasePort)));
         CHECK(!allowed(false, streams(uint16_t(kMediaBasePort + kMuxBlockSpan))));
         CHECK(!allowed(false, streams(kTunnelPoolBegin)));
         const uint16_t top = uint16_t(kMediaBasePort + kMediaPortCount - 1);
-        CHECK(allowed(true, streams(top)) && !allowed(true, streams(kMediaBasePort)));
+        const uint16_t devTop = uint16_t(kDevMediaBasePort + kMediaPortCount - 1);
+        CHECK(allowed(true, streams(devTop)) && !allowed(true, streams(kMediaBasePort)));
+        CHECK(!allowed(true, streams(kDevMediaBasePort)) && !allowed(false, streams(devTop)));
         CHECK(!allowed(true, streams(3478)));
-        // A slot's hole: to a port of the block, from the block or the pool
-        CHECK(allowed(false, media(0, kMediaBasePort)) && allowed(true, media(23, kMediaPoolEnd)));
+        // What a DEV identity's shared port was while it bound the installed
+        // host's block, the top of that block: its own to take back, by its
+        // tag (an earlier version's line has none), and never the installed
+        // host's
+        CHECK(allowed(true, streams(top)) && !allowed(false, streams(top)));
+        CHECK(allowed(true, streams(uint16_t(top - kMuxBlockSpan + 1))));
+        CHECK(!allowed(true, streams(uint16_t(top - kMuxBlockSpan))));
+        Hole untaggedDev = streams(top);
+        untaggedDev.old = true;
+        CHECK(!allowed(true, untaggedDev));
+        // A slot's hole: to a port of its block, from its block or its pool
+        CHECK(allowed(false, media(0, kMediaBasePort)) && allowed(false, media(23, kMediaPoolEnd)));
         CHECK(allowed(false, media(1, kMediaPoolBegin, true)));
+        CHECK(allowed(true, devMedia(0, kDevMediaBasePort)) &&
+              allowed(true, devMedia(23, kDevMediaPoolEnd)));
+        CHECK(!allowed(false, devMedia(0, kDevMediaBasePort)));
+        CHECK(!allowed(false, devMedia(1, kDevMediaPoolBegin)) &&
+              !allowed(false, media(1, kDevMediaPoolBegin)));
+        CHECK(!allowed(true, devMedia(1, kMediaPoolBegin)) &&
+              !allowed(true, devMedia(1, kMediaBasePort)));
+        // What a DEV identity wrote while it bound the installed host's block
+        // and drew from its pool: its own still, with a tag or (an earlier
+        // version's) without, to take back
+        CHECK(allowed(true, media(0, kMediaBasePort)) && allowed(true, media(23, kMediaPoolEnd)));
+        CHECK(allowed(true, media(1, kMediaPoolBegin, true)));
+        Hole earlierDev = media(0, kMediaPoolBegin);
+        earlierDev.old = true;
+        CHECK(allowed(true, earlierDev));
+        CHECK(!allowed(true, media(1, kDevMediaPoolBegin)));
         CHECK(!allowed(false, media(1, 3478)) && !allowed(false, media(1, 48010)));
         CHECK(!allowed(false, media(-1, kMediaPoolBegin)));
         CHECK(!allowed(false, media(kMediaPortCount, kMediaPoolBegin)));
@@ -359,9 +395,14 @@ void run_router_holes_tests()
         // 443 is nobody's, 48010 is no slot's number any more, slot 30 is none
         for (const Hole& line : lines)
             CHECK(line.external != 443 && line.external != 48010 && line.external != 46101);
-        // A DEV identity never had the installed host's tunnel numbers
-        for (const Hole& line : earlierHoles(true, earlier, kLan))
-            CHECK(line.kind == Kind::Media);
+        // A DEV identity never had the installed host's tunnel numbers. Its
+        // slots' holes it had, to the installed host's block as it bound it
+        // then: those it takes back (RouterPortCore::sweep)
+        const QList<Hole> devLines = earlierHoles(true, earlier, kLan);
+        for (const Hole& line : devLines)
+            CHECK(line.kind == Kind::Media && line.old && allowed(true, line));
+        CHECK(devLines.contains(second));
+        CHECK_EQ(devLines.size(), 4);
         // Obtained under another address than today's, or never: nothing
         CHECK(earlierHoles(false, earlier, QStringLiteral("192.168.1.21")).isEmpty());
         earlier.lan.clear();

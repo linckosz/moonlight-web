@@ -129,17 +129,20 @@ Two, in the order an agent prefers them (`network/IceMuxPorts`,
 1. **The conferencing port**: the first of 3478-3481 and 5349-5352 this host
    can have. A network that lets little out lets these out. Only a host that
    is open to the Internet has one, and a DEV identity never does.
-2. **The stream block's port**: 48550 for the installed host, 48573 for a DEV
-   identity, each walking its own half of the block (48550 upwards, 48573
-   downwards) when the number is taken. The two halves never meet, so the
-   installed host and a `--dev` on one machine cannot take each other's port.
+2. **The stream block's port**: 48550 for the installed host, 48597 for a DEV
+   identity, each walking its own stretch of its own block (48550 upwards in
+   48550-48573, 48597 downwards in 48574-48597) when the number is taken. The
+   two blocks never meet, so the installed host and a `--dev` on one machine
+   cannot take each other's port.
 
 A bench key, `debug_dev_standard_ports`, lets a DEV identity walk the installed
 host's ports for one run, so that the conferencing port can be tried without a
 release build. It is granted only where nothing on the machine holds one of the
 eight, read from the system's socket tables as the server starts; refused, the
-instance says so and keeps its own ports (`network/PortIdentity.h`). Never for
-a user: nothing writes it and no API reads it.
+instance says so and keeps its own ports (`network/PortIdentity.h`). Granted,
+the instance shares the installed host's ports, and their entries on the router
+are told apart only by their tag. Never for a user: nothing writes it and no API
+reads it.
 
 The router forwards each port to itself: a router that has seen the host send
 from a port keeps translating to that number, so a port is only worth
@@ -181,6 +184,17 @@ has answered: only an entry that is this installation's by that record, by
 the address it forwards to, by its port and by its description, and none on a
 doubt (`network/RouterHoles.h`, `RouterPortCore::sweep`).
 
+Two editions on one machine are one address to the router, so the address
+alone never says whose an entry is: an entry at this host's address is this
+installation's only under its tag, whether it is about to be claimed, renewed
+or taken off. Another's is passed over, not written over at a renewal, and
+left at a release. Each edition also has a stream block and a media pool of
+its own (48550-48573 and 46100-46199 for the installed host, 48574-48597 and
+46200-46231 for a DEV identity), so the two never ask for one number. Up to
+0.4.3 no edition put a tag, and a DEV bound the installed host's block: such
+an entry of a stream slot is taken back, or over, only when nothing listens on
+its port and no other MoonlightWeb server runs on the machine.
+
 Each agent is registered with the sockets its worker was handed, and hears each
 under its own number for it (0 for its first). A datagram that comes in on a
 socket an agent was not given is not handed to that agent: it could not answer
@@ -188,9 +202,10 @@ through it.
 
 A stream that binds a socket of its own (see below) must never bind, or get a
 router hole to, a port the mux holds: the hole would lead to the mux. So with
-the mux the slots' own ports start at the other half of the block (48562 for
-the installed host), a slot's hole takes no router-side number from the mux's
-half, and no hole is made at all to a port the mux is bound to.
+the mux the installed host's slots start at the other half of its block
+(48562), a DEV identity's at the foot of its own (48574), a slot's hole takes
+no router-side number from the mux's stretch, and no hole is made at all to a
+port the mux is bound to.
 
 ## What the browser is told
 

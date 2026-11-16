@@ -50,9 +50,10 @@ EDITION=${4:-prod}
 # streams share, a datagram that belongs to no stream is dropped.
 # The DEV edition never touches these rules: a DEV uninstall closing the media
 # block would cut production off. It opens what it uses (its own TCP ports, its
-# tunnel block kDevTunnelPool, and the stream block, which its streams use as
-# production's do) under a name of its own, a ufw application profile or a
-# firewalld service (the DEV block near the end of this script). Its PORTS
+# tunnel block kDevTunnelPool, and its own stream block, 48574:48597,
+# kDevMediaBasePort) under a name of its own, a ufw application profile or a
+# firewalld service (the DEV block near the end of this script), and reserves
+# its block from the kernel's ephemeral ports in a file of its own. Its PORTS
 # below are only what an earlier DEV wrote as plain rules.
 case "$EDITION" in
     prod) NAME=moonlightweb;     APP=MoonlightWeb;
@@ -219,7 +220,7 @@ modprobe uinput >/dev/null 2>&1 || true
 udevadm trigger --subsystem-match=misc --sysname-match=uhid >/dev/null 2>&1 || true
 modprobe uhid >/dev/null 2>&1 || true
 
-# The stream's media block, the one production owns (empty in the DEV edition).
+# The stream's media block, production's (the DEV edition's own in its package).
 MEDIA_RANGE=48550-48573
 
 # Open the server ports in the system firewall (best-effort). Unlike Windows /
@@ -506,14 +507,15 @@ if [ "$EDITION" = dev ]; then
            -e "s|/opt/moonlightweb/|$PREFIX/|g" \
            -e "s|moonlightweb\.service|$NAME.service|g" \
            -e "s|443/tcp 80/tcp 48550:48573/udp 48550:48573/tcp 3478:3481/udp 3478:3481/tcp 5349:5352/udp 5349:5352/tcp 46000:46031/tcp|$PORTS|g" \
-           -e "s|^\( *\)MEDIA_RANGE=.*|\1MEDIA_RANGE=|" \
+           -e "s|^\( *\)MEDIA_RANGE=.*|\1MEDIA_RANGE=48574-48597|" \
+           -e "s|/etc/sysctl\.d/60-moonlightweb\.conf|/etc/sysctl.d/60-$NAME.conf|g" \
            -e "s|^\( *\)REPO_KEYS=.*|\1REPO_KEYS=|" \
            -e "s|moonlightweb --|$NAME --|g" \
            -e "s|enable --now moonlightweb\$|enable --now $NAME|" \
            -e "s|the moonlightweb service|the $NAME service|" \
            -e "s|^MoonlightWeb is installed|$APP is installed|" \
            "$ROOT/postinst.sh" "$ROOT/prerm.sh"
-    if grep -n '/opt/moonlightweb/\|moonlightweb\.service' "$ROOT/postinst.sh" "$ROOT/prerm.sh"; then
+    if grep -n '/opt/moonlightweb/\|moonlightweb\.service\|60-moonlightweb\.conf\|MEDIA_RANGE=48550' "$ROOT/postinst.sh" "$ROOT/prerm.sh"; then
         echo "error: a DEV hook still names the production package (above)" >&2
         exit 1
     fi
@@ -521,11 +523,13 @@ if [ "$EDITION" = dev ]; then
     # The DEV edition's firewall rules go under a name of its own: a ufw
     # application profile and a firewalld service, both files of this package.
     # They hold every port it uses: HTTPS and HTTP, its tunnel block in TCP, and
-    # the whole stream block in UDP and TCP — its shared port is walked down
-    # from 48573 and a slot with a socket of its own binds 48550 + slot
-    # (network/RouterPortPools.h). Production opens the same stream block under
-    # plain port rules of its own: each package adds and takes away only its
-    # own, so neither ever closes the other's. Up to 0.4.4 this edition wrote
+    # its whole stream block in UDP and TCP — its shared port is walked down
+    # from 48597 and a slot with a socket of its own binds 48574 + slot
+    # (network/RouterPortPools.h). Production opens its own block, 48550-48573,
+    # under plain port rules of its own: each package adds and takes away only
+    # its own, so neither ever closes the other's. An upgrade from a DEV whose
+    # profile named 48550:48573 brings the new profile in, and "ufw app update"
+    # moves the rule to it. Up to 0.4.4 this edition wrote
     # three plain rules (48443/tcp, 48080/tcp, 46064:46095/tcp, numbers
     # production never opens): they go once the named rule is in, never before,
     # so no port closes on the way.
@@ -533,19 +537,19 @@ if [ "$EDITION" = dev ]; then
     cat > "$PKG/etc/ufw/applications.d/moonlightweb-dev" <<'UFW'
 [MoonlightWebDev]
 title=MoonlightWeb DEV edition
-description=MoonlightWeb DEV: HTTPS and HTTP, its tunnel in TCP, the stream block in UDP and TCP
-ports=48443,48080/tcp|46064:46095/tcp|48550:48573/udp|48550:48573/tcp
+description=MoonlightWeb DEV: HTTPS and HTTP, its tunnel in TCP, its stream block in UDP and TCP
+ports=48443,48080/tcp|46064:46095/tcp|48574:48597/udp|48574:48597/tcp
 UFW
     cat > "$PKG/usr/lib/firewalld/services/moonlightweb-dev.xml" <<'FWD'
 <?xml version="1.0" encoding="utf-8"?>
 <service>
   <short>MoonlightWeb DEV</short>
-  <description>MoonlightWeb DEV edition: HTTPS and HTTP, its tunnel in TCP, the stream block in UDP and TCP.</description>
+  <description>MoonlightWeb DEV edition: HTTPS and HTTP, its tunnel in TCP, its stream block in UDP and TCP.</description>
   <port protocol="tcp" port="48443"/>
   <port protocol="tcp" port="48080"/>
   <port protocol="tcp" port="46064-46095"/>
-  <port protocol="udp" port="48550-48573"/>
-  <port protocol="tcp" port="48550-48573"/>
+  <port protocol="udp" port="48574-48597"/>
+  <port protocol="tcp" port="48574-48597"/>
 </service>
 FWD
     cat > "$ROOT/dev-firewall-postinst" <<'POST'

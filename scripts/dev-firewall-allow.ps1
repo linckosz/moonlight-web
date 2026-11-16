@@ -16,8 +16,9 @@
     instance binds:
 
         TCP 48080 / 48443   dev HTTP / HTTPS  (kDevHttpPort / kDevHttpsPort)
-        TCP+UDP 48550-48573  WebRTC media ports, one per concurrent stream slot
-                             (kMediaBasePort .. kMediaBasePort + kSlotHardCeiling-1 = 48573)
+        TCP+UDP 48574-48597  WebRTC media ports of a DEV identity, one per concurrent
+                             stream slot, its shared port at the top
+                             (kDevMediaBasePort .. kDevMediaBasePort + kMediaPortCount-1 = 48597)
 
     The media range covers the slot ceiling, not today's slot count: the pool
     creates slots on demand, and a rule that stopped at the old maximum would
@@ -67,11 +68,11 @@ $common = @{
 New-NetFirewallRule @common -DisplayName 'MoonlightWeb dev HTTP/HTTPS (TCP 48080/48443)' `
     -Protocol TCP -LocalPort 48080, 48443 | Out-Null
 
-New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC media UPnP (UDP 48550-48573)' `
-    -Protocol UDP -LocalPort '48550-48573' | Out-Null
+New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC media UPnP (UDP 48574-48597)' `
+    -Protocol UDP -LocalPort '48574-48597' | Out-Null
 
-New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC ICE-TCP UPnP (TCP 48550-48573)' `
-    -Protocol TCP -LocalPort '48550-48573' | Out-Null
+New-NetFirewallRule @common -DisplayName 'MoonlightWeb WebRTC ICE-TCP UPnP (TCP 48574-48597)' `
+    -Protocol TCP -LocalPort '48574-48597' | Out-Null
 
 Write-Host "Created port-based allow rules in group '$Group'." -ForegroundColor Green
 

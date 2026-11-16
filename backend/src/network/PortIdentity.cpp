@@ -81,7 +81,9 @@ QString said(const Verdict& verdict)
     case Bench::Granted:
         return QStringLiteral("DEBUG debug_dev_standard_ports is ON — this DEV instance walks the "
                               "installed host's ports for this run (the conferencing ports and its "
-                              "half of the stream block). A bench key, never for a user");
+                              "stream block); it shares production's ports, and their router "
+                              "entries are told apart only by their tag. A bench key, never for a "
+                              "user");
     }
     return QString();
 }

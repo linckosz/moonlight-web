@@ -27,13 +27,34 @@
 #include <QList>
 
 #ifdef _WIN32
+#include <tlhelp32.h>
+
 #include <cstddef>
 #include <vector>
 #elif defined(__linux__)
+#include <QDir>
 #include <QFile>
+
+#include <unistd.h>
 #endif
 
 namespace mw::sockettables {
+
+bool serverName(const QByteArray& name, bool windows)
+{
+    if (windows) {
+        const QByteArray lower = name.toLower();
+        return lower == "moonlightweb.exe" || lower == "moonlightwebdev.exe";
+    }
+    return name == "MoonlightWeb" || name == "MoonlightWebDev";
+}
+
+Listens otherServerAmong(const QList<Process>& processes, uint32_t self, bool windows, bool known)
+{
+    for (const Process& p : processes)
+        if (p.pid != self && serverName(p.name, windows)) return Listens::Yes;
+    return known ? Listens::No : Listens::Unknown;
+}
 
 Listens inProcTable(const QByteArray& text, uint16_t port, bool tcp)
 {
@@ -131,6 +152,70 @@ Listens listens(uint16_t port, bool tcp)
                : udpFamily<MIB_UDP6TABLE_OWNER_PID>(AF_INET6, port);
 }
 
+namespace {
+
+/// The processes that own a socket listening in TCP, in one family.
+template <typename Table> bool listeners(ULONG family, std::vector<DWORD>& out)
+{
+    std::vector<unsigned char> buffer;
+    if (!fetch(
+            [family](void* to, DWORD* size) {
+                return GetExtendedTcpTable(to, size, FALSE, family, TCP_TABLE_OWNER_PID_LISTENER,
+                                           0);
+            },
+            buffer))
+        return false;
+    if (buffer.size() < offsetof(Table, table)) return false;
+    const auto* table = reinterpret_cast<const Table*>(buffer.data());
+    const size_t room = (buffer.size() - offsetof(Table, table)) / sizeof(table->table[0]);
+    if (table->dwNumEntries > room) return false;
+    for (DWORD i = 0; i < table->dwNumEntries; ++i)
+        out.push_back(table->table[i].dwOwningPid);
+    return true;
+}
+
+} // namespace
+
+Listens otherServer()
+{
+    std::vector<DWORD> owners;
+    if (!listeners<MIB_TCPTABLE_OWNER_PID>(AF_INET, owners) ||
+        !listeners<MIB_TCP6TABLE_OWNER_PID>(AF_INET6, owners))
+        return Listens::Unknown;
+
+    // What each one runs, from a snapshot taken after the tables: no process
+    // is opened, so another account's and session 0's are read alike
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return Listens::Unknown;
+    QList<Process> all;
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    for (BOOL more = Process32FirstW(snapshot, &entry); more;
+         more = Process32NextW(snapshot, &entry)) {
+        entry.szExeFile[MAX_PATH - 1] = L'\0';
+        all.append({static_cast<uint32_t>(entry.th32ProcessID),
+                    QString::fromWCharArray(entry.szExeFile).toUtf8()});
+    }
+    const bool listed = GetLastError() == ERROR_NO_MORE_FILES;
+    CloseHandle(snapshot);
+    if (!listed) return Listens::Unknown;
+
+    // A listener gone from the snapshot may have been anything: unknown
+    QList<Process> listening;
+    bool known = true;
+    for (const DWORD pid : owners) {
+        bool found = false;
+        for (const Process& p : std::as_const(all)) {
+            if (p.pid != pid) continue;
+            listening.append(p);
+            found = true;
+            break;
+        }
+        if (!found) known = false;
+    }
+    return otherServerAmong(listening, static_cast<uint32_t>(GetCurrentProcessId()), true, known);
+}
+
 #elif defined(__linux__)
 
 namespace {
@@ -166,12 +251,64 @@ Listens listens(uint16_t port, bool tcp)
     return inProcTable(text, port, tcp);
 }
 
+namespace {
+
+/// Whether /proc is mounted so as to hide other accounts' processes
+/// (hidepid): then what it lists says nothing of them. True when that cannot
+/// be read.
+bool procHidesOthers()
+{
+    QByteArray mounts;
+    if (!readTable("/proc/self/mounts", mounts)) return true;
+    for (const QByteArray& line : mounts.split('\n')) {
+        const QList<QByteArray> fields = line.split(' ');
+        if (fields.size() < 4 || fields.at(1) != "/proc" || fields.at(2) != "proc") continue;
+        for (const QByteArray& option : fields.at(3).split(',')) {
+            if (!option.startsWith("hidepid=")) continue;
+            const QByteArray value = option.mid(8);
+            if (value != "0" && value != "off") return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+Listens otherServer()
+{
+    if (procHidesOthers()) return Listens::Unknown;
+    const QDir proc(QStringLiteral("/proc"));
+    if (!proc.exists()) return Listens::Unknown;
+    QList<Process> all;
+    bool known = true;
+    for (const QString& entry : proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        bool number = false;
+        const uint32_t pid = entry.toUInt(&number);
+        if (!number || pid == 0) continue;
+        // The program's name as the kernel keeps it: at most 15 characters,
+        // which both editions' fit
+        QFile comm(QStringLiteral("/proc/%1/comm").arg(pid));
+        if (!comm.open(QIODevice::ReadOnly)) {
+            // Gone meanwhile says nothing; still there and unreadable does
+            if (QFile::exists(QStringLiteral("/proc/%1").arg(pid))) known = false;
+            continue;
+        }
+        all.append({pid, comm.read(64).trimmed()});
+    }
+    return otherServerAmong(all, static_cast<uint32_t>(::getpid()), false, known);
+}
+
 #else
 
 Listens listens(uint16_t port, bool tcp)
 {
     (void)port;
     (void)tcp;
+    return Listens::Unknown;
+}
+
+Listens otherServer()
+{
     return Listens::Unknown;
 }
 

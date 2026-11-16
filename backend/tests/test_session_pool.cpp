@@ -389,16 +389,17 @@ void run_session_pool_tests()
     // plan places them, for production and --dev: every port they use stays
     // off the TURN/STUN range (3478-3481), off the streaming servers' blocks,
     // below 49152 where Windows hands out ephemeral ports and Hyper-V, WSL and
-    // Docker reserve whole blocks at boot, and each slot's media port inside
-    // the block the packages open.
+    // Docker reserve whole blocks at boot, off both editions' media blocks,
+    // and each slot's media port inside the block the packages open.
     {
         SECTION("SessionPool — the reserved slots' ports, as the server plans them");
         const int reserved = 2 + ShareManager::kSlotCount;
         CHECK_EQ(reserved, 6);
         const int ceiling = mw::routerports::kMediaPortCount;
-        const quint16 media = mw::routerports::kMediaBasePort;
         for (const quint16 base : {quint16(48001), quint16(48501)}) {
-            const SlotPortPlan plan = planSlotPorts(base, media, ceiling);
+            // Production's signaling base, and the DEV identity's
+            const quint16 media = mw::routerports::mediaBasePort(base == 48501);
+            const SlotPortPlan plan = planSlotPorts(base, ceiling);
             CHECK(plan.maxSlots >= reserved);
             SessionPool planned(base, plan.extraBase, reserved, plan.maxSlots);
             // Slot 0 keeps its historical ports (signaling, relay, control),
@@ -419,15 +420,20 @@ void run_session_pool_tests()
                 CHECK(p < 47984 || p > 48010);
                 CHECK(p < 48095 || p > 48399);
             }
-            // The signaling ports never land in the media block.
+            // The signaling ports never land in either edition's media block:
+            // a stream socket of the other edition listens there in TCP too.
             for (int i = 1; i < reserved; ++i) {
                 const int s = planned.signalingPort(i);
-                CHECK(s + 1 < media || s > media + ceiling - 1);
+                for (const bool dev : {false, true}) {
+                    CHECK(!mw::routerports::inMediaBlock(dev, s));
+                    CHECK(!mw::routerports::inMediaBlock(dev, s + 1));
+                }
             }
             // Each slot's media port is the block's, one each.
             CHECK(media + reserved - 1 <= media + ceiling - 1);
         }
-        // Production as the plan's comment says it lands.
-        CHECK_EQ(planSlotPorts(48001, media, ceiling).extraBase, quint16(48011));
+        // Production and --dev as the plan's comment says they land.
+        CHECK_EQ(planSlotPorts(48001, ceiling).extraBase, quint16(48011));
+        CHECK_EQ(planSlotPorts(48501, ceiling).extraBase, quint16(48598));
     }
 }

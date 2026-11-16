@@ -183,8 +183,9 @@ void run_router_quit_tests()
         CHECK(core.claim(media(1)).ok);
         const int before = gw.table.size();
         int asked = 0;
-        // Expires once the first claim's removals have been asked for.
-        const auto out = core.releaseBeforeExit([&asked]() { return ++asked > 2; });
+        // Expires once the first claim's entries have been looked at and
+        // their removals asked for: before each of those four calls.
+        const auto out = core.releaseBeforeExit([&asked]() { return ++asked > 4; });
         CHECK(out.released == 1);
         CHECK(out.left.size() == 2);
         CHECK(core.held().isEmpty());

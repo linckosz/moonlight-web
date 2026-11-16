@@ -54,24 +54,34 @@ extern "C" {
 #include <QMap>
 #include <memory>
 
-// The media block, as the packages' firewall rule and the log name it.
-static const QString kMediaBlock =
-    QStringLiteral("%1-%2/udp")
-        .arg(mw::routerports::kMediaBasePort)
-        .arg(mw::routerports::kMediaBasePort + mw::routerports::kMediaPortCount - 1);
+// The first port of the stream block a slot's own port is in: a DEV
+// identity's or the installed host's (RouterPortPools.h). Read from the port
+// the server handed this stream, which knows whose ports the run walks.
+static uint16_t mediaBlockBase(uint16_t own)
+{
+    return mw::routerports::mediaBasePort(mw::routerports::inMediaBlock(true, own));
+}
+
+// That block, as the packages' firewall rules and the log name it.
+static QString mediaBlockText(uint16_t own)
+{
+    const uint16_t base = mediaBlockBase(own);
+    return QStringLiteral("%1-%2/udp").arg(base).arg(base + mw::routerports::kMediaPortCount - 1);
+}
 
 // The port this slot's media socket pins: its own when free, else another of
-// the block — still open in the firewall, where a random one would not be.
+// its block — still open in the firewall, where a random one would not be.
 // Something else on the machine can hold one: a second instance streaming on
-// the same slot (production next to --dev), or on Linux a program that got it
-// as an ephemeral port where the packages could not reserve it. The walk runs
-// from the top of the block down, away from the low slots that are always in
-// use. 0 when the whole block is held.
+// the same slot, or on Linux a program that got it as an ephemeral port where
+// the packages could not reserve it. The walk runs from the top of the block
+// down, away from the low slots that are always in use. 0 when the whole
+// block is held.
 static uint16_t freeMediaPort(uint16_t own)
 {
     if (mw::relaystart::udpPortFree(own)) return own;
+    const uint16_t base = mediaBlockBase(own);
     for (int i = mw::routerports::kMediaPortCount - 1; i >= 0; --i) {
-        const auto port = static_cast<uint16_t>(mw::routerports::kMediaBasePort + i);
+        const auto port = static_cast<uint16_t>(base + i);
         if (port != own && mw::relaystart::udpPortFree(port)) return port;
     }
     return 0;
@@ -744,7 +754,7 @@ void SignalingServer::onRelayIceTimedOut()
     const QString firewall = hostFirewallName();
     if (!firewall.isEmpty())
         qWarning().noquote() << "[SignalingServer]" << firewall
-                             << "is active on this host: it must let" << kMediaBlock
+                             << "is active on this host: it must let" << mediaBlockText(m_MediaPort)
                              << "through (the packages open it), or no stream reaches this "
                                 "machine over UDP";
 
@@ -1296,7 +1306,7 @@ rtc::Configuration SignalingServer::buildIceConfig(bool isInternet, bool mapped,
     } else {
         // The whole block is held: an ephemeral port still works wherever the
         // firewall is program-scoped or off.
-        qWarning().noquote() << "[SignalingServer] UDP media ports" << kMediaBlock
+        qWarning().noquote() << "[SignalingServer] UDP media ports" << mediaBlockText(mediaPort)
                              << "are all taken — using an ephemeral port, which a "
                                 "port-based firewall will block";
     }

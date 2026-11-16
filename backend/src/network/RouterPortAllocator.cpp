@@ -156,8 +156,8 @@ void logSwept(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResu
     const QString name = holeName(hole);
     switch (result.outcome) {
     case Swept::Removed:
-        Logger::info(
-            QStringLiteral("[UPNP] Left by an earlier run: %1 removed from the router").arg(name));
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier %1: %2 removed from the router")
+                         .arg(hole.old ? QStringLiteral("version") : QStringLiteral("run"), name));
         break;
     case Swept::NotOurs:
         Logger::info(QStringLiteral("[UPNP] Left by an earlier run: %1 now has another %2 on the "
@@ -176,14 +176,26 @@ void logSwept(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResu
                             .arg(name));
         break;
     case Swept::InUse:
-        Logger::info(result.detail == QLatin1String("listened")
-                         ? QStringLiteral("[UPNP] Left by an earlier version: %1 leads to a port "
-                                          "something on this machine listens on — left as it is")
-                               .arg(name)
-                         : QStringLiteral("[UPNP] Left by an earlier version: this system does "
-                                          "not say whether anything listens on the port %1 leads "
-                                          "to — left as it is")
-                               .arg(name));
+        if (result.detail == QLatin1String("listened"))
+            Logger::info(QStringLiteral("[UPNP] Left by an earlier version: %1 leads to a port "
+                                        "something on this machine listens on — left as it is")
+                             .arg(name));
+        else if (result.detail == QLatin1String("server"))
+            Logger::info(QStringLiteral("[UPNP] Left by an earlier version: %1 has no tag, and "
+                                        "another MoonlightWeb runs on this machine, whose it may "
+                                        "be — left as it is, judged again at the next start")
+                             .arg(name));
+        else if (result.detail == QLatin1String("server unknown"))
+            Logger::info(QStringLiteral("[UPNP] Left by an earlier version: %1 has no tag, and "
+                                        "this system does not say whether another MoonlightWeb "
+                                        "runs here — left as it is, judged again at the next "
+                                        "start")
+                             .arg(name));
+        else
+            Logger::info(QStringLiteral("[UPNP] Left by an earlier version: this system does not "
+                                        "say whether anything listens on the port %1 leads to — "
+                                        "left as it is")
+                             .arg(name));
         break;
     case Swept::Gone:
     case Swept::OtherAddress:
@@ -223,6 +235,8 @@ QString skipLine(const RouterPortCore::Skipped& s)
         return QStringLiteral("%1 (refused by the router)").arg(s.port);
     case RouterPortCore::SkipReason::KeptElsewhere:
         return QStringLiteral("%1 (kept pointed at %2 after our write)").arg(s.port).arg(s.owner);
+    case RouterPortCore::SkipReason::OtherInstallation:
+        return QStringLiteral("%1 (another installation's on this machine)").arg(s.port);
     }
     return QString::number(s.port);
 }
@@ -283,6 +297,10 @@ public:
         }
         m_Core->setRecord(m_Record.get());
         m_Core->setListens(&mw::sockettables::listens);
+        // Whether an untagged stream slot entry here may be another
+        // edition's, in use (RouterPortCore::earlierOurs)
+        m_Core->setOtherServer(&mw::sockettables::otherServer);
+        m_Core->setDevInstance(startup.devInstance);
         // TCP 443 is asked for over the same router and the same record, and
         // only by a run that has something to dial with. The dials are made
         // on a thread of their own (a dial waits for seconds, and every claim
@@ -960,11 +978,14 @@ void RouterPortAllocator::onClaimed(quint64 token, const RouterPortCore::Result&
 void RouterPortAllocator::onRenewed(const QList<RouterPortCore::Lost>& lost)
 {
     for (const RouterPortCore::Lost& l : lost) {
+        // Another edition here: its address is this machine's, and says nothing
+        const QString towards =
+            l.here ? QStringLiteral("another installation's entry on this machine") : l.owner;
         Logger::warning(QStringLiteral("[UPNP] %1: port %2 now forwards to %3 — dropped and "
                                        "forgotten, this machine will stop offering it")
                             .arg(purposeName(l.claim.purpose, l.claim.slot))
                             .arg(l.claim.external)
-                            .arg(l.owner));
+                            .arg(towards));
         m_Held.removeAll(l.claim);
         switch (l.claim.purpose) {
         case Purpose::Tunnel: m_Settings->forgetTunnelPort(l.claim.external); break;
@@ -974,7 +995,7 @@ void RouterPortAllocator::onRenewed(const QList<RouterPortCore::Lost>& lost)
                 m_Settings->forgetMuxPort(l.claim.slot);
             break;
         }
-        emit portLost(static_cast<int>(l.claim.purpose), l.claim.slot, l.claim.external, l.owner);
+        emit portLost(static_cast<int>(l.claim.purpose), l.claim.slot, l.claim.external, towards);
     }
     // One of them may be the port TCP 443 leads to: an entry that leads to a
     // port the router no longer forwards here is taken off at once
