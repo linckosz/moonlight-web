@@ -21,7 +21,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <thread>
 
 using namespace mw::native::capture;
@@ -34,18 +37,40 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-/// A compositor whose answer the test sets: a transform, or no answer.
+/// A compositor whose answer the test sets: a transform, or no answer. Gated,
+/// it hangs every read until the test opens the gate, so the tests that are
+/// about a read in flight check what happened in which order, not how long it
+/// took: a loaded runner stretches times (macOS CI, 15-16/11/2026), not order.
+/// The gate gives way by itself after 10 s, so a watch that waits on a hung
+/// read fails its check rather than hangs the run.
 struct FakeCompositor
 {
     std::atomic<int> turns{0};
     std::atomic<bool> answers{true};
-    std::atomic<int> blockMs{0};
+    std::atomic<bool> gated{false};
+    std::atomic<int> entered{0}; ///< reads begun
+    std::atomic<int> left{0};    ///< reads ended
+    std::mutex gateMutex;
+    std::condition_variable gateWake;
+    bool gateOpen = false;
+
+    void open()
+    {
+        std::lock_guard<std::mutex> lock(gateMutex);
+        gateOpen = true;
+        gateWake.notify_all();
+    }
 
     TurnWatch::Reader reader(const std::shared_ptr<FakeCompositor>& self)
     {
         return [self] {
-            const int block = self->blockMs.load();
-            if (block > 0) std::this_thread::sleep_for(std::chrono::milliseconds(block));
+            self->entered.fetch_add(1);
+            if (self->gated.load()) {
+                std::unique_lock<std::mutex> lock(self->gateMutex);
+                self->gateWake.wait_for(lock, std::chrono::seconds(10),
+                                        [&] { return self->gateOpen; });
+            }
+            self->left.fetch_add(1);
             CompositorTransform t;
             t.known = self->answers.load();
             t.orientation = Orientation{self->turns.load(), false};
@@ -64,6 +89,17 @@ bool takeWithin(TurnWatch& watch, CompositorTransform& seen, int budgetMs)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
     return false;
+}
+
+/// Until @p done says so, or 5 s: how long a step may take on any runner.
+bool eventually(const std::function<bool()>& done)
+{
+    const auto until = Clock::now() + std::chrono::seconds(5);
+    while (!done()) {
+        if (Clock::now() >= until) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
 }
 
 } // namespace
@@ -152,46 +188,52 @@ void run_turn_watch_tests()
     SECTION("TurnWatch — the capture loop never waits on the compositor");
     {
         auto fake = std::make_shared<FakeCompositor>();
-        fake->blockMs = 150;
+        fake->gated = true;
         TurnWatch watch(fake->reader(fake), Orientation{}, 1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(20)); // a read in flight
+        CHECK(eventually([&] { return fake->entered.load() >= 1; })); // a read in flight
         CompositorTransform seen;
-        const auto start = Clock::now();
         for (int i = 0; i < 100; ++i)
             watch.take(seen);
-        const auto tookMs =
-            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count();
-        CHECK(tookMs < 50);
+        // All of them answered while the read still hung.
+        CHECK_EQ(fake->left.load(), 0);
+        fake->open();
+        CHECK(eventually([&] { return fake->left.load() >= 1; }));
     }
 
     SECTION("TurnWatch — a compositor that hangs does not hold the stop");
     {
         auto fake = std::make_shared<FakeCompositor>();
-        fake->blockMs = 400;
-        const auto start = Clock::now();
+        fake->gated = true;
         {
             TurnWatch watch(fake->reader(fake), Orientation{}, 1, /*stopBudgetMs=*/30);
-            std::this_thread::sleep_for(std::chrono::milliseconds(20)); // a read in flight
+            CHECK(eventually([&] { return fake->entered.load() >= 1; })); // a read in flight
         }
-        const auto tookMs =
-            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count();
-        CHECK(tookMs < 300);
-        // The thread left behind ends on its own; let it, before the process
-        // moves on (it holds only its own state and the stand-in).
-        std::this_thread::sleep_for(std::chrono::milliseconds(450));
+        // The stop came back while the read still hung.
+        CHECK_EQ(fake->left.load(), 0);
+        // The thread left behind ends on its own once the read does; let it,
+        // before the process moves on (it holds only its own state and the
+        // stand-in).
+        fake->open();
+        CHECK(eventually([&] { return fake->left.load() >= 1; }));
     }
 
     SECTION("TurnWatch — a read in flight is waited for, within the budget");
     {
         auto fake = std::make_shared<FakeCompositor>();
-        fake->blockMs = 40;
-        const auto start = Clock::now();
+        fake->gated = true;
+        std::thread opener;
         {
-            TurnWatch watch(fake->reader(fake), Orientation{}, 1, /*stopBudgetMs=*/1000);
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            TurnWatch watch(fake->reader(fake), Orientation{}, 1, /*stopBudgetMs=*/5000);
+            CHECK(eventually([&] { return fake->entered.load() >= 1; })); // a read in flight
+            // The read ends a little after the stop has begun to wait for it.
+            opener = std::thread([fake] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                fake->open();
+            });
         }
-        const auto tookMs =
-            std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count();
-        CHECK(tookMs < 900);
+        // The stop came back only once the read had ended: none left in flight.
+        CHECK(fake->left.load() >= 1);
+        CHECK_EQ(fake->left.load(), fake->entered.load());
+        opener.join();
     }
 }
