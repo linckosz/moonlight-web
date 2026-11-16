@@ -1353,6 +1353,29 @@ int keepOnlyOurs(const QString& devicePath, QString* error)
     return ok ? off : -1;
 }
 
+/// Every active display but ours (@p devicePath) kept: ours off the desktop,
+/// its node left alone, never saved to Windows' database.
+bool detachOurs(const QString& devicePath, QString* error)
+{
+    return applyDisplayConfig(
+        [&](std::vector<DISPLAYCONFIG_PATH_INFO>& paths,
+            std::vector<DISPLAYCONFIG_MODE_INFO>& modes, QString* err) {
+            Q_UNUSED(modes);
+            const int ours = pathIndexFor(paths, devicePath);
+            if (ours < 0) {
+                *err = QStringLiteral("the display is not in the active configuration");
+                return false;
+            }
+            if (paths.size() < 2) {
+                *err = QStringLiteral("it is the only display on");
+                return false;
+            }
+            paths.erase(paths.begin() + ours);
+            return true;
+        },
+        /*save=*/false, error);
+}
+
 /// The other displays are off for an exclusive stream (keepOnlyOurs): a
 /// marker beside the saved layout, so that the next process — a mode change
 /// mid-stream, the stream's end, a server restarted after a crash — knows
@@ -1434,9 +1457,14 @@ bool askedByServer(const QString& server)
         wchar_t image[MAX_PATH * 2] = {};
         DWORD n = DWORD(std::size(image));
         if (QueryFullProcessImageNameW(proc, 0, image, &n)) {
-            const QString theirs = QFileInfo(QString::fromWCharArray(image, int(n))).fileName();
-            const QString ours = QFileInfo(QCoreApplication::applicationFilePath()).fileName();
-            ok = theirs.compare(ours, Qt::CaseInsensitive) == 0;
+            // The very executable, by its full canonical path: none on
+            // either side refuses.
+            const QString theirs =
+                QFileInfo(QString::fromWCharArray(image, int(n))).canonicalFilePath();
+            const QString ours =
+                QFileInfo(QCoreApplication::applicationFilePath()).canonicalFilePath();
+            ok = !theirs.isEmpty() && !ours.isEmpty() &&
+                 theirs.compare(ours, Qt::CaseInsensitive) == 0;
         }
     }
     CloseHandle(proc);
@@ -1515,10 +1543,14 @@ int restoreLayout(Context& ctx)
         ctx.result.stage = QStringLiteral("done");
         return finish(ctx);
     }
+    const Marker marker = readMarker(ctx);
+    const bool markerOurs = marker.kept && *marker.kept == VirtualDisplay::keptOurs();
     bool back = false;
+    bool applied = false;
     if (const auto saved = loadTopology(ctx); saved && topologyStillAttached(*saved)) {
         QString error;
         back = applyTopology(*saved, &error);
+        applied = back;
         if (back)
             Logger::info(QStringLiteral("[vdisplay-apply] display layout restored"));
         else
@@ -1533,6 +1565,20 @@ int restoreLayout(Context& ctx)
                 QStringLiteral("the other displays not back on: %1").arg(lastErrorText(DWORD(rc))));
         Logger::info(QStringLiteral("[vdisplay-apply] the other displays back on, as Windows "
                                     "extends them"));
+    }
+    // An exclusive stream of ours, its server gone: Windows' extended layout
+    // lights ours up beside the others. It goes off the desktop again — the
+    // node left as it is, never saved (R1).
+    if (const auto ours = findOurTarget();
+        VirtualDisplay::detachOursAfterRestore(markerOurs, applied, ours.has_value())) {
+        QString error;
+        if (detachOurs(ours->devicePath, &error))
+            Logger::info(QStringLiteral("[vdisplay-apply] the virtual display taken off the "
+                                        "desktop"));
+        else
+            Logger::warning(
+                QStringLiteral("[vdisplay-apply] the virtual display stays on the desktop: %1")
+                    .arg(error));
     }
     mw::place::removeShared(topologyPath(ctx));
     setOthersOff(ctx, false);

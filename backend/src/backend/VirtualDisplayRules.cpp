@@ -296,6 +296,14 @@ bool launchBlockedByKeep(const QString& keptKey, const QString& launchKey, bool 
     return launchKey != keptKey;
 }
 
+bool detachOursAfterRestore(bool markerOurs, bool layoutApplied, bool oursActive)
+{
+    // The layout from before ours has it off already; whatever left it on —
+    // the extended fallback, or a layout that still lists it — it goes.
+    Q_UNUSED(layoutApplied);
+    return markerOurs && oursActive;
+}
+
 bool othersComeBack(bool ownerOn, bool othersOff)
 {
     return othersOff && !ownerOn;

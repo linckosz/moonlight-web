@@ -576,6 +576,13 @@ bool screenOthersComeBack(bool offForScreen, bool keptStreamed);
 /// take the kept one's place.
 bool launchBlockedByKeep(const QString& keptKey, const QString& launchKey, bool launchIsOurs);
 
+/// RestoreLayout, after the layout from before (@p layoutApplied) or
+/// Windows' extended one: whether our display is taken off the desktop. Only
+/// for an exclusive stream of ours (@p markerOurs) whose display is still
+/// active (@p oursActive) — the extended fallback lights it up beside the
+/// others after a server crash. A real display's stream never touches ours.
+bool detachOursAfterRestore(bool markerOurs, bool layoutApplied, bool oursActive);
+
 /// With a stream still on the display: whether the other displays come back on
 /// now. They were the owner's to turn off, so they go with the owner's stream
 /// (@p ownerOn), whatever the guests still watching.

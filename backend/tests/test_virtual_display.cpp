@@ -1114,6 +1114,18 @@ void run_virtual_display_tests()
         CHECK(keepStep(true, std::nullopt, path) == KeepStep::Refuse);
     }
 
+    SECTION("VirtualDisplay — after a crash, ours leaves the desktop only for its own stream");
+    // Marker on ours, the layout from before unreadable: Windows' extended
+    // layout lit ours up, and it is taken off the desktop.
+    CHECK(detachOursAfterRestore(true, false, true));
+    CHECK(detachOursAfterRestore(true, true, true));
+    CHECK(!detachOursAfterRestore(true, false, false));
+    CHECK(!detachOursAfterRestore(true, true, false));
+    // Marker on a real display: nothing about ours.
+    CHECK(!detachOursAfterRestore(false, false, true));
+    CHECK(!detachOursAfterRestore(false, true, true));
+    CHECK(!detachOursAfterRestore(false, false, false));
+
     SECTION("VirtualDisplay — a real display's stream turns the others off only alone");
     CHECK(screenOthersGoOff(Asker::Owner, true, false));
     CHECK(!screenOthersGoOff(Asker::Owner, true, true));
