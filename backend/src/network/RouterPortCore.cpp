@@ -755,13 +755,23 @@ RouterPortCore::Released RouterPortCore::releaseBeforeExit(const std::function<b
     return out;
 }
 
-QList<Hole> RouterPortCore::sweepList() const
+QList<Hole> RouterPortCore::sweepList(SweepCount* count) const
 {
     QList<Hole> out;
-    if (!m_Record) return out;
-    const QString lan = m_Gateway.lanAddress();
-    for (const Hole& line : m_Record->holes())
-        if (line.lan == lan && !holdsLine(line.external, line.tcp)) out.append(line);
+    SweepCount counted;
+    if (m_Record) {
+        const QString lan = m_Gateway.lanAddress();
+        for (const Hole& line : m_Record->holes()) {
+            ++counted.lines;
+            if (line.lan != lan)
+                ++counted.elsewhere;
+            else if (holdsLine(line.external, line.tcp))
+                ++counted.held;
+            else
+                out.append(line);
+        }
+    }
+    if (count) *count = counted;
     return out;
 }
 

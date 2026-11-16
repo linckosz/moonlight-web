@@ -200,6 +200,8 @@ public:
     QString tag() const override { return m_Content.tag; }
     /// The lines this run may act on: never one of Content::others.
     QList<Hole> holes() const override { return m_Content.holes; }
+    /// How many lines of the other kind of instance it keeps (Content::others).
+    qsizetype otherKind() const { return m_Content.others.size(); }
     bool find(uint16_t external, bool tcp, Hole& out) const override;
     void note(const Hole& hole) override;
     void strike(uint16_t external, bool tcp) override;

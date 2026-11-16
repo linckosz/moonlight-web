@@ -395,9 +395,20 @@ public:
         QString detail;
     };
 
+    /// What sweepList() left out, in numbers only (for the log).
+    struct SweepCount
+    {
+        /// The record's lines of this kind of instance.
+        int lines = 0;
+        /// Noted under another address of this machine than the one it has now.
+        int elsewhere = 0;
+        /// Of ports this run holds.
+        int held = 0;
+    };
+
     /// The lines of the record a sweep looks at: those noted under the
     /// address this host has now, of ports this run does not hold.
-    QList<mw::routerholes::Hole> sweepList() const;
+    QList<mw::routerholes::Hole> sweepList(SweepCount* count = nullptr) const;
 
     /// Asks the router the one question whose answer is known: a port no
     /// MoonlightWeb ever asks for (kKnownQuestionPort), in each protocol

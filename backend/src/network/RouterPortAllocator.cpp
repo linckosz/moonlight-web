@@ -197,9 +197,22 @@ void logSwept(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResu
                                         "left as it is")
                              .arg(name));
         break;
+    // Said as well, in the same words as the others: port, protocol, kind,
+    // never an address or a tag.
     case Swept::Gone:
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier run: %1 is no longer in the "
+                                    "record, or no longer on the router — nothing to take off")
+                         .arg(name));
+        break;
     case Swept::OtherAddress:
-    case Swept::HeldAgain: break;
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier run: %1 was noted under another "
+                                    "address of this machine — left for later")
+                         .arg(name));
+        break;
+    case Swept::HeldAgain:
+        Logger::info(QStringLiteral("[UPNP] Left by an earlier run: %1 is held again by this run")
+                         .arg(name));
+        break;
     }
 }
 
@@ -294,6 +307,12 @@ public:
                                                    QSysInfo::machineUniqueId(), startup.earlier,
                                                    lan, &said);
             if (!said.isEmpty()) Logger::info(QStringLiteral("[UPNP] Note: ") + said);
+            // Numbers only: what the record holds, never an address or a tag
+            if (m_Record)
+                Logger::info(QStringLiteral("[UPNP] Record: %1 line(s) of this kind of instance, "
+                                            "%2 of the other kind")
+                                 .arg(m_Record->holes().size())
+                                 .arg(m_Record->otherKind()));
         }
         m_Core->setRecord(m_Record.get());
         m_Core->setListens(&mw::sockettables::listens);
@@ -335,14 +354,33 @@ public:
         // What an earlier run left on the router. Queued, so that the claims
         // that waited for this discovery are served first, and one line at a
         // time, so that those that come meanwhile do not wait for the sweep.
-        m_Sweep = m_Core->sweepList();
+        RouterPortCore::SweepCount count;
+        m_Sweep = m_Core->sweepList(&count);
+        // Numbers only, never which of this machine's addresses was seen
+        if (m_Record)
+            Logger::info(QStringLiteral("[UPNP] Sweep: %1 line(s) to look at, of %2; %3 noted "
+                                        "under another address, %4 held by this run")
+                             .arg(m_Sweep.size())
+                             .arg(count.lines)
+                             .arg(count.elsewhere)
+                             .arg(count.held));
         if (!m_Sweep.isEmpty())
             QMetaObject::invokeMethod(this, [this]() { sweepFirst(); }, Qt::QueuedConnection);
     }
 
+    /// The server quits: what is left of the sweep waits for the next start.
+    void sweepCutShort()
+    {
+        if (m_Sweep.isEmpty()) return;
+        Logger::info(QStringLiteral("[UPNP] Sweep cut short: the server quits, %1 line(s) left "
+                                    "for the next start")
+                         .arg(m_Sweep.size()));
+        m_Sweep.clear();
+    }
+
     void sweepFirst()
     {
-        if (closing()) m_Sweep.clear();
+        if (closing()) sweepCutShort();
         if (!m_Core || m_Sweep.isEmpty()) return;
         if (!m_Core->sweepBelieved(m_Sweep)) {
             Logger::info(QStringLiteral("[UPNP] Asked about a port no MoonlightWeb ever maps, the "
@@ -357,7 +395,7 @@ public:
 
     void sweepNext()
     {
-        if (closing()) m_Sweep.clear();
+        if (closing()) sweepCutShort();
         if (!m_Core || m_Sweep.isEmpty()) return;
         const mw::routerholes::Hole hole = m_Sweep.takeFirst();
         logSwept(hole, m_Core->sweep(hole));
@@ -503,7 +541,7 @@ public:
     void releaseBeforeExit(QDeadlineTimer deadline)
     {
         if (m_Renew) m_Renew->stop();
-        m_Sweep.clear();
+        sweepCutShort();
         mw::tcp443::Situation dropped;
         bool droppedAsk = false;
         m_Waiting443.take(dropped, droppedAsk);
