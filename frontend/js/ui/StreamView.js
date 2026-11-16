@@ -9623,7 +9623,9 @@ export class StreamView {
                     const s = this._mouseSensitivity;
                     this._clientCursorMoved(e.movementX * s, e.movementY * s);
                 }
+                this._edgeTurnMove(e);
             } else {
+                this._stopEdgeTurn();
                 this._lastMouseClientX = e.clientX;
                 this._lastMouseClientY = e.clientY;
                 this._lastClientMoveMs = performance.now();
@@ -10341,6 +10343,133 @@ export class StreamView {
         return this._lookFreeDeltas;
     }
 
+    /** How long the hand may stay still at the edge before the turn stops (E2). */
+    static EDGE_TURN_IDLE_MS = 200;
+    /** A turn never runs longer than this without a real move (backstop). */
+    static EDGE_TURN_MAX_MS = 30000;
+    /** The turn's speed, in the CSS pixels a second movementX counts in. */
+    static EDGE_TURN_MIN_SPEED = 300;
+    static EDGE_TURN_MAX_SPEED = 1500;
+    /** The motion before the edge that sets the speed. */
+    static EDGE_TURN_SAMPLE_MS = 100;
+
+    /**
+     * Lock-free look turns the camera on at the page's edge (IPADFPS,
+     * 16/11/2026).
+     *
+     * Without the lock, Safari's own pointer stops at the edge of the page
+     * and so do its movementX — and moving the mouse back sends the way back,
+     * since that pointer cannot be lifted like a mouse. A camera could turn
+     * one sweep of the screen at most. So while the viewer's pointer rests on
+     * the left or right edge and the hand keeps pushing (mousemove events
+     * still arrive, with nothing to move), the page goes on sending the turn
+     * at the speed the hand had when it got there. Leaving the edge, letting
+     * go, or anything a real move would not survive stops it.
+     *
+     * Called by every lock-free move that went out as deltas.
+     */
+    _edgeTurnMove(e) {
+        const now = performance.now();
+        const samples = (this._edgeTurnSamples ??= []);
+        if (e.movementX) samples.push({ t: now, dx: e.movementX });
+        while (samples.length && now - samples[0].t > StreamView.EDGE_TURN_SAMPLE_MS)
+            samples.shift();
+        if (e.movementX) this._edgeTurnCapped = false;
+        const w = window.innerWidth;
+        const dir = e.clientX <= 0.5 ? -1 : w > 0 && e.clientX >= w - 1.5 ? 1 : 0;
+        // Off the edge, or moving back into the page: no turn.
+        if (!dir || e.movementX * dir < 0) {
+            this._stopEdgeTurn();
+            return;
+        }
+        const turn = this._edgeTurn;
+        if (turn && turn.dir === dir) {
+            turn.lastEventMs = now;
+            return;
+        }
+        this._stopEdgeTurn();
+        if (this._edgeTurnCapped || !this._edgeTurnMayRun()) return;
+        let sum = 0;
+        for (const p of samples) if (p.dx * dir > 0) sum += Math.abs(p.dx);
+        const speed = Math.max(
+            StreamView.EDGE_TURN_MIN_SPEED,
+            Math.min(StreamView.EDGE_TURN_MAX_SPEED, (sum * 1000) / StreamView.EDGE_TURN_SAMPLE_MS),
+        );
+        this._edgeTurn = {
+            dir,
+            speed,
+            startMs: now,
+            lastEventMs: now,
+            lastTickMs: now,
+            carry: 0,
+            owner: this._onGamingMouseMove,
+            raf: requestAnimationFrame(() => this._edgeTurnTick()),
+        };
+        console.log(
+            `[StreamView] Mouse: edge turn ${dir > 0 ? 'right' : 'left'}, ${Math.round(speed)} px/s`,
+        );
+    }
+
+    /**
+     * Whether the turn may send now: what a real lock-free move needs, read
+     * again at every frame (E1, SR) — a guest whose mouse is taken back mid-
+     * turn, a mode toggled, the lock granted, the tab hidden all stop it.
+     */
+    _edgeTurnMayRun() {
+        return (
+            !!this.inputEl &&
+            this._gamingMode &&
+            this._mouseAllowed !== false &&
+            !this._mouseFocused &&
+            !this.pointerLocked &&
+            this._pointerLockRefused &&
+            this._lockFreeLook &&
+            this._lookFreeDeltas === true &&
+            !this._rawPointerLive() &&
+            document.visibilityState === 'visible' &&
+            document.hasFocus()
+        );
+    }
+
+    _edgeTurnTick() {
+        const turn = this._edgeTurn;
+        if (!turn) return;
+        turn.raf = 0;
+        const now = performance.now();
+        if (turn.owner !== this._onGamingMouseMove || !this._edgeTurnMayRun()) {
+            this._stopEdgeTurn();
+            return;
+        }
+        if (now - turn.lastEventMs > StreamView.EDGE_TURN_IDLE_MS) {
+            this._stopEdgeTurn();
+            return;
+        }
+        if (now - turn.startMs > StreamView.EDGE_TURN_MAX_MS) {
+            this._edgeTurnCapped = true;
+            this._stopEdgeTurn();
+            return;
+        }
+        // A frame's worth, never more than a short frame's after a stall.
+        const dt = Math.min(now - turn.lastTickMs, 50);
+        turn.lastTickMs = now;
+        const x = turn.dir * turn.speed * (dt / 1000) + turn.carry;
+        const out = Math.trunc(x);
+        turn.carry = x - out;
+        if (out) {
+            this._sendRelativeMouse(out, 0);
+            this._clientCursorMoved(out * this._mouseSensitivity, 0);
+        }
+        turn.raf = requestAnimationFrame(() => this._edgeTurnTick());
+    }
+
+    _stopEdgeTurn() {
+        const turn = this._edgeTurn;
+        if (!turn) return;
+        this._edgeTurn = null;
+        if (turn.raf) cancelAnimationFrame(turn.raf);
+        console.log('[StreamView] Mouse: edge turn stopped');
+    }
+
     /** Draw (or hide) the pointer where we think it is. */
     _placeClientCursor() {
         const el = this._clientCursorEl;
@@ -10645,6 +10774,7 @@ export class StreamView {
 
             // Mode-specific listeners
             if (this._gamingMode) {
+                this._stopEdgeTurn();
                 if (this._onGamingMouseMove)
                     this.inputEl.removeEventListener('mousemove', this._onGamingMouseMove);
                 if (this._onGamingClick)
@@ -13214,6 +13344,7 @@ export class StreamView {
         this._penLift();
         // ── Remove current mouse event listeners ─────────────────────────
         if (this._gamingMode) {
+            this._stopEdgeTurn();
             if (this._onGamingMouseMove)
                 this.inputEl.removeEventListener('mousemove', this._onGamingMouseMove);
             if (this._onGamingClick) this.inputEl.removeEventListener('click', this._onGamingClick);
