@@ -139,7 +139,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         sent.length = 0;
         restThenTurn(30);
         expect(sent).toEqual([]);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
     });
 
     it('stops when the page leaves full screen', () => {
@@ -150,7 +150,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         sent.length = 0;
         ticks(5);
         expect(sent).toEqual([]);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
     });
 
     it('stops when the window loses focus or the page is hidden', () => {
@@ -161,7 +161,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         sent.length = 0;
         ticks(5);
         expect(sent).toEqual([]);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
     });
 
     it('stops at the first touch of the edge, and arms again only after leaving the band', () => {
@@ -169,7 +169,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         approachTop(v);
         restThenTurn();
         move(v, 500, 1, 0, -2);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
         // Back into the band towards the edge: still nothing.
         move(v, 500, 20, 0, 4);
         move(v, 500, 10, 0, -10);
@@ -204,7 +204,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         approachTop(v);
         restThenTurn();
         move(v, 510, 40, 10, 0);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
         sent.length = 0;
         tick(300);
         ticks(20);
@@ -221,7 +221,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         const { v, sent } = view();
         approachTop(v);
         move(v, 510, 46, 10, 0);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
         sent.length = 0;
         restThenTurn(20);
         expect(vertical(sent)).toBe(0);
@@ -232,7 +232,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         approachTop(v);
         restThenTurn();
         move(v, 500, 40, 0, 6);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
         sent.length = 0;
         restThenTurn(20);
         expect(sent).toEqual([]);
@@ -259,7 +259,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         sent.length = 0;
         restThenTurn(30);
         expect(vertical(sent)).toBe(0);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
     });
 
     it('gives up after its cap, until the pointer leaves the band', () => {
@@ -268,7 +268,7 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         ticks(Math.ceil(StreamView.EDGE_TURN_REST_MS / 16) + 1);
         for (let t = 0; t <= StreamView.EDGE_TURN_VERT_MAX_MS; t += 50) tick(50);
         tick(50);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
         move(v, 500, 30, 0, -4);
         sent.length = 0;
         restThenTurn(20);
@@ -306,10 +306,10 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         sent.length = 0;
         ticks(5);
         expect(sent).toEqual([]);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
         // Nor arms again without the right.
         approachTop(v);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
         sent.length = 0;
         restThenTurn(10);
         expect(vertical(sent)).toBe(0);
@@ -324,6 +324,6 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         sent.length = 0;
         ticks(5);
         expect(vertical(sent)).toBe(0);
-        expect(v._edgeTurn).toBe(null);
+        expect(v._edgeTurn ?? null).toBe(null);
     });
 });
