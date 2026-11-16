@@ -6232,6 +6232,12 @@ int main(int argc, char* argv[])
                                 409, QStringLiteral("That display is no longer connected")));
                             return;
                         }
+                        // The server began to quit while the displays came
+                        // back: no stream starts (QuitRefusal.h).
+                        if (mw::quitting()) {
+                            respond(mw::quittingRefusal());
+                            return;
+                        }
                         g_StartHostAgain(req, respond);
                     });
                     return;
