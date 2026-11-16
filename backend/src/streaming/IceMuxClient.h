@@ -65,8 +65,14 @@ using TcpOffer = std::function<bool(uintptr_t socket, const char* frame, size_t 
 ///
 /// False (and nothing kept) when it is absent or a socket cannot be opened:
 /// the stream then takes a socket of its own, as without the mux.
+///
+/// `refuseForBench` (the bench key debug_ice_mux_refuse): what was given is
+/// taken and checked as always, then closed again, and false — the way a
+/// stream that refused its shared ports goes on is benched without breaking
+/// anything (streaming/MuxRefuse.h).
 bool configure(const QJsonObject& mux, quint32 serverPid,
-               const std::function<bool(const QString& image)>& isServer, Emit tell);
+               const std::function<bool(const QString& image)>& isServer, Emit tell,
+               bool refuseForBench = false);
 bool available();
 /// Whether a connection that also listens in TCP can go on the shared ports:
 /// the server listens for it there, and this worker can be handed what it

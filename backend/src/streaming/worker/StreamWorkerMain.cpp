@@ -20,6 +20,7 @@
 #include "../Session.h"
 #include "../../common/LoopbackKey.h"
 #include "../IceMuxClient.h"
+#include "../MuxRefuse.h"
 #include "../InputActivity.h"
 #include "../InputMessageCodec.h"
 #include "../TakeoverNotice.h"
@@ -515,11 +516,24 @@ int runStreamWorker(QCoreApplication& app)
     // above started a process, and nothing below may before this. A worker
     // the server could not hand them to takes them out of the server its
     // pipes lead to (none for a plain child: it was handed them).
+    // A worker that refuses what it was given goes on a socket of its own, and
+    // says so once, with nothing else in the word: the server then claims the
+    // slot's own router hole and answers with it (streaming/MuxRefuse.h). One
+    // the server could not hand anything is told so in its config line.
+    bool lateHole = cfg[QStringLiteral("iceMuxLateHole")].toBool(false);
     if (cfg.contains(QStringLiteral("iceMux"))) {
-        mw::icemuxclient::configure(cfg["iceMux"].toObject(), ConsoleSession::workerServerPid(),
-                                    &ConsoleSession::isThisExecutable, emitEvent);
+        const bool shared =
+            mw::icemuxclient::configure(cfg["iceMux"].toObject(), ConsoleSession::workerServerPid(),
+                                        &ConsoleSession::isThisExecutable, emitEvent,
+                                        cfg[QStringLiteral("debugIceMuxRefuse")].toBool(false));
         // And which of them the router forwards, for what the stream announces.
-        mw::icemuxclient::setPublic(cfg["iceMuxPublic"].toObject());
+        if (shared) {
+            mw::icemuxclient::setPublic(cfg["iceMuxPublic"].toObject());
+        } else {
+            emitEvent({{QStringLiteral("event"), QStringLiteral("iceMux")},
+                       {QStringLiteral("op"), QStringLiteral("refused")}});
+            lateHole = true;
+        }
     }
 
     // The server's --config, before the first AppSettings below: this process
@@ -702,6 +716,9 @@ int runStreamWorker(QCoreApplication& app)
     // gateway, UPnP off, a guest) → STUN only, as before.
     session->setUpnpMapping(cfg["upnpPublicIp"].toString(),
                             static_cast<quint16>(cfg["upnpExternalPort"].toInt(0)));
+    // Counted on the shared ports and on a socket of its own after all: the
+    // server's answer for that socket's hole is on its way (iceMuxHole).
+    session->setLateHoleExpected(lateHole);
     session->setTransportMode(cfg["transportMode"].toString());
     session->setEnableIceTcp(cfg["iceTcp"].toBool());
     session->setIceTcpPassive(cfg["iceTcpPassive"].toBool(true));
@@ -965,7 +982,7 @@ int runStreamWorker(QCoreApplication& app)
     });
 
     // ── stdin command pump (blocking reads on a plain thread — portable) ─────
-    std::thread stdinThread([]() {
+    std::thread stdinThread([session]() {
         std::string line;
         while (readServerLine(line)) {
             const QJsonObject msg =
@@ -995,6 +1012,20 @@ int runStreamWorker(QCoreApplication& app)
                 // A TCP connection the server took for this stream on a
                 // shared port: to the agent it is for, here and now
                 mw::icemuxclient::takeConnection(msg);
+            } else if (cmd == QLatin1String("iceMuxHole")) {
+                // The server's answer for this stream's own router hole, when
+                // it was counted on the shared ports and is on a socket of its
+                // own (streaming/MuxRefuse.h): read strictly, then on the
+                // session's thread, where the next connection reads it.
+                QString ip;
+                quint16 port = 0;
+                if (!mw::muxrefuse::parseHoleCommand(msg, &ip, &port)) {
+                    qWarning() << "[IceMux] a malformed answer for this stream's own hole: ignored";
+                } else {
+                    QMetaObject::invokeMethod(
+                        session, [session, ip, port]() { session->lateHole(ip, port); },
+                        Qt::QueuedConnection);
+                }
             } else if (cmd == QLatin1String("setPolicy") && g_PlainHttp.load()) {
                 // A TV on plain HTTP: its policy is fixed at the start.
                 qWarning() << "[StreamWorker] plain HTTP: a policy change refused";

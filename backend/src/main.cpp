@@ -146,6 +146,7 @@
 #include "streaming/SharedFeed.h"
 #include "streaming/StreamEnds.h"
 #include "streaming/StreamWorkerHost.h"
+#include "streaming/MuxRefuse.h"
 #include "streaming/MicUplink.h"
 #include "streaming/WorkerService.h"
 #include "streaming/worker/StreamWorkerMain.h"
@@ -1752,6 +1753,9 @@ static bool streamSharesPorts(const QJsonObject& cfg)
 // shared ports the router forwards here, as of now.
 static QJsonObject withSharedPortsAnnounced(QJsonObject cfg)
 {
+    // Counted on the shared ports: if its worker ends up on a socket of its
+    // own all the same, it asks for its slot's hole (claimOwnHoleWhenAsked)
+    cfg["iceMuxShared"] = true;
     // A connection that listens in TCP: the server does so for it, and its
     // worker is told (StreamWorkerHost::withSharedSockets)
     if (cfg["iceTcp"].toBool()) cfg["iceMuxTcp"] = true;
@@ -1770,6 +1774,65 @@ static QJsonObject withSharedPortsAnnounced(QJsonObject cfg)
         told["tcp443"] = static_cast<int>(g_Tcp443LeadsTo);
     cfg["iceMuxPublic"] = told;
     return cfg;
+}
+
+// A stream counted on the shared ports whose worker is on a socket of its own
+// after all — the share could not be made, or the worker refused it
+// (streaming/MuxRefuse.h): the hole its slot would have had without the mux,
+// claimed once that worker says so, and given to it. Only that slot's, only
+// slotMediaPort(slot), never while the server quits, never for a launch that
+// was superseded. An answer that comes back once the server quits is taken off
+// at once. One that comes back for a launch that is over stays what a hole
+// claimed before the launch would be: an owner's slot keeps it as its held hole
+// (renewed, taken off at exit), a guest's goes the way a guest's does
+// (`guestOver`: its grace, then off unless the slot has a worker again; empty
+// for an owner's slot). The switches (UPnP, Internet Access) are
+// claimMediaPort's own: with one off it asks nothing and says why.
+static void claimOwnHoleWhenAsked(RouterPortAllocator& routerPorts, StreamWorkerHost* worker,
+                                  int slot, quint64 generation, std::function<void()> guestOver)
+{
+    const QPointer<StreamWorkerHost> live(worker);
+    QObject::connect(
+        worker, &StreamWorkerHost::ownPortNeeded, qApp,
+        [&routerPorts, live, slot, generation, guestOver]() {
+            const bool current = g_SlotLaunchGeneration.value(slot) == generation;
+            if (!mw::muxrefuse::claimWhenAsked(mw::quitting(), current) || !live) {
+                qInfo() << "[Session] No router hole for this stream's own socket —"
+                        << (mw::quitting() ? "the server quits" : "a newer launch on the slot");
+                return;
+            }
+            if (mw::edition::lanOnly()) {
+                qInfo() << "[Session] No router hole for this stream — LAN only";
+                live->sendIceMuxHole(QString(), 0);
+                return;
+            }
+            routerPorts.claimMediaPort(
+                slot, slotMediaPort(slot), qApp,
+                [&routerPorts, live, slot, generation,
+                 guestOver](const RouterPortAllocator::Claim& claim, const QString& why) {
+                    const bool current = g_SlotLaunchGeneration.value(slot) == generation;
+                    const bool workerLive = live && live->isRunning();
+                    switch (mw::muxrefuse::onAnswer(mw::quitting(), current, workerLive,
+                                                    claim.external != 0, bool(guestOver))) {
+                    case mw::muxrefuse::Answer::Use:
+                        live->sendIceMuxHole(routerPorts.publicIp(),
+                                             static_cast<quint16>(claim.external));
+                        return;
+                    case mw::muxrefuse::Answer::Release:
+                        qInfo() << "[Session] Slot" << slot
+                                << "router hole came back while the server quits — taken off";
+                        routerPorts.releaseMediaPort(slot);
+                        return;
+                    case mw::muxrefuse::Answer::Guest: guestOver(); return;
+                    case mw::muxrefuse::Answer::Nothing:
+                        if (claim.external == 0) {
+                            qInfo() << "[Session] No router hole for this stream —" << why;
+                            if (workerLive) live->sendIceMuxHole(QString(), 0);
+                        }
+                        return;
+                    }
+                });
+        });
 }
 
 // Ceiling independent of the port plan: enough for the largest per-backend cap
@@ -3513,6 +3576,11 @@ int main(int argc, char* argv[])
                         .arg(g_IceMux.port(IceMux::kBlock));
                 qInfo().noquote() << line;
             }
+            // The bench key of a stream that refuses its shared ports
+            // (streaming/MuxRefuse.h): never on unnoticed.
+            if (appSettings.debugIceMuxRefuse())
+                qWarning().noquote()
+                    << "debug_ice_mux_refuse is on: every stream refuses the shared ports";
             // A switch of the latency bench, in the environment, never for a
             // user: MW_ICEMUX_STATS=1 logs what the mux did and what the
             // process cost, every ten seconds (the workers, which inherit it,
@@ -5940,7 +6008,9 @@ int main(int argc, char* argv[])
                                    respond, standby]() {
                 // On the server's shared ports the stream has no port of its
                 // own to be forwarded to: the shared ports have their holes.
+                // Unless its worker ends up on one of its own all the same.
                 if (streamSharesPorts(cfg)) {
+                    claimOwnHoleWhenAsked(routerPorts, worker, reqSlot, generation, {});
                     startWorker(withSharedPortsAnnounced(cfg));
                     return;
                 }
@@ -7771,12 +7841,17 @@ int main(int argc, char* argv[])
         // sequence, generation guard included: a newer join on the slot while
         // the router is being asked stands this one down.
         const quint64 generation = ++g_SlotLaunchGeneration[slot];
-        auto claimThenStart = [&routerPorts, &keepGuestHole, joinFeed, startWorker, cfg, slot,
-                               generation, worker, respond]() {
+        auto claimThenStart = [&routerPorts, &keepGuestHole, &releaseGuestHoleSoon, joinFeed,
+                               startWorker, cfg, slot, generation, worker, respond]() {
             joinFeed();
             keepGuestHole(slot);
-            // As the owner path: on the shared ports, no hole of its own.
+            // As the owner path: on the shared ports, no hole of its own,
+            // unless its worker ends up on a socket of its own all the same.
             if (streamSharesPorts(cfg)) {
+                // A guest's hole goes as a guest's does
+                claimOwnHoleWhenAsked(
+                    routerPorts, worker, slot, generation,
+                    [&releaseGuestHoleSoon, slot]() { releaseGuestHoleSoon(slot); });
                 startWorker(withSharedPortsAnnounced(cfg));
                 return;
             }

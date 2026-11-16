@@ -20,6 +20,7 @@
 #include "ConsoleSession.h"
 #include "HidParkingTransfer.h"
 #include "IceMuxHandles.h"
+#include "MuxRefuse.h"
 #include "NativeBench.h"
 #include "StreamEnds.h"
 #include "TakeoverNotice.h"
@@ -110,6 +111,8 @@ void StreamWorkerHost::prepare(const QJsonObject& config, QStringList& args,
         // mic_device), by the same trap: SYSTEM's file would say auto.
         withSettings[QStringLiteral("micDevice")] = settings.micDevice();
         if (settings.debugIceDropUdp()) withSettings[QStringLiteral("debugIceDropUdp")] = true;
+        // The bench of a stream that refuses its shared ports (MuxRefuse.h)
+        if (settings.debugIceMuxRefuse()) withSettings[QStringLiteral("debugIceMuxRefuse")] = true;
         const QString dscp = qEnvironmentVariable("MW_DSCP");
         if (!dscp.isEmpty()) withSettings[QStringLiteral("dscp")] = dscp;
     }
@@ -119,6 +122,8 @@ void StreamWorkerHost::prepare(const QJsonObject& config, QStringList& args,
 bool StreamWorkerHost::startAs(const QJsonObject& config, Launch how)
 {
     Q_ASSERT(!m_Proc && !m_Console);
+    m_MuxCounted = config.value(QStringLiteral("iceMuxShared")).toBool(false);
+    m_OwnPortAsked = false;
     QStringList args;
     QByteArray configLine;
     prepare(config, args, configLine);
@@ -157,6 +162,10 @@ bool StreamWorkerHost::getsSharedPorts(const QJsonObject& config)
 bool StreamWorkerHost::start(const QJsonObject& config)
 {
     Q_ASSERT(!m_Proc && !m_Console);
+    // Counted on the shared ports by the server (main.cpp, streamSharesPorts):
+    // if it ends up on a socket of its own, it asks for its slot's hole.
+    m_MuxCounted = config.value(QStringLiteral("iceMuxShared")).toBool(false);
+    m_OwnPortAsked = false;
     QStringList args;
     QByteArray configLine;
     prepare(config, args, configLine);
@@ -297,6 +306,7 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
 #endif
     m_Launch = Launch::Plain;
     qInfo() << "[StreamWorkerHost] Worker spawned, pid=" << m_Proc->processId();
+    if (m_MuxLateHole) askOwnPort();
     return true;
 }
 
@@ -324,13 +334,25 @@ QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Lau
     // Whatever an earlier launch of this worker was given is given back
     releaseMuxSockets();
     if (acrossStart) acrossStart->clear();
+    // A stream the server counted on the shared ports and that gets none goes
+    // on a socket of its own, without the hole that socket would have had:
+    // its line says so, and once it has started it asks for that hole
+    // (MuxRefuse.h). One the server did not count already has it.
+    m_MuxLateHole = false;
+    const auto ownWay = [this](const QByteArray& line) -> QByteArray {
+        if (!m_MuxCounted) return line;
+        m_MuxLateHole = true;
+        QJsonObject config = QJsonDocument::fromJson(line).object();
+        config[QStringLiteral("iceMuxLateHole")] = true;
+        return QJsonDocument(config).toJson(QJsonDocument::Compact) + "\n";
+    };
     IceMux* mux = IceMux::shared();
-    if (!mux || !mux->running() || !mux->healthy()) return configLine;
+    if (!mux || !mux->running() || !mux->healthy()) return ownWay(configLine);
     const MuxHandover handover = muxHandoverFor(how, ownerAccount);
     if (handover == MuxHandover::None) {
         // Said for each such worker, and without naming anybody.
         qInfo() << "[IceMux] shared ports: not this account — the worker binds a port of its own";
-        return configLine;
+        return ownWay(configLine);
     }
     const bool workerTakes = handover == MuxHandover::Taken;
     QJsonObject config = QJsonDocument::fromJson(configLine).object();
@@ -365,7 +387,7 @@ QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Lau
         mux->release(share.lease);
         qWarning() << "[IceMux] the shared sockets cannot go to the worker:"
                    << QString::fromStdString(why) << "— it takes a socket of its own";
-        return configLine;
+        return ownWay(configLine);
     }
     QJsonArray ports;
     for (const uint16_t port : share.ports)
@@ -520,6 +542,7 @@ bool StreamWorkerHost::startInConsoleSession(const QStringList& args, const QByt
             << (how == Launch::ConsoleAsUser ? "in the console session as"
                                              : "through its launcher as")
             << m_Console->userName() << ", pid=" << m_Console->processId();
+    if (m_MuxLateHole) askOwnPort();
     return true;
 }
 
@@ -862,8 +885,25 @@ void StreamWorkerHost::releaseMuxSockets()
     m_MuxLease = 0;
 }
 
+void StreamWorkerHost::askOwnPort()
+{
+    if (m_OwnPortAsked) return;
+    m_OwnPortAsked = true;
+    qInfo() << "[IceMux] this stream is on a port of its own after all — its own router hole is"
+               " asked for";
+    // Queued: the supervisor may still be wiring this worker up when it starts
+    QMetaObject::invokeMethod(this, [this]() { emit ownPortNeeded(); }, Qt::QueuedConnection);
+}
+
 void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
 {
+    // The worker refused what it was given (MuxRefuse.h): the exact word, from
+    // a worker the server counted on the shared ports, once. Whatever else
+    // comes under this name is not that word.
+    if (event.value(QStringLiteral("op")) == QStringLiteral("refused")) {
+        if (mw::muxrefuse::isRefusedEvent(event) && m_MuxCounted && !m_MuxLateHole) askOwnPort();
+        return;
+    }
     IceMux* mux = IceMux::shared();
     if (!mux || !mux->running()) return;
     const QString op = event["op"].toString();

@@ -197,6 +197,15 @@ public:
         sendJson(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("micAllowed")},
                              {QStringLiteral("allowed"), allowed}});
     }
+    /// The answer for this worker's own router hole, after ownPortNeeded():
+    /// what the start config carries for a stream that does not share
+    /// (external port 0 and no address: no hole). Fire-and-forget.
+    void sendIceMuxHole(const QString& publicIp, quint16 externalPort)
+    {
+        sendJson(QJsonObject{{QStringLiteral("cmd"), QStringLiteral("iceMuxHole")},
+                             {QStringLiteral("upnpPublicIp"), externalPort ? publicIp : QString()},
+                             {QStringLiteral("upnpExternalPort"), static_cast<int>(externalPort)}});
+    }
 
     bool isRunning() const;
 
@@ -257,6 +266,12 @@ signals:
     /// The child process fully exited (ports are certainly free) — exactly
     /// once, always after ended(). Serialization barrier for slot reuse.
     void exited();
+    /// A stream the server counted on its shared ports ("iceMuxShared" in its
+    /// config) is on a socket of its own after all: the server could not make
+    /// the share, or the worker refused it ({"event":"iceMux","op":"refused"}).
+    /// It wants the router hole its slot would have had without the mux
+    /// (streaming/MuxRefuse.h). At most once per worker process, queued.
+    void ownPortNeeded();
 
 private:
     /// The arguments and the configuration line every way of starting shares.
@@ -351,6 +366,13 @@ private:
     /// The worker is gone, or is about to be started again: its agent goes,
     /// and what the mux kept for it is given back.
     void releaseMuxSockets();
+    /// See ownPortNeeded(). Counted: the server counted this stream on the
+    /// shared ports. LateHole: the share could not be made for the worker
+    /// being started (its line says "iceMuxLateHole"). Asked: said once.
+    bool m_MuxCounted = false;
+    bool m_MuxLateHole = false;
+    bool m_OwnPortAsked = false;
+    void askOwnPort();
     /// Mouse Keys the worker turned on and has not let go of yet, with what to
     /// put back if it dies holding them (a `mouseKeys` event; Windows only).
     bool m_MouseKeysHeld = false;

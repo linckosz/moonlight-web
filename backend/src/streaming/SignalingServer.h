@@ -228,6 +228,21 @@ public:
         m_UpnpExternalPort = externalPort;
     }
 
+    /// Counted on the server's shared ports and on a socket of its own after
+    /// all (streaming/MuxRefuse.h): the server's answer for this socket's own
+    /// hole is on its way. A browser that connects before it waits for it at
+    /// most kLateHoleWaitMs, then the connection goes on without a hole (STUN
+    /// only), as when the router never answers; a later answer is for the
+    /// next connection.
+    void awaitHole(bool awaited) { m_HoleAwaited = awaited; }
+
+    /// That answer (port 0: no hole), which ends a wait for it.
+    void lateHole(const QString& publicIp, uint16_t externalPort);
+
+    /// How long a connection waits for that answer (Security Review: enough
+    /// for one round trip to the router, never the 42 s of one that hangs).
+    static constexpr int kLateHoleWaitMs = 2000;
+
     /// Where the streaming client actually sits, classified from the browser's
     /// own address by whoever accepted the /start request.
     ///
@@ -318,4 +333,19 @@ private:
     /// The router hole, as handed down by the parent. See setPresetMapping().
     uint16_t m_UpnpExternalPort = 0;
     QString m_UpnpPublicIP;
+
+    /// The rest of a browser's arrival: its ICE configuration, then the
+    /// PeerConnection. Run at once, or once this socket's own hole has come or
+    /// the wait for it is over (awaitHole); nothing if the browser has gone.
+    void beginIce(bool isInternet, bool clientIsLocal);
+    /// See awaitHole. A wait belongs to one arrival (m_IceWait); a browser
+    /// that comes again starts its own.
+    bool m_HoleAwaited = false;
+    struct IceWait
+    {
+        quint64 generation = 0;
+        bool pending = false;
+        bool isInternet = false;
+        bool clientIsLocal = false;
+    } m_IceWait;
 };

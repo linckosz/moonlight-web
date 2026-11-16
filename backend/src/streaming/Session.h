@@ -365,6 +365,16 @@ public:
         m_UpnpExternalPort = externalPort;
     }
 
+    /// Counted on the server's shared ports and on a socket of its own after
+    /// all (streaming/MuxRefuse.h): the server's answer for that socket's hole
+    /// is on its way, and a connection that begins before it waits for it a
+    /// little (SignalingServer::awaitHole).
+    void setLateHoleExpected(bool expected) { m_LateHoleExpected = expected; }
+
+    /// That answer (port 0: no hole). Kept for every connection from now on,
+    /// and given to the one being set up, which may still be waiting for it.
+    void lateHole(const QString& publicIp, quint16 externalPort);
+
     /// Proxy path prefix for this session's WebSockets ("/ws" by default;
     /// "/ws1" for the second concurrent stream slot). Forwarded to the
     /// SignalingServer / StreamRelay so the advertised wsUrl matches the
@@ -575,6 +585,9 @@ private:
     /// The router hole for this slot (see setUpnpMapping); none by default.
     QString m_UpnpPublicIp;
     quint16 m_UpnpExternalPort = 0;
+    /// See setLateHoleExpected / lateHole.
+    bool m_LateHoleExpected = false;
+    bool m_LateHoleCame = false;
 
     /// Proxy path prefix for this session's WebSockets (see setWsPath).
     QString m_WsPath = QStringLiteral("/ws");

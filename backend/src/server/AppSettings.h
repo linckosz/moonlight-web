@@ -163,6 +163,14 @@ public:
     // network that lets UDP out (mw::ice::stripUdpCandidates). Read when each
     // connection is built.
     bool debugIceDropUdp() const;
+    // A DEBUG switch for a bench, never for a user: JSON bool "debug_ice_mux_refuse",
+    // DEFAULT false, typed into the file by hand like the one above: nothing
+    // writes it, no API reads or sets it. With it, every worker the server
+    // hands the shared ports to refuses them, as one would that found them
+    // wrong, and the stream goes on a socket of its own: the bench of the way
+    // such a stream gets its own router hole (streaming/MuxRefuse.h). It changes
+    // nothing else. The server says it once, at WARNING, when it starts.
+    bool debugIceMuxRefuse() const;
     // A DEBUG switch for a bench, never for a user: JSON string
     // "debug_tunnel_public_address", "a.b.c.d:port", DEFAULT absent, typed into
     // the file by hand like the one above, and read by no API. With it, the entry

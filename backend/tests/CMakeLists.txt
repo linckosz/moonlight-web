@@ -142,6 +142,7 @@ add_executable(run_tests
     test_ice_mux_ports.cpp
     test_tcp443_guard.cpp
     test_tcp443_probe.cpp
+    test_mux_refuse.cpp
     test_ice_mux_handles.cpp
     test_owner_account.cpp
     test_logger_rotation.cpp

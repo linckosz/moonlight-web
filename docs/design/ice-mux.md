@@ -470,6 +470,24 @@ mux:
   worker cannot be handed the connections (that rung then keeps its own
   socket, which is what its listener sits on).
 
+The server decides before the launch whether a stream shares, and a stream that
+shares asks the router for no hole of its own. When it ends up on a socket of
+its own all the same (the sockets cannot be handed to it, or its worker refuses
+them), that worker asks once for the hole its slot would have had without the
+mux (`streaming/MuxRefuse.h`): the server finds out itself when it could not
+make the share, and the worker says `{"event":"iceMux","op":"refused"}`, with
+nothing else in it. The server then claims that slot's own hole, as for a
+stream that does not share, and answers `{"cmd":"iceMuxHole",…}` with the
+address and port the start config would have carried. A browser that connects
+before the answer waits for it at most 2 s, then goes on without a hole; a later
+answer is for the next connection. Nothing is claimed while the server quits,
+for a launch that a newer one replaced, or with UPnP, Internet Access or LAN
+only saying no. An answer that comes back while the server quits is taken off
+at once; one that comes back for a stream that is over is kept as the slot's
+hole, as for any stream, and a guest's goes as a guest's does. The bench key
+`debug_ice_mux_refuse` (file only, never written, said at WARNING when the
+server starts) makes every worker refuse, and nothing else.
+
 ## Not there yet
 
 - Without a hole, the public address of the block port: an agent asks the STUN

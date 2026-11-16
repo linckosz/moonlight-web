@@ -381,6 +381,46 @@ void SignalingServer::onNewWsConnection()
             });
 #endif
 
+    // Counted on the server's shared ports and on a socket of its own after
+    // all: the server's answer for this socket's own hole is on its way, and
+    // what the browser is told depends on it. It waits a little for it, never
+    // longer (streaming/MuxRefuse.h).
+    if (m_HoleAwaited) {
+        const quint64 generation = ++m_IceWait.generation;
+        m_IceWait.pending = true;
+        m_IceWait.isInternet = isInternet;
+        m_IceWait.clientIsLocal = clientIsLocal;
+        qInfo() << "[SignalingServer] waiting for this stream's own router hole, at most"
+                << kLateHoleWaitMs << "ms";
+        QTimer::singleShot(kLateHoleWaitMs, this, [this, generation]() {
+            if (!m_IceWait.pending || m_IceWait.generation != generation) return;
+            m_IceWait.pending = false;
+            // One wait per connection server: a browser that comes again here
+            // waits no more, and the next rung's server decides for itself
+            m_HoleAwaited = false;
+            qInfo() << "[SignalingServer] no answer for this stream's own router hole in time:"
+                    << "this connection goes on without it";
+            beginIce(m_IceWait.isInternet, m_IceWait.clientIsLocal);
+        });
+        return;
+    }
+    beginIce(isInternet, clientIsLocal);
+}
+
+void SignalingServer::lateHole(const QString& publicIp, uint16_t externalPort)
+{
+    setPresetMapping(publicIp, externalPort);
+    m_HoleAwaited = false;
+    if (!m_IceWait.pending) return;
+    m_IceWait.pending = false;
+    beginIce(m_IceWait.isInternet, m_IceWait.clientIsLocal);
+}
+
+void SignalingServer::beginIce(bool isInternet, bool clientIsLocal)
+{
+    // The browser may have gone while this waited for the hole
+    if (!m_WsClient || !m_WsClient->isValid()) return;
+
     // Send ICE server configuration to the browser first, so the frontend
     // knows which STUN server to use before creating its RTCPeerConnection —
     // and how long it may wait for ICE, which depends on the same peer

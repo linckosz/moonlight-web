@@ -925,6 +925,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
         signaling->setPresetMapping(m_UpnpPublicIp, m_UpnpExternalPort);
+        // The server's answer for this socket's own hole, still on its way
+        signaling->awaitHole(m_LateHoleExpected && !m_LateHoleCame);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
@@ -1036,6 +1038,8 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         signaling->setPairingIdentity(m_MwBindHostId, m_MwBindHostKey, m_MwBindBrowserKey);
         signaling->setMediaPort(m_MediaPort);
         signaling->setPresetMapping(m_UpnpPublicIp, m_UpnpExternalPort);
+        // The server's answer for this socket's own hole, still on its way
+        signaling->awaitHole(m_LateHoleExpected && !m_LateHoleCame);
 
         // If an explicit WS URL was set (e.g. public tunnel), apply it.
         if (!m_ExplicitWsUrl.isEmpty()) {
@@ -1088,6 +1092,22 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         qDebug() << "[Session] Relay + Signaling created, starting LiStartConnection...";
         QMetaObject::invokeMethod(m_Engine, startEngine, Qt::QueuedConnection);
     }
+}
+
+void StreamSession::lateHole(const QString& publicIp, quint16 externalPort)
+{
+    // Once: the server answers a worker once
+    if (m_LateHoleCame) return;
+    m_LateHoleCame = true;
+    m_UpnpPublicIp = externalPort != 0 ? publicIp : QString();
+    m_UpnpExternalPort = externalPort;
+    // No address in the log, the external port alone
+    if (externalPort != 0)
+        qInfo() << "[IceMux] this stream's own router hole came late, external port" << externalPort
+                << "— used from the connection being set up on";
+    else
+        qInfo() << "[IceMux] no router hole for this stream's own socket";
+    if (m_Signaling) m_Signaling->lateHole(m_UpnpPublicIp, m_UpnpExternalPort);
 }
 
 void StreamSession::applyInputPolicy(const InputMsg::Policy& policy)

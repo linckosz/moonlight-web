@@ -1068,6 +1068,12 @@ bool AppSettings::debugIceDropUdp() const
     return obj.value("debug_ice_drop_udp").toBool(false);
 }
 
+bool AppSettings::debugIceMuxRefuse() const
+{
+    QJsonObject obj = readAll();
+    return obj.value("debug_ice_mux_refuse").toBool(false);
+}
+
 QString AppSettings::debugTunnelPublicAddress() const
 {
     QJsonObject obj = readAll();

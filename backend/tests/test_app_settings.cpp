@@ -122,6 +122,7 @@ void run_app_settings_tests()
     CHECK_EQ(s.iceTcp443(), false);             // not until the shared ports are the default
     CHECK_EQ(s.debugIceDropUdp(), false);       // a bench switch, never on by itself
     CHECK_EQ(s.debugDevStandardPorts(), false); // and so is this one
+    CHECK_EQ(s.debugIceMuxRefuse(), false);     // and this one
     // The streams' shared ports: on by themselves only in a build compiled
     // as the DEV edition. What the file says wins in both kinds of build,
     // and what is not a boolean asks for nothing in either.
@@ -153,6 +154,7 @@ void run_app_settings_tests()
         QJsonObject edited = QJsonDocument::fromJson(f.readAll()).object();
         f.close();
         CHECK(!edited.contains("ice_udp_mux"));
+        CHECK(!edited.contains("debug_ice_mux_refuse"));
         const QByteArray asFound = QJsonDocument(edited).toJson();
         for (const bool asked : {true, false}) {
             edited["ice_udp_mux"] = asked;

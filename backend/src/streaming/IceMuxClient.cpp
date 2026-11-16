@@ -259,7 +259,8 @@ void watchChannel(int channel)
 } // namespace
 
 bool configure(const QJsonObject& mux, quint32 serverPid,
-               const std::function<bool(const QString& image)>& isServer, Emit tell)
+               const std::function<bool(const QString& image)>& isServer, Emit tell,
+               bool refuseForBench)
 {
     State& s = state();
     const std::lock_guard<std::mutex> lock(s.lock);
@@ -380,6 +381,14 @@ bool configure(const QJsonObject& mux, quint32 serverPid,
     if (fds.isEmpty()) return refuse();
     const char* how = "(left open by the server)";
 #endif
+    // The bench of a refusal: everything was taken and checked as always, and
+    // is closed again here, so the stream goes on exactly as one that found
+    // its sockets wrong.
+    if (refuseForBench) {
+        qWarning() << "[IceMux] DEBUG debug_ice_mux_refuse is on: the shared sockets are refused"
+                      " — this stream takes a socket of its own";
+        return refuse();
+    }
     s.shared = std::move(opened);
     s.ports.assign(named.cbegin(), named.cend());
     s.hopPort = static_cast<quint16>(hop);
