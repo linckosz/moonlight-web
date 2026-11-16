@@ -919,7 +919,7 @@
         "enterFullscreen": "Tam ekrana geç",
         "clickToCapture": "Fareyi ve klavyeyi yakalamak için tıklayın",
         "pointerLockRefused": "Bu tarayıcı fareyi kilitlemez: tıklamalar oyuna ulaşır ama döndürme ekran kenarında durur.",
-        "pointerLockRefusedLookFree": "Bu tarayıcı fareyi kilitlemez: oyun bunun yerine fare hareketi alır. Menülerde iki işaretçi hizalanmayabilir.",
+        "pointerLockRefusedLookFree": "Bu tarayıcı fareyi kilitlemez: bir oyun işaretçiyi gizlediğinde bunun yerine fare hareketini alır.",
         "showKeyboard": "Ekran klavyesini göster",
         "live": "Canlı",
         "disconnected": "Bağlantı kesildi",
