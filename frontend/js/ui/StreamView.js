@@ -1828,6 +1828,7 @@ export class StreamView {
         this._onPaste = (e) => this.handlePaste(e);
         this._onPointerDownFlush = () => this._flushPendingClipboard();
         this._onWindowBlur = () => {
+            this._stopEdgeTurn();
             this._releaseAllPhysKeys();
             this._penLift();
         };
@@ -1998,6 +1999,7 @@ export class StreamView {
         // ("Start streams in fullscreen") hid both, and on a desktop nothing
         // else brought them back (issue #35).
         this._onFsChangeLock = () => {
+            this._stopEdgeTurn();
             this._syncKeyboardLock();
             this._updateMobileFsButtonVisibility();
         };
@@ -2013,6 +2015,7 @@ export class StreamView {
             // Going to background can swallow keyups — release everything so no
             // modifier stays stuck on the host.
             if (document.visibilityState === 'hidden') {
+                this._stopEdgeTurn();
                 this._releaseAllPhysKeys();
                 this._penLift();
                 this._touchPadLetGo();
@@ -2061,7 +2064,10 @@ export class StreamView {
         // so the quit beacon must also be sent here. Sent even when
         // event.persisted is true (bfcache): the stream cannot survive a page
         // freeze, so a restored page would resume in a dead state anyway.
-        this._onPageHide = () => this._onBeforeUnload();
+        this._onPageHide = () => {
+            this._stopEdgeTurn();
+            this._onBeforeUnload();
+        };
 
         // Reference validity: false after a gap/error, true once a keyframe is decoded.
         // Delta frames are dropped when false to avoid corrupted output.
@@ -9640,14 +9646,22 @@ export class StreamView {
                 // browser reports movement, edge or not. The host's cursor no
                 // longer follows the local one: a look mode, not for menus —
                 // so only while the host hides its pointer (_lookFreeByDeltas).
-                if (e.movementX || e.movementY) {
-                    this._sendRelativeMouse(e.movementX, e.movementY);
+                // While the vertical turn sends, the hand's small dy does
+                // not: never both on one axis (V3, SR). A larger one stops
+                // the turn (_edgeTurnMove) and goes out as it is.
+                const dy =
+                    this._edgeTurnVertActive() &&
+                    Math.abs(e.movementY) <= StreamView.EDGE_TURN_REAL_PX
+                        ? 0
+                        : e.movementY;
+                if (e.movementX || dy) {
+                    this._sendRelativeMouse(e.movementX, dy);
                     this._noteMouseSent(e);
                     // Where the page draws the host's pointer (a tablet), that
                     // drawing is the only thing to aim with: move it by the
                     // same motion the host was sent (IPADAIM, 15/11/2026).
                     const s = this._mouseSensitivity;
-                    this._clientCursorMoved(e.movementX * s, e.movementY * s);
+                    this._clientCursorMoved(e.movementX * s, dy * s);
                 }
                 this._edgeTurnMove(e);
             } else {
@@ -10382,6 +10396,14 @@ export class StreamView {
     static EDGE_TURN_MAX_SPEED = 1500;
     /** The motion before the edge that sets the speed. */
     static EDGE_TURN_SAMPLE_MS = 100;
+    /** The band before the top and bottom edges the vertical turn runs in. */
+    static EDGE_TURN_BAND_PX = 48;
+    /** How long the pointer rests in that band before the vertical turn starts. */
+    static EDGE_TURN_REST_MS = 200;
+    /** A move larger than this, on either axis, is the hand's own (V3, SR). */
+    static EDGE_TURN_REAL_PX = 2;
+    /** The vertical turn's cap without a real move (VERTCAP, Bruno 16/11/2026). */
+    static EDGE_TURN_VERT_MAX_MS = 3000;
 
     /**
      * Lock-free look turns the camera on at the page's edge (IPADFPS,
@@ -10396,6 +10418,11 @@ export class StreamView {
      * at the speed the hand had when it got there. Leaving the edge, letting
      * go, or anything a real move would not survive stops it.
      *
+     * Up and down, the edges belong to iPadOS (the notification centre at the
+     * top, the home bar at the bottom): the pointer never rests on them. In
+     * full screen only, a band before them does instead (VERTFIX,
+     * 16/11/2026): see _edgeTurnVertMove. A corner turns sideways only.
+     *
      * Called by every lock-free move that went out as deltas.
      */
     _edgeTurnMove(e) {
@@ -10404,30 +10431,35 @@ export class StreamView {
         if (e.movementX) samples.push({ t: now, dx: e.movementX });
         while (samples.length && now - samples[0].t > StreamView.EDGE_TURN_SAMPLE_MS)
             samples.shift();
+        const samplesY = (this._edgeTurnSamplesY ??= []);
+        if (e.movementY) samplesY.push({ t: now, dy: e.movementY });
+        while (samplesY.length && now - samplesY[0].t > StreamView.EDGE_TURN_SAMPLE_MS)
+            samplesY.shift();
         if (e.movementX) this._edgeTurnCapped = false;
         const w = window.innerWidth;
         const dir = e.clientX <= 0.5 ? -1 : w > 0 && e.clientX >= w - 1.5 ? 1 : 0;
-        // Off the edge, or moving back into the page: no turn.
+        // Off the edge, or moving back into the page: no sideways turn.
         if (!dir || e.movementX * dir < 0) {
-            this._stopEdgeTurn();
+            if (this._edgeTurn?.axis === 'x') this._stopEdgeTurn();
+            this._edgeTurnVertMove(e, now);
             return;
         }
         const turn = this._edgeTurn;
-        if (turn && turn.dir === dir) {
+        if (turn && turn.axis === 'x' && turn.dir === dir) {
             turn.lastEventMs = now;
             return;
         }
+        // On a side edge, a vertical turn or its rest gives way (V5, SR).
         this._stopEdgeTurn();
         if (this._edgeTurnCapped || !this._edgeTurnMayRun()) return;
         let sum = 0;
         for (const p of samples) if (p.dx * dir > 0) sum += Math.abs(p.dx);
-        const speed = Math.max(
-            StreamView.EDGE_TURN_MIN_SPEED,
-            Math.min(StreamView.EDGE_TURN_MAX_SPEED, (sum * 1000) / StreamView.EDGE_TURN_SAMPLE_MS),
-        );
+        const speed = StreamView._edgeTurnSpeed(sum);
         this._edgeTurn = {
+            axis: 'x',
             dir,
             speed,
+            active: true,
             startMs: now,
             lastEventMs: now,
             lastTickMs: now,
@@ -10438,6 +10470,99 @@ export class StreamView {
         console.log(
             `[StreamView] Mouse: edge turn ${dir > 0 ? 'right' : 'left'}, ${Math.round(speed)} px/s`,
         );
+    }
+
+    /** A turn's speed from the motion towards the edge in the last sample window. */
+    static _edgeTurnSpeed(sum) {
+        return Math.max(
+            StreamView.EDGE_TURN_MIN_SPEED,
+            Math.min(StreamView.EDGE_TURN_MAX_SPEED, (sum * 1000) / StreamView.EDGE_TURN_SAMPLE_MS),
+        );
+    }
+
+    /** Whether the page is in full screen now (the vertical turn's condition). */
+    static _edgeTurnFullscreen() {
+        return !!(document.fullscreenElement || document.webkitFullscreenElement);
+    }
+
+    /**
+     * The vertical turn (VERTFIX = A, SR's V1-V7). Armed only in full screen,
+     * by a pointer that came into the band before the top or bottom edge
+     * moving towards that edge (V4) — a pointer that slides into it sideways
+     * arms nothing. Once the pointer has rested there for EDGE_TURN_REST_MS,
+     * the turn runs at the speed the hand had, until a real move (more than
+     * EDGE_TURN_REAL_PX: the turn rests again, and starts again after the
+     * same rest), a move away from the edge, leaving the band, the edge
+     * itself (iPadOS takes it: no turn until the pointer has left the band,
+     * V2) or EDGE_TURN_VERT_MAX_MS. Its deltas are a real move's, on the same
+     * timer as the sideways turn (V5, V6).
+     */
+    _edgeTurnVertMove(e, now) {
+        const h = window.innerHeight;
+        const cy = e.clientY;
+        const dy = e.movementY || 0;
+        const stopY = () => {
+            if (this._edgeTurn?.axis === 'y') this._stopEdgeTurn();
+        };
+        if (!StreamView._edgeTurnFullscreen() || !(h > 0)) {
+            stopY();
+            this._edgeVertSpent = false;
+            return;
+        }
+        if (cy <= 1 || cy >= h - 1) {
+            stopY();
+            this._edgeVertSpent = true;
+            return;
+        }
+        const band = StreamView.EDGE_TURN_BAND_PX;
+        const dir = cy <= band ? -1 : cy >= h - band ? 1 : 0;
+        if (!dir) {
+            stopY();
+            this._edgeVertSpent = false;
+            return;
+        }
+        const turn = this._edgeTurn;
+        if (this._edgeVertSpent || (turn && turn.axis !== 'y')) return;
+        const real =
+            Math.abs(dy) > StreamView.EDGE_TURN_REAL_PX ||
+            Math.abs(e.movementX || 0) > StreamView.EDGE_TURN_REAL_PX;
+        // Away from the edge: disarmed until the next move towards it.
+        if (dy * dir < 0 && real) {
+            stopY();
+            return;
+        }
+        let sum = 0;
+        // The net motion towards the edge: a jitter back and forth sums to nothing.
+        for (const p of this._edgeTurnSamplesY) sum += p.dy * dir;
+        if (turn && turn.dir === dir) {
+            if (!real) return;
+            // The hand's own move: the turn rests again (V3).
+            if (turn.active) {
+                turn.active = false;
+                console.log('[StreamView] Mouse: edge turn stopped');
+            }
+            turn.restSince = now;
+            if (dy * dir > 0) turn.speed = StreamView._edgeTurnSpeed(Math.max(sum, 0));
+            return;
+        }
+        stopY();
+        // Towards the edge, by more than a jitter over the sample window: a
+        // pointer that slides in sideways arms nothing (V4).
+        if (!(dy * dir > 0) || sum <= StreamView.EDGE_TURN_REAL_PX || !this._edgeTurnMayRun())
+            return;
+        this._edgeTurn = {
+            axis: 'y',
+            dir,
+            speed: StreamView._edgeTurnSpeed(sum),
+            active: false,
+            restSince: now,
+            startMs: now,
+            lastEventMs: now,
+            lastTickMs: now,
+            carry: 0,
+            owner: this._onGamingMouseMove,
+            raf: requestAnimationFrame(() => this._edgeTurnTick()),
+        };
     }
 
     /**
@@ -10466,30 +10591,66 @@ export class StreamView {
         if (!turn) return;
         turn.raf = 0;
         const now = performance.now();
-        if (turn.owner !== this._onGamingMouseMove || !this._edgeTurnMayRun()) {
+        const vertical = turn.axis === 'y';
+        if (
+            turn.owner !== this._onGamingMouseMove ||
+            !this._edgeTurnMayRun() ||
+            (vertical && !StreamView._edgeTurnFullscreen())
+        ) {
             this._stopEdgeTurn();
             return;
         }
-        if (now - turn.lastEventMs > StreamView.EDGE_TURN_IDLE_MS) {
-            this._stopEdgeTurn();
-            return;
-        }
-        if (now - turn.startMs > StreamView.EDGE_TURN_MAX_MS) {
-            this._edgeTurnCapped = true;
-            this._stopEdgeTurn();
-            return;
+        if (vertical) {
+            if (!turn.active) {
+                if (now - turn.restSince < StreamView.EDGE_TURN_REST_MS) {
+                    turn.raf = requestAnimationFrame(() => this._edgeTurnTick());
+                    return;
+                }
+                turn.active = true;
+                turn.startMs = now;
+                turn.lastTickMs = now;
+                console.log(
+                    `[StreamView] Mouse: edge turn ${turn.dir > 0 ? 'down' : 'up'}, ${Math.round(turn.speed)} px/s`,
+                );
+            }
+            if (now - turn.startMs > StreamView.EDGE_TURN_VERT_MAX_MS) {
+                this._edgeVertSpent = true;
+                this._stopEdgeTurn();
+                return;
+            }
+        } else {
+            if (now - turn.lastEventMs > StreamView.EDGE_TURN_IDLE_MS) {
+                this._stopEdgeTurn();
+                return;
+            }
+            if (now - turn.startMs > StreamView.EDGE_TURN_MAX_MS) {
+                this._edgeTurnCapped = true;
+                this._stopEdgeTurn();
+                return;
+            }
         }
         // A frame's worth, never more than a short frame's after a stall.
         const dt = Math.min(now - turn.lastTickMs, 50);
         turn.lastTickMs = now;
-        const x = turn.dir * turn.speed * (dt / 1000) + turn.carry;
-        const out = Math.trunc(x);
-        turn.carry = x - out;
+        const d = turn.dir * turn.speed * (dt / 1000) + turn.carry;
+        const out = Math.trunc(d);
+        turn.carry = d - out;
         if (out) {
-            this._sendRelativeMouse(out, 0);
-            this._clientCursorMoved(out * this._mouseSensitivity, 0);
+            const s = this._mouseSensitivity;
+            if (vertical) {
+                this._sendRelativeMouse(0, out);
+                this._clientCursorMoved(0, out * s);
+            } else {
+                this._sendRelativeMouse(out, 0);
+                this._clientCursorMoved(out * s, 0);
+            }
         }
         turn.raf = requestAnimationFrame(() => this._edgeTurnTick());
+    }
+
+    /** Whether the vertical turn is sending now: the hand's small dy waits (V3). */
+    _edgeTurnVertActive() {
+        return this._edgeTurn?.axis === 'y' && this._edgeTurn.active === true;
     }
 
     _stopEdgeTurn() {
@@ -10497,7 +10658,7 @@ export class StreamView {
         if (!turn) return;
         this._edgeTurn = null;
         if (turn.raf) cancelAnimationFrame(turn.raf);
-        console.log('[StreamView] Mouse: edge turn stopped');
+        if (turn.active) console.log('[StreamView] Mouse: edge turn stopped');
     }
 
     /** Draw (or hide) the pointer where we think it is. */
