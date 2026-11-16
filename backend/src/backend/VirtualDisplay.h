@@ -547,8 +547,8 @@ bool othersGoOff(Asker asker, bool optionOn, bool guestOn, bool othersOff);
 /// needed. The admin allows it (@p allowed, AppSettings::virtualDisplayExclusive)
 /// and the viewer turned it on in this browser's streaming settings (@p choice,
 /// sent with the stream). A browser that never chose (@p hasChoice false) takes
-/// what the PC did before the choice moved to the viewer (@p inherited): on
-/// where the admin's box was already ticked, so an update changes nothing.
+/// the PC's default (@p inherited, AppSettings::virtualDisplayExclusiveInherited):
+/// the admin's box itself, so on wherever it is allowed (VDEXDEF, 16/11/2026).
 bool ownerWantsOthersOff(bool allowed, bool hasChoice, bool choice, bool inherited);
 
 /// The display cards drawn dark on the native host's card: with the other
