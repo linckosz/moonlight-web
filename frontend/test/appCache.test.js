@@ -178,4 +178,29 @@ describe('app-list memory', () => {
             ]),
         );
     });
+
+    it('signs a display a stream turned off apart from the same display on', () => {
+        // The native host keeps the card of a display the stream turned off,
+        // marked off (App.isOff): the grid draws it dark, so a list that only
+        // differs by it must repaint, and be remembered as it is now.
+        const device = { os: 'windows', display: 'monitor', model: 'GBT270D', key: 'k5' };
+        const on = [
+            { id: 4, name: 'Display 1', device: { ...device, key: 'k1' } },
+            { id: 3, name: 'Display 2', device },
+        ];
+        const off = [on[0], { id: 3, name: 'Display 2', device: { ...device, off: true } }];
+        expect(appsSignature(off)).not.toBe(appsSignature(on));
+        // Not off, or off: false, is the card as it always was.
+        expect(
+            appsSignature([{ id: 3, name: 'Display 2', device: { ...device, off: false } }]),
+        ).toBe(appsSignature([{ id: 3, name: 'Display 2', device }]));
+        // Remembered with every display on, then answered with one off: the
+        // memory takes the new list, and gives it back off.
+        saveCachedApps('host-n', on);
+        saveCachedApps('host-n', off);
+        expect(loadCachedApps('host-n')[1].device.off).toBe(true);
+        // And back on when the stream ends.
+        saveCachedApps('host-n', on);
+        expect(loadCachedApps('host-n')[1].device.off).toBeUndefined();
+    });
 });
