@@ -732,6 +732,38 @@ export function takeLockFreeLookFromAddress() {
 }
 takeLockFreeLookFromAddress();
 
+/** ?mw_immediate= as the page was opened ('1', '0' or null). */
+let immediateRenderAsked = null;
+
+/** Takes ?mw_immediate=1|0 from the address into the lab key. */
+export function takeImmediateRenderFromAddress() {
+    try {
+        immediateRenderAsked = new URLSearchParams(location.search).get('mw_immediate');
+    } catch (e) {}
+    try {
+        if (immediateRenderAsked === '1' || immediateRenderAsked === '0') {
+            localStorage.setItem('mw_immediate', immediateRenderAsked);
+        }
+    } catch (e) {}
+}
+takeImmediateRenderFromAddress();
+
+/**
+ * Lab override for decode-driven immediate rendering (bypassing rAF wait without toggling tearing).
+ * @returns {boolean|null} true/false when explicitly set via ?mw_immediate or localStorage, else null.
+ */
+export function immediateRenderWanted() {
+    let key = immediateRenderAsked;
+    if (key !== '1' && key !== '0') {
+        try {
+            key = localStorage.getItem('mw_immediate');
+        } catch (e) {}
+    }
+    if (key === '1') return true;
+    if (key === '0') return false;
+    return null;
+}
+
 /**
  * Lab key, no UI: localStorage.mw_mwsr_map = '1' asks the native host, at
  * /start, for MWSR's sharpness by zone (docs/design/upscaler-mwsr-b.md §12 c,

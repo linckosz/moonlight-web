@@ -13,6 +13,7 @@ import {
     hdrExtTonemapRoute,
     hdrFramesOpaque,
     hdrLaunchCodec,
+    immediateRenderWanted,
     isLowMemory,
     isIphone,
     noteDecoderCannotRideOut,
@@ -22,6 +23,7 @@ import {
     physicalScreenSize,
     pickAutoEnhancer,
     PLATFORM_TYPE,
+    takeImmediateRenderFromAddress,
     touchEnabled,
     watchTouchEnabled,
 } from '../js/util/BrowserDetect.js';
@@ -835,5 +837,36 @@ describe('touchEnabled', () => {
         win.setCoarse(false);
         win.dispatchEvent(new Event('touchstart'));
         expect(onChange).not.toHaveBeenCalled();
+    });
+});
+
+describe('BrowserDetect.immediateRenderWanted', () => {
+    beforeEach(() => {
+        localStorage.removeItem('mw_immediate');
+        window.history.replaceState({}, '', '/');
+        takeImmediateRenderFromAddress();
+    });
+    afterEach(() => {
+        localStorage.removeItem('mw_immediate');
+        window.history.replaceState({}, '', '/');
+        takeImmediateRenderFromAddress();
+    });
+
+    it('returns null by default and honours ?mw_immediate=1|0 and localStorage', () => {
+        expect(immediateRenderWanted()).toBe(null);
+
+        window.history.replaceState({}, '', '/?mw_immediate=1');
+        takeImmediateRenderFromAddress();
+        expect(immediateRenderWanted()).toBe(true);
+        expect(localStorage.getItem('mw_immediate')).toBe('1');
+
+        window.history.replaceState({}, '', '/');
+        takeImmediateRenderFromAddress();
+        expect(immediateRenderWanted()).toBe(true);
+
+        window.history.replaceState({}, '', '/?mw_immediate=0');
+        takeImmediateRenderFromAddress();
+        expect(immediateRenderWanted()).toBe(false);
+        expect(localStorage.getItem('mw_immediate')).toBe('0');
     });
 });

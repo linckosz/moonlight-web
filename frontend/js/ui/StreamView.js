@@ -102,6 +102,7 @@ import {
     supportsDisplayHdr,
     supportsGamingMode,
     lockFreeLookWanted,
+    immediateRenderWanted,
 } from '../util/BrowserDetect.js';
 import { Av1Watch, noteAv1Failed, noteAv1Proven, noteHevcFailed } from '../util/CodecAuto.js';
 import * as RemoteNav from './RemoteNav.js';
@@ -5385,7 +5386,9 @@ export class StreamView {
         // A TV's <video> sink is fed on decode too: the compositor paces the
         // element on its own vsync, so nothing tears, and the page's rAF —
         // ~35 a second on a Freebox under a 50 fps stream — no longer caps it.
-        this._immediateRender = this._tearing || this._tvSink === true;
+        const immediateLab = immediateRenderWanted();
+        this._immediateRender =
+            immediateLab !== null ? immediateLab : this._tearing || this._tvSink === true;
 
         const loop = (now) => {
             if (!this.renderRunning) return;
@@ -8553,7 +8556,8 @@ export class StreamView {
         this._hostPresentsFps = cadence.presents > 0 ? cadence.presents : 0;
         if (!this._stepper) {
             if (!this._autostep || this._standby || this._quitting || !this._nativeHost) return;
-            if (!this._immediateRender || this._useWorker || this._framePacer) return;
+            if (!this._tearing || !this._immediateRender || this._useWorker || this._framePacer)
+                return;
             this._stepper = new CadenceStepper({
                 baseFps: this._streamFps,
                 send: (msg) => {
