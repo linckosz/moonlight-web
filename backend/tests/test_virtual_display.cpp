@@ -147,10 +147,16 @@ void run_virtual_display_tests()
         const QString own = QStringLiteral("C:/Users/u/AppData/Local/MoonlightWeb/vdisplay");
         // Its own directory, however it is spelled, is taken.
         CHECK(exchangeDirRefusal(own, own, true).isEmpty());
+        CHECK(exchangeDirRefusal(QStringLiteral("c:/users/U/AppData/Local/MoonlightWeb/vdisplay/"),
+                                 own, true)
+                  .isEmpty());
+#ifdef Q_OS_WIN
+        // Backslashes are a separator on Windows only.
         CHECK(exchangeDirRefusal(QStringLiteral("c:\\users\\U\\AppData\\Local\\MoonlightWeb\\"
                                                 "vdisplay\\"),
                                  own, true)
                   .isEmpty());
+#endif
         // Any other is refused, and the refusal names both.
         for (const QString& other :
              {QStringLiteral("C:\\Users\\u\\AppData\\Local\\Temp\\is-6AC0R.tmp\\vdisplay"),
