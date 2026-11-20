@@ -350,12 +350,16 @@ public:
      *  NOT the raw cookie token. No-op for unknown ids. Returns true on success. */
     bool renameSession(const QString& token, const QString& machineName);
     void destroyAllSessions();
-    /** Drop sessions inactive beyond their lifetime (ttlFor). Called periodically. */
+    /** Drop the sessions that have run out of time (expired). Called hourly.
+     *  One that reached a fixed bound (endedOnFixedBound) goes as a revoked one
+     *  does, its streams with it; one past a sliding bound only loses its row,
+     *  its stream left to run (the comment in the .cpp says why). */
     void purgeExpiredSessions();
     /// A session whose approver is gone by expiry, not by revocation, keeps
     /// going without one, the administrator's to revoke (logoutSession does the
-    /// same for the sessions it let in): returns how many.
-    int keepDevicesOfEndedApprovers();
+    /// same for the sessions it let in): returns how many. The sessions in
+    /// @p ending are about to go, and count as gone already.
+    int keepDevicesOfEndedApprovers(const QSet<QString>& ending = {});
 
     /** Store geolocation data for a session after async lookup completes. */
     void setSessionGeo(const QString& token, const QString& city, const QString& country);
@@ -572,6 +576,16 @@ public:
         m_rateClock = std::move(nowSecs);
     }
 
+    /// When the session @p id was created and last seen, in seconds since the
+    /// epoch, as if time had passed. For tests; no-op for an unknown id.
+    void setSessionTimesForTesting(const QString& id, qint64 createdAt, qint64 lastSeen)
+    {
+        auto it = m_sessions.find(id);
+        if (it == m_sessions.end()) return;
+        it->createdAt = createdAt;
+        it->lastSeen = lastSeen;
+    }
+
 signals:
     void pinChanged(const QString& newPin);
     void sessionCreated(const QString& ip, const QString& machineName);
@@ -701,8 +715,39 @@ private:
     {
         const qint64 last = s.lastSeen > 0 ? s.lastSeen : s.createdAt;
         if (now - last > ttlFor(s)) return true;
+        return endedOnFixedBound(s, now);
+    }
+
+    /// Whether a session has reached a bound that no visit moves: a TV on
+    /// plain HTTP approved remember_me_days ago. What the hourly purge ends
+    /// with its streams (purgeExpiredSessions).
+    bool endedOnFixedBound(const SessionInfo& s, qint64 now) const
+    {
         return s.lanHttp && now - s.createdAt > m_rememberTtlSecs;
     }
+
+    /// A session taken out of the map, with what it was, until it is announced.
+    struct EndedSession
+    {
+        QString id;
+        SessionInfo info;
+    };
+    /// Why sessions end, for the log lines only (the stream history says
+    /// "Admin" for both, main.cpp).
+    enum class EndReason
+    {
+        Revoked, ///< destroySession: the administrator, a log-out, a replacement
+        Expired  ///< a fixed bound, in the hourly purge
+    };
+    /// Takes the session @p id out of the map, with its home-screen keys and
+    /// the sessions it let in, theirs in turn, appending each to @p out. No-op
+    /// for an id no longer there. Emits nothing and saves nothing: the caller
+    /// saves, then announces (announceEnded), so that the file holds the
+    /// revocation before any listener acts on it (security review, 20/11).
+    void takeSession(const QString& id, QList<EndedSession>& out);
+    /// Tells of the sessions @p ended, once each, in order: sessionDestroyed,
+    /// the log lines, and streamingSessionRevoked, which ends their streams.
+    void announceEnded(const QList<EndedSession>& ended, EndReason reason);
 
     /// A fresh raw token for a session about to be stored; its opaque id is
     /// hashToken() of it.

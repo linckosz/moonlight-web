@@ -966,6 +966,178 @@ void lanHttpSessionTests()
     }
 }
 
+// ── The hourly purge: which ends a stream, which only loses its row ─────────
+
+void purgeTests()
+{
+    SECTION("purgeExpiredSessions — a fixed bound ends the stream, a sliding one does not");
+
+    QTemporaryDir tmp;
+    AppSettings settings;
+    settings.m_FilePath = tmp.path() + "/settings.json";
+    writeSettings(settings, {}); // remember_me_days: 90
+
+    const qint64 day = 24 * 3600;
+    AuthManager auth(&settings);
+    auth.destroyAllSessions();
+    // Whether sessions.json still holds the session @p id.
+    const auto onDisk = [](const QString& id) {
+        QFile in(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                 "/sessions.json");
+        if (!in.open(QIODevice::ReadOnly)) return false;
+        for (const QJsonValue& v :
+             QJsonDocument::fromJson(in.readAll()).object().value("sessions").toArray())
+            if (v.toObject().value("token").toString() == id) return true;
+        return false;
+    };
+    // A stream is stopped only once the file says the session is gone: a
+    // server killed meanwhile does not bring it back (security review, P-a).
+    QStringList revoked;
+    QStringList stillOnDisk;
+    QObject::connect(&auth, &AuthManager::streamingSessionRevoked,
+                     [&revoked, &stillOnDisk, &onDisk](const QString& sessionId) {
+                         revoked.append(sessionId);
+                         if (onDisk(sessionId)) stillOnDisk.append(sessionId);
+                     });
+    int changed = 0;
+    QObject::connect(&auth, &AuthManager::sessionsChanged, [&changed]() { changed++; });
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+
+    // A TV approved 91 days ago, seen yesterday, streaming: the approval has
+    // run out however often it came back. Its stream ends with it.
+    const QString tv = auth.createLanHttpSession("192.168.1.50", "TV approved long ago", {});
+    const QString tvId = auth.sessionIdForToken(tv);
+    auth.setSessionStreaming(tv, true);
+    auth.setSessionTimesForTesting(tvId, now - 91 * day, now - day);
+
+    // A phone not seen for 91 days, streaming: only an absence of visits,
+    // which a running stream never counts as one. Its row goes, its stream
+    // runs on (no signal), as before (security review, 20/11, O3).
+    const QString phone = auth.createSession("192.168.1.30", "Phone away");
+    const QString phoneId = auth.sessionIdForToken(phone);
+    auth.setSessionStreaming(phone, true);
+    auth.setSessionTimesForTesting(phoneId, now - 120 * day, now - 91 * day);
+
+    // A TV the phone let in, fresh: kept, the administrator's from now on.
+    const QString kept = auth.createLanHttpSession("192.168.1.51", "TV kept", phoneId);
+    const QString keptId = auth.sessionIdForToken(kept);
+
+    // A device the old TV let in, itself past its sliding bound: the TV's end
+    // does not take it along as a revocation would, so no signal for it.
+    const QString let = auth.createSession("192.168.1.31", "Let in by the TV");
+    const QString letId = auth.sessionIdForToken(let);
+    CHECK(auth.setSessionApprover(let, tvId));
+    auth.setSessionTimesForTesting(letId, now - 100 * day, now - 91 * day);
+
+    // A second old TV, let in by the first: each ends once, by its own token.
+    const QString second = auth.createLanHttpSession("192.168.1.52", "TV let in by a TV", tvId);
+    const QString secondId = auth.sessionIdForToken(second);
+    auth.setSessionTimesForTesting(secondId, now - 91 * day, now - day);
+
+    // One that has not run out at all.
+    const QString fresh = auth.createSession("192.168.1.32", "Phone here");
+    auth.saveSessions(); // the old TVs on disk with their old times
+    CHECK(onDisk(tvId));
+
+    revoked.clear();
+    changed = 0;
+    QTemporaryDir logDir;
+    const QString before = Logger::instance()->logFilePath();
+    const QString logPath = logDir.path() + "/purge.log";
+    Logger::instance()->setLogFile(logPath, false);
+    auth.purgeExpiredSessions();
+    Logger::instance()->setLogFile(before);
+
+    // The fixed bounds, each once; nothing for the sliding ones.
+    CHECK_EQ(revoked.size(), 2);
+    CHECK_EQ(revoked.count(tvId), 1);
+    CHECK_EQ(revoked.count(secondId), 1);
+    CHECK(!revoked.contains(phoneId));
+    CHECK(!revoked.contains(letId));
+    CHECK(!revoked.contains(keptId));
+    CHECK(stillOnDisk.isEmpty());
+    // Their rows, all four gone.
+    CHECK(!auth.validateLanHttpSession(tv, "192.168.1.50"));
+    CHECK(!auth.validateLanHttpSession(second, "192.168.1.52"));
+    CHECK(!auth.validateSession(phone));
+    CHECK(!auth.validateSession(let));
+    // The kept TV goes on, without an approver.
+    CHECK(auth.validateLanHttpSession(kept, "192.168.1.51"));
+    CHECK(auth.sessionForToken(kept).approvedBy.isEmpty());
+    CHECK(auth.validateSession(fresh));
+    CHECK_EQ(auth.activeSessionCount(), 2);
+    // One change for the whole purge.
+    CHECK_EQ(changed, 1);
+
+    // Its line gives numbers, never which device it was.
+    {
+        QFile written(logPath);
+        CHECK(written.open(QIODevice::ReadOnly));
+        QByteArray line;
+        for (const QByteArray& l : written.readAll().split('\n'))
+            if (l.contains("Purged")) line = l;
+        CHECK(line.contains("Purged 4 expired session(s), 2 on a fixed bound"));
+        CHECK(!line.contains("TV"));
+        CHECK(!line.contains("Phone"));
+        CHECK(!line.contains("192.168."));
+    }
+
+    // Nothing left to purge: nothing said, nothing changed.
+    revoked.clear();
+    changed = 0;
+    auth.purgeExpiredSessions();
+    CHECK(revoked.isEmpty());
+    CHECK_EQ(changed, 0);
+
+    // On disk as in memory: the kept TV without its approver.
+    auth.loadSessions();
+    CHECK(auth.validateLanHttpSession(kept, "192.168.1.51"));
+    CHECK(auth.sessionForToken(kept).approvedBy.isEmpty());
+    CHECK(!auth.validateSession(phone));
+
+    // A revocation still takes along what the session let in.
+    const QString owner = auth.createSession("192.168.1.33", "Owner");
+    const QString ownersTv =
+        auth.createLanHttpSession("192.168.1.53", "Owner's TV", auth.sessionIdForToken(owner));
+    const QString ownersTvId = auth.sessionIdForToken(ownersTv);
+    revoked.clear();
+    stillOnDisk.clear();
+    changed = 0;
+    auth.destroySession(auth.sessionIdForToken(owner));
+    CHECK(!auth.validateLanHttpSession(ownersTv, "192.168.1.53"));
+    CHECK_EQ(revoked.size(), 2);
+    CHECK(revoked.contains(ownersTvId));
+    CHECK(stillOnDisk.isEmpty()); // the cascade too, before either stream stops
+    CHECK_EQ(changed, 1);
+
+    // A listener that calls back in (destroys a session of the same cascade)
+    // finds it gone already: one signal per session, none for an unknown id.
+    const QString top = auth.createSession("192.168.1.34", "Top");
+    const QString topId = auth.sessionIdForToken(top);
+    const QString mid = auth.createLanHttpSession("192.168.1.54", "Mid", topId);
+    const QString midId = auth.sessionIdForToken(mid);
+    const QString low = auth.createSession("192.168.1.35", "Low");
+    const QString lowId = auth.sessionIdForToken(low);
+    CHECK(auth.setSessionApprover(low, midId));
+    const QMetaObject::Connection reentrant = QObject::connect(
+        &auth, &AuthManager::sessionDestroyed, [&auth, &topId, &lowId](const QString& id) {
+            if (id == topId) auth.destroySession(lowId);
+        });
+    revoked.clear();
+    stillOnDisk.clear();
+    auth.destroySession(topId);
+    QObject::disconnect(reentrant);
+    CHECK_EQ(revoked.size(), 3);
+    CHECK_EQ(revoked.count(topId), 1);
+    CHECK_EQ(revoked.count(midId), 1);
+    CHECK_EQ(revoked.count(lowId), 1);
+    CHECK(stillOnDisk.isEmpty());
+    CHECK(!auth.validateSession(low));
+
+    auth.destroyAllSessions();
+    auth.saveSessions();
+}
+
 } // namespace
 
 void run_auth_manager_tests()
@@ -1652,4 +1824,5 @@ void run_auth_manager_tests()
     pinProofRouteTests();
     rememberMeDaysTests();
     lanHttpSessionTests();
+    purgeTests();
 }

@@ -3414,6 +3414,9 @@ int main(int argc, char* argv[])
             if (!w) continue;
             qInfo() << "[main] Revoke teardown: stopping stream worker (slot" << i
                     << ", uid=" << g_Pool.at(i).clientUniqueId << ")";
+            // The history says "Admin" for every stream ended this way: a
+            // revocation, and also a session that reached a fixed bound in the
+            // hourly purge. The log line of that purge says which it was.
             noteEndedBy(i, ConnectionHistory::EndedBy::Admin);
             w->notifyRevoked();
         }

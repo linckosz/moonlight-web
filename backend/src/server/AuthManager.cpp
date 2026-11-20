@@ -235,16 +235,19 @@ void AuthManager::loadSessions()
     keepDevicesOfEndedApprovers();
 }
 
-int AuthManager::keepDevicesOfEndedApprovers()
+int AuthManager::keepDevicesOfEndedApprovers(const QSet<QString>& ending)
 {
     // A device let in by a session that ran out of time stays: it is the
     // administrator's to revoke from now on, like a device paired with the PIN.
-    // Only a revocation (destroySession) takes the devices along.
+    // Only a revocation (destroySession) takes the devices along. A session in
+    // @p ending is about to go and counts as gone already; one that goes
+    // itself is not counted as kept.
     int kept = 0;
     for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
-        if (it->approvedBy.isEmpty() || m_sessions.contains(it->approvedBy)) continue;
+        if (it->approvedBy.isEmpty()) continue;
+        if (m_sessions.contains(it->approvedBy) && !ending.contains(it->approvedBy)) continue;
         it->approvedBy.clear();
-        kept++;
+        if (!ending.contains(it.key())) kept++;
     }
     if (kept > 0)
         Logger::info(
@@ -1186,37 +1189,61 @@ void AuthManager::destroySession(const QString& token)
 {
     m_homeScreenKeys.remove(token);
     m_homeScreenInstances.remove(token);
-    if (m_sessions.contains(token)) {
-        SessionInfo info = m_sessions.value(token);
-        m_sessions.remove(token);
-        saveSessions();
-        emit sessionDestroyed(token);
-        emit sessionsChanged();
+    if (!m_sessions.contains(token)) {
+        Logger::warning("[Auth] destroySession: no such session");
+        return;
+    }
+    // On disk before anyone hears of it: a server that dies while the streams
+    // are being stopped must not bring the session back at its next start.
+    QList<EndedSession> ended;
+    takeSession(token, ended);
+    saveSessions();
+    announceEnded(ended, EndReason::Revoked);
+    emit sessionsChanged();
+}
+
+void AuthManager::takeSession(const QString& id, QList<EndedSession>& out)
+{
+    if (!m_sessions.contains(id)) return;
+    m_homeScreenKeys.remove(id);
+    m_homeScreenInstances.remove(id);
+    out.append({id, m_sessions.take(id)});
+
+    // The sessions this one let in go with it (a device it approved by the
+    // QR code it showed, PhonePairing.h), and theirs in turn. Each is out of
+    // the map before its own are looked for, so this ends.
+    QStringList approved;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (it->approvedBy == id) approved.append(it.key());
+    }
+    for (const QString& next : std::as_const(approved))
+        takeSession(next, out);
+}
+
+void AuthManager::announceEnded(const QList<EndedSession>& ended, EndReason reason)
+{
+    // What a listener does here (end streams, close a socket, even destroy
+    // another session) finds these out of the map and out of the file already:
+    // nothing it does can make one of them be announced twice.
+    const QString how =
+        reason == EndReason::Revoked ? QStringLiteral("revoked") : QStringLiteral("expired");
+    for (const EndedSession& e : ended) {
+        emit sessionDestroyed(e.id);
         Logger::info(QString("[Auth] Session destroyed for %1 (machine='%2', remaining: %3)")
-                         .arg(info.ip, info.machineName)
+                         .arg(e.info.ip, e.info.machineName)
                          .arg(m_sessions.size()));
-        if (info.streaming)
-            Logger::info("[Auth] Revoked session was streaming — requesting stream teardown");
-        if (info.lanHttp)
-            Logger::info(QString("[LanHttp] Session for %1 revoked%2")
-                             .arg(info.boundIp, info.streaming
-                                                    ? QStringLiteral("; its stream was cut")
-                                                    : QString()));
+        if (e.info.streaming)
+            Logger::info(QString("[Auth] %1 session was streaming — requesting stream teardown")
+                             .arg(reason == EndReason::Revoked ? QStringLiteral("Revoked")
+                                                               : QStringLiteral("Expired")));
+        if (e.info.lanHttp)
+            Logger::info(
+                QString("[LanHttp] Session for %1 %2%3")
+                    .arg(e.info.boundIp, how,
+                         e.info.streaming ? QStringLiteral("; its stream was cut") : QString()));
         // Whatever the flag says: it follows one stream only, and this
         // session's other streams end too.
-        emit streamingSessionRevoked(token);
-
-        // The sessions this one let in go with it (a device it approved by the
-        // QR code it showed, PhonePairing.h), and theirs in turn. Each is out of
-        // the map before its own are looked for, so this ends.
-        QStringList approved;
-        for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
-            if (it->approvedBy == token) approved.append(it.key());
-        }
-        for (const QString& id : std::as_const(approved))
-            destroySession(id);
-    } else {
-        Logger::warning("[Auth] destroySession: no such session");
+        emit streamingSessionRevoked(e.id);
     }
 }
 
@@ -1252,21 +1279,47 @@ void AuthManager::destroyAllSessions()
 void AuthManager::purgeExpiredSessions()
 {
     const qint64 now = QDateTime::currentSecsSinceEpoch();
-    int removed = 0;
-    QMutableHashIterator<QString, SessionInfo> it(m_sessions);
-    while (it.hasNext()) {
-        it.next();
-        if (expired(it.value(), now)) {
-            it.remove();
-            removed++;
-        }
+
+    // Two ways to run out of time, and only one ends a stream. A fixed bound
+    // (endedOnFixedBound) is reached however the session is used: its row goes
+    // the way a revocation's does (takeSession, then announceEnded), and its
+    // streams end with it.
+    // A sliding bound is only an absence of visits, and nothing a running
+    // stream does counts as one (only /api/auth/status and
+    // /api/lan-http/status move lastSeen): ending the stream there would cut
+    // a long one in use, a temporary session's nine-hour game for one. Its row
+    // goes as it always has, without a signal, and its stream runs on to its
+    // own end. Making a stream keep its session alive is a decision of its own
+    // (security review, 20/11, O3).
+    QStringList fixed;
+    QStringList sliding;
+    QSet<QString> ending;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (!expired(*it, now)) continue;
+        (endedOnFixedBound(*it, now) ? fixed : sliding).append(it.key());
+        ending.insert(it.key());
     }
-    if (removed > 0) {
-        keepDevicesOfEndedApprovers();
-        saveSessions();
-        emit sessionsChanged();
-        Logger::info(QString("[Auth] Purged %1 expired session(s)").arg(removed));
-    }
+    if (ending.isEmpty()) return;
+
+    // First the devices these let in, which stay (keepDevicesOfEndedApprovers):
+    // were takeSession to find them still pointing at their approver, it would
+    // take them along as a revocation does.
+    keepDevicesOfEndedApprovers(ending);
+    for (const QString& id : std::as_const(sliding))
+        m_sessions.remove(id);
+    QList<EndedSession> ended;
+    for (const QString& id : std::as_const(fixed))
+        takeSession(id, ended);
+
+    // On disk before a stream is stopped, as for a revocation (destroySession).
+    saveSessions();
+    announceEnded(ended, EndReason::Expired);
+    emit sessionsChanged();
+    // Numbers only: which device it was is in the sessions list, not here.
+    Logger::info(QString("[Auth] Purged %1 expired session(s), %2 on a fixed bound and their "
+                         "streams ended")
+                     .arg(ending.size())
+                     .arg(fixed.size()));
 }
 
 QList<SessionInfo> AuthManager::sessions() const
