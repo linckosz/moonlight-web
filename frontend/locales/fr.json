@@ -812,6 +812,7 @@
         "consentRequired": "Le lien Internet est en pause : l'autorisation donnée précédemment décrivait l'ancien mécanisme (enregistrement DNS public et certificat), qui ne s'applique plus à cette installation. Relisez la description ci-dessus, puis recochez la case pour réactiver le lien selon les conditions actuelles.",
         "upnpAvailableNote": "Autorise le mappage de ports UPnP sur votre routeur (disponible sur ce réseau). Vous pouvez aussi rediriger les ports manuellement.",
         "upnpUnavailableNote": "Autorise le mappage de ports UPnP sur votre routeur (non disponible sur ce réseau). Vous pouvez aussi rediriger les ports manuellement.",
+        "behindAnotherNat": "Votre fournisseur ou un autre routeur se trouve devant votre routeur (CGNAT ou double NAT) : les ports ouverts par UPnP ne sont pas joignables depuis Internet. L'adresse de l'accès Internet n'en a pas besoin.",
         "upnpDisabledNote": "L'UPnP est désactivé dans les réglages de ce serveur : votre routeur n'est jamais sollicité pour ouvrir un port.",
         "publicIp": "IP publique :",
         "upnpLabel": "UPnP :",
