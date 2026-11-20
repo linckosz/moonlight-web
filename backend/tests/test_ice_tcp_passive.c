@@ -11,6 +11,8 @@
  */
 #include "juice/juice.h"
 
+#include "addr.h"
+#include "agent.h"
 #include "socket.h"
 #include "stun.h"
 #include "thread.h"
@@ -320,9 +322,10 @@ static void test_selected_local_is_the_address_reached(void) {
 	// A listener on every interface would raise the firewall's prompt; the CI runs it on Linux
 	printf("  skipped on Windows\n");
 #else
-	// The host listens on every interface but offers its first address only, which the peer
-	// gets rewritten (here to 127.0.0.1, the tunnel's public address in production). Before,
-	// the log named the address offered, not the one that accepted.
+	// The host listens on every interface and offers each of its addresses, which the peer gets
+	// rewritten (here to 127.0.0.1, the tunnel's public address in production): it reaches an
+	// address the host never offered. Before, the log named an address offered, not the one that
+	// accepted.
 	side_t a = {0}, b = {0};
 	connecting_pair(&a, &b, "0.0.0.0", "127.0.0.1");
 
@@ -743,6 +746,130 @@ static void test_active_only_does_not_listen(void) {
 	juice_destroy(s.agent);
 }
 
+// ── Which addresses get a passive candidate (agent_pick_tcp_passive) ───────
+
+// `ipv4` addresses 10.0.0.1.. then `ipv6` ones fd00::1.., the list repeated for each of
+// `sockets` shared sockets on its own port (conn_poll_get_addrs: socket 0's first). Returns
+// how many records.
+static int fake_records(addr_record_t *out, int max, int ipv4, int ipv6, int sockets) {
+	int n = 0;
+	for (int via = 0; via < sockets; ++via) {
+		for (int i = 0; i < ipv4 + ipv6 && n < max; ++i) {
+			addr_record_t *r = out + n++;
+			memset(r, 0, sizeof(*r));
+			r->socktype = SOCK_DGRAM;
+			r->via = via;
+			if (i < ipv4) {
+				struct sockaddr_in *sin = (struct sockaddr_in *)&r->addr;
+				sin->sin_family = AF_INET;
+				sin->sin_port = htons((uint16_t)(48597 - via));
+				sin->sin_addr.s_addr = htonl(0x0A000000u + (uint32_t)(i + 1));
+				r->len = sizeof(struct sockaddr_in);
+			} else {
+				struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&r->addr;
+				sin6->sin6_family = AF_INET6;
+				sin6->sin6_port = htons((uint16_t)(48597 - via));
+				sin6->sin6_addr.s6_addr[0] = 0xFD;
+				sin6->sin6_addr.s6_addr[15] = (uint8_t)(i - ipv4 + 1);
+				r->len = sizeof(struct sockaddr_in6);
+			}
+		}
+	}
+	return n;
+}
+
+// Each chosen record is of socket 0, and no two have the same address
+static bool all_distinct_and_first(const addr_record_t *records, const int *chosen, int count) {
+	for (int i = 0; i < count; ++i) {
+		if (records[chosen[i]].via != 0)
+			return false;
+		for (int k = 0; k < i; ++k)
+			if (addr_is_equal((const struct sockaddr *)&records[chosen[k]].addr,
+			                  (const struct sockaddr *)&records[chosen[i]].addr, false))
+				return false;
+	}
+	return true;
+}
+
+static void test_passive_on_every_address(void) {
+	printf("A passive candidate on each address, in the room the description has left\n");
+	addr_record_t records[ICE_MAX_CANDIDATES_COUNT - 1];
+	const int max = ICE_MAX_CANDIDATES_COUNT - 1;
+	int chosen[ICE_MAX_CANDIDATES_COUNT];
+	int left = -1;
+
+	// The room: what a description holding UDP and active candidates has left once the
+	// server reflexive, relayed and a few peer reflexive candidates are set aside
+	CHECK(agent_tcp_passive_room(0, 0) ==
+	      ICE_MAX_CANDIDATES_COUNT - MAX_STUN_SERVER_RECORDS_COUNT - AGENT_LOCAL_PRFLX_RESERVE);
+	CHECK(agent_tcp_passive_room(16, 0) == 8); // 14 UDP (their ceiling) + 2 active
+	CHECK(agent_tcp_passive_room(16, 1) == 7); // one TURN server
+	CHECK(agent_tcp_passive_room(16, 9) == 6); // TURN entries have their own ceiling
+	CHECK(agent_tcp_passive_room(40, 0) == 0); // never below nothing
+	CHECK(agent_tcp_passive_room(9, 0) == 15); // 7 UDP + 2 active: room for every address
+	// The worst case still leaves room for the two passive candidates an agent offered before
+	CHECK(agent_tcp_passive_room(MAX_HOST_CANDIDATES_COUNT + 2, MAX_RELAY_ENTRIES_COUNT) >= 2);
+
+	// Seven addresses (five IPv4, two IPv6), one socket: all of them, the first of each family
+	// first (IPv6, then IPv4), each once
+	int n = fake_records(records, max, 5, 2, 1);
+	int count = agent_pick_tcp_passive(records, n, agent_tcp_passive_room(9, 0), chosen, &left);
+	CHECK(count == 7 && left == 0);
+	CHECK(chosen[0] == 5); // the first IPv6
+	CHECK(chosen[1] == 0); // the first IPv4
+	CHECK(chosen[2] == 1 && chosen[6] == 6); // then the others, in the list's order
+	CHECK(all_distinct_and_first(records, chosen, count));
+
+	// The same on two shared sockets (14 records): the addresses of socket 0, once each
+	n = fake_records(records, max, 5, 2, 2);
+	CHECK(n == 14);
+	count = agent_pick_tcp_passive(records, n, agent_tcp_passive_room(16, 0), chosen, &left);
+	CHECK(count == 7 && left == 0);
+	CHECK(all_distinct_and_first(records, chosen, count));
+
+	// Fourteen addresses, one socket: 14 UDP + 2 active leave room for 8; 6 left out, counted
+	n = fake_records(records, max, 12, 2, 1);
+	count = agent_pick_tcp_passive(records, n, agent_tcp_passive_room(16, 0), chosen, &left);
+	CHECK(count == 8 && left == 6);
+	CHECK(chosen[0] == 12 && chosen[1] == 0);
+	CHECK(all_distinct_and_first(records, chosen, count));
+
+	// Twenty-nine (the most a list holds): UDP still at its ceiling of 14, room for 8
+	n = fake_records(records, max, 27, 2, 1);
+	CHECK(n == 29);
+	count = agent_pick_tcp_passive(records, n, agent_tcp_passive_room(16, 0), chosen, &left);
+	CHECK(count == 8 && left == 21);
+	CHECK(all_distinct_and_first(records, chosen, count));
+
+	// Twenty-nine records over two sockets (15 + 14): socket 0's 15 addresses only
+	{
+		int a = fake_records(records, max, 13, 2, 1);
+		int b = fake_records(records + a, max - a, 12, 2, 1);
+		for (int i = a; i < a + b; ++i)
+			records[i].via = 1;
+		n = a + b;
+		CHECK(n == 29);
+		count = agent_pick_tcp_passive(records, n, agent_tcp_passive_room(16, 0), chosen, &left);
+		CHECK(count == 8 && left == 7);
+		CHECK(all_distinct_and_first(records, chosen, count));
+	}
+
+	// A short room keeps the two of before first: one → the first IPv6, two → and the first IPv4
+	n = fake_records(records, max, 5, 2, 1);
+	CHECK(agent_pick_tcp_passive(records, n, 1, chosen, &left) == 1 && chosen[0] == 5 && left == 6);
+	CHECK(agent_pick_tcp_passive(records, n, 2, chosen, &left) == 2 && chosen[1] == 0 && left == 5);
+	CHECK(agent_pick_tcp_passive(records, n, 0, chosen, &left) == 0 && left == 7);
+
+	// IPv4 only; an address listed twice counts once; an empty list, nothing
+	n = fake_records(records, max, 3, 0, 1);
+	records[n] = records[1];
+	++n;
+	count = agent_pick_tcp_passive(records, n, 20, chosen, &left);
+	CHECK(count == 3 && left == 0 && chosen[0] == 0);
+	CHECK(all_distinct_and_first(records, chosen, count));
+	CHECK(agent_pick_tcp_passive(records, 0, 20, chosen, NULL) == 0);
+}
+
 // Not of the passive TCP, but of the same runner: libjuice-udp-long-datagram.patch
 static void test_long_datagram_is_dropped(void) {
 	printf("A datagram longer than the buffer is dropped, the next one is read\n");
@@ -790,6 +917,7 @@ int main(void) {
 	test_taken_tcp_port_means_no_candidate();
 	test_active_only_does_not_listen();
 	test_long_datagram_is_dropped();
+	test_passive_on_every_address();
 	failures += ice_mux_tests();
 	printf(failures ? "\n%d FAILURE(S)\n" : "\nall passed\n", failures);
 	return failures ? 1 : 0;

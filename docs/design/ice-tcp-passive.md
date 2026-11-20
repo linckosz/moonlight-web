@@ -35,7 +35,10 @@ celui de libdatachannel ; `mux` et `thread` l'ignorent) :
 - un mode `JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE` : le TCP actif d'avant, plus une écoute ;
 - à la création de l'agent, un socket TCP en écoute sur **la même adresse et le même port** que son
   socket UDP ; s'il ne peut pas s'y lier, pas de candidat passif, et rien d'autre ne change ;
-- un candidat hôte `tcptype passive` par famille d'adresses, sur ce port ;
+- un candidat hôte `tcptype passive` sur chaque adresse de l'hôte, sur ce port (l'écoute les
+  accepte toutes). Ils viennent après les candidats UDP et actifs, dans la place que laisse la
+  description une fois réservés les réflexifs et les relais (`agent_pick_tcp_passive`, patch du
+  mux) : jamais un candidat UDP de moins ; la première adresse de chaque famille passe en premier ;
 - une connexion acceptée n'est rattachée à l'agent qu'après la porte du §3.2. Elle devient alors
   son unique connexion TCP. Le candidat distant prflx qu'elle crée est TCP (`tcptype active`), et
   la paire qu'il forme est permise en mode passif ;
