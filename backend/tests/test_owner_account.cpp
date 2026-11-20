@@ -82,6 +82,25 @@ void run_owner_account_tests()
     CHECK(!isServiceAccount(QStringLiteral("SYSTEM")));
     CHECK(!isServiceAccount(QString()));
 
+    SECTION("OwnerAccount: what the installer is told about its own account");
+    CHECK(setupAccount(system) == SetupAccount::System);
+    CHECK(setupAccount(me) == SetupAccount::Person);
+    // The other service accounts and the administrators' group are not
+    // LocalSystem, but they read: a person's answer, never the system's.
+    CHECK(setupAccount(QStringLiteral("S-1-5-19")) == SetupAccount::Person);
+    CHECK(setupAccount(QStringLiteral("S-1-5-20")) == SetupAccount::Person);
+    CHECK(setupAccount(QStringLiteral("S-1-5-32-544")) == SetupAccount::Person);
+    // What does not read is never a person: no SID, a name, a broken SID.
+    for (const QString& bad :
+         {QString(), QStringLiteral("SYSTEM"), QStringLiteral("DUALRTX$"), QStringLiteral("S-1-5-"),
+          QStringLiteral("S-1-5-18x"), QStringLiteral("not a sid")})
+        CHECK(setupAccount(bad) == SetupAccount::Unknown);
+    // The exit codes the installer reads: 0 is a person's alone, and 18 the
+    // system's alone. Anything else the installer takes for the system.
+    CHECK_EQ(static_cast<int>(SetupAccount::Person), 0);
+    CHECK_EQ(static_cast<int>(SetupAccount::Unknown), 2);
+    CHECK_EQ(static_cast<int>(SetupAccount::System), 18);
+
     SECTION("OwnerAccount: the owner is the recorded account, and nobody when none is");
     // In a key of the tests' own, under this user's hive: the installer's
     // place is the machine's, which the tests may not write. The store is

@@ -1911,6 +1911,11 @@ int main(int argc, char* argv[])
         return static_cast<int>(mw::owneraccount::startAs(
             mw::place::isPrivileged(), mw::owneraccount::recorded(mw::owneraccount::machineStore()),
             mw::place::currentUserSid()));
+    // The installer asks, as itself, which account it runs as: the system's
+    // own or a person's (common/OwnerAccount.h, SetupAccount). Read from this
+    // process's token, the same way and as early as the verb above.
+    if (argc == 2 && argv[1] && qstrcmp(argv[1], "--setup-account") == 0)
+        return static_cast<int>(mw::owneraccount::setupAccount(mw::place::currentUserSid()));
 #endif
 
     // First, while this is still the only thread: if the Linux launcher handed
