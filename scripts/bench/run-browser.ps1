@@ -267,9 +267,13 @@ Write-Host "content      : $contentName"
 # to the child as *no argument at all*, and the child then dies with "Missing an
 # argument for parameter 'AdapterLuid'" — so leaving the pin unset, which the
 # parameter's own default allows, used to abort the whole browser half.
-# -OwnerLink: the kiosk starts on a blank page, and goes to the app once the
-# owner's link has opened its session (below, inside the try).
-$clientArgs = @('-NoProfile', '-File', "$PSScriptRoot\kiosk.ps1", '-Url', $(if ($OwnerLink) { 'about:blank' } else { $AppUrl }),
+# -OwnerLink: the kiosk starts on a page of the bench's own, and goes to the app
+# once the owner's link has opened its session (below, inside the try). Not on
+# about:blank: a kiosk that started there refuses fullscreen to every page it
+# shows afterwards (content/kiosk-start.html says why not the app's address either).
+# An URI, not a replace: a folder with a space or a # in its name is encoded right.
+$clientStart = [System.Uri]::new((Join-Path $PSScriptRoot 'content\kiosk-start.html')).AbsoluteUri
+$clientArgs = @('-NoProfile', '-File', "$PSScriptRoot\kiosk.ps1", '-Url', $(if ($OwnerLink) { $clientStart } else { $AppUrl }),
                 '-X', $cx, '-Y', $cy, '-W', $cw, '-H', $ch, '-DebugPort', $DebugPort)
 if ($OwnerLink) { $clientArgs += @('-ChromeProfile', '.chrome-owner') }
 if ($ClientAdapterLuid) { $clientArgs += @('-AdapterLuid', $ClientAdapterLuid) }

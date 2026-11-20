@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>bench — client kiosk</title>
+<style>html, body { margin: 0; height: 100%; background: #111; color: #777; font: 16px sans-serif; }
+body { display: flex; align-items: center; justify-content: center; }</style>
+</head>
+<!-- Where a client kiosk starts before it is sent to the app (run-browser.ps1 -OwnerLink).
+     Not about:blank: a --kiosk Chrome that started on about:blank refuses fullscreen ("not
+     granted") to every page it shows afterwards, however it got there (bench FSK3/FSK4,
+     20/11/2026). A page of its own, and not the app's address: the owner's link differs
+     from that address only by its #k=, and going there would then be a jump inside the
+     page, which reads no key. -->
+<body>bench client</body>
+</html>

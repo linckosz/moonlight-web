@@ -15,8 +15,9 @@ used it (checked: key_gone). Never the production instance of this machine.
     python owner_kiosk.py logout --cdp-port 9333       (before the kiosk is closed)
     python owner_kiosk.py clean                        (once it is: its profile goes)
 
-The kiosk itself is started by the caller (kiosk.ps1 -Url about:blank
--ChromeProfile .chrome-owner -DebugPort N), and closed by it between `logout`
+The kiosk itself is started by the caller (kiosk.ps1 -Url <content/kiosk-start.html>
+-ChromeProfile .chrome-owner -DebugPort N; not about:blank, whose kiosk refuses
+fullscreen afterwards), and closed by it between `logout`
 and `clean`, in a finally whatever happened. Prints yes/no only.
 """
 import argparse
