@@ -103,6 +103,7 @@ export class AdminView {
         this._transportMode = 'auto';
         this._availableTransports = [];
         this._upnpAvailable = false;
+        this._behindAnotherNat = false; // the router's own address is not the public one
         // Off in settings.json: the router is never asked, which is not the
         // same thing as a router that did not answer.
         this._upnpEnabled = true;
@@ -351,6 +352,9 @@ export class AdminView {
             this._transportMode = status.transport_mode || 'auto';
             this._availableTransports = status.available_transports || [];
             this._upnpAvailable = status.upnp_available || false;
+            // CGNAT or another router in front: shown as a notice, and never a
+            // reason to untick the box below (last_error is).
+            this._behindAnotherNat = status.behind_another_nat === true;
             this._upnpEnabled = status.upnp_enabled !== false;
             this._customDomain = status.custom_domain === true;
             this._mediaPortFirst = status.media_port_first || this._mediaPortFirst;
@@ -1048,6 +1052,15 @@ export class AdminView {
                                   : `<span class="text-muted">${t('admin.notAvailable')}</span>`
                         }
                         </p>
+                        ${
+                            // A notice, not an error: the box stays ticked
+                            // and the address keeps working (see the backend's
+                            // checkDoubleNat). No address in it: the public IP
+                            // is just above, and the remote view hides both.
+                            this._upnpEnabled && this._upnpAvailable && this._behindAnotherNat
+                                ? `<p id="internet-behind-nat">${t('admin.behindAnotherNat')}</p>`
+                                : ''
+                        }
                     </div>
 
                     <!-- Error display -->

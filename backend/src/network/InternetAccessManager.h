@@ -183,7 +183,8 @@ private:
     void updateHairpinStatus();
 
     /// Compare the router's external address with the STUN one: two
-    /// different answers mean a second NAT the router cannot open.
+    /// different answers mean a second NAT the router cannot open. Sets
+    /// m_BehindAnotherNat, a notice; never m_LastError.
     void checkDoubleNat();
 
     // Owned sub-clients
@@ -204,7 +205,9 @@ private:
     QStringList m_LocalIps; ///< Every IPv4 another machine can reach us on, best first. Includes
                             ///< host-only virtual switches, only reachable from their own VMs.
     QString m_UniqueId;
-    QString m_LastError;
+    QString m_LastError; ///< A failure that leaves Internet Access not operational. Only.
+    bool m_BehindAnotherNat = false; ///< The router's own address is not the public one:
+                                     ///< CGNAT or another router in front (checkDoubleNat).
     QString m_Phase; ///< Current activation step (drives the UI loader). See statusJson "phase".
     bool m_HairpinReachable = false; ///< True when the host can reach its own public
                                      ///< endpoint (router supports NAT hairpin). Drives

@@ -768,6 +768,7 @@
         "consentRequired": "İnternet bağlantısı duraklatıldı: daha önce verdiğiniz izin, artık bu kurulum için geçerli olmayan eski mekanizmayı (genel DNS kaydı ve sertifika) tanımlıyordu. Yukarıdaki açıklamayı okuyun, ardından bağlantıyı güncel koşullarla yeniden etkinleştirmek için kutuyu tekrar işaretleyin.",
         "upnpAvailableNote": "Yönlendiricinizde UPnP bağlantı noktası eşlemesine yetki verir (bu ağda kullanılabilir). Bağlantı noktalarını elle de yönlendirebilirsiniz.",
         "upnpUnavailableNote": "Yönlendiricinizde UPnP bağlantı noktası eşlemesine yetki verir (bu ağda kullanılamıyor). Bağlantı noktalarını elle de yönlendirebilirsiniz.",
+        "behindAnotherNat": "Sağlayıcınız veya başka bir yönlendirici, yönlendiricinizin önünde yer alıyor (CGNAT veya çift NAT): UPnP ile açılan bağlantı noktalarına internetten erişilemez. İnternet Erişimi adresinizin bunlara ihtiyacı yoktur.",
         "upnpDisabledNote": "Bu sunucunun ayarlarında UPnP kapalı: yönlendiricinizden asla bağlantı noktası açması istenmez.",
         "publicIp": "Genel IP:",
         "upnpLabel": "UPnP:",

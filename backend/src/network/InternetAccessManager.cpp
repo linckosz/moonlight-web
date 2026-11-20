@@ -100,11 +100,21 @@ void InternetAccessManager::checkDoubleNat()
 {
     if (!m_Active || !m_Settings->upnpEnabled() || !m_RouterPorts) return;
     const QString upnpIp = m_RouterPorts->publicIp();
-    if (upnpIp.isEmpty() || m_PublicIp.isEmpty() || upnpIp == m_PublicIp) return;
-    m_LastError = QStringLiteral("CGNAT detected: UPnP reports %1 but your public IP is %2. "
-                                 "Port forwarding may not work — contact your ISP.")
-                      .arg(upnpIp, m_PublicIp);
-    qWarning() << "[InternetAccess]" << m_LastError;
+    if (upnpIp.isEmpty() || m_PublicIp.isEmpty()) return;
+    // A notice, not an error: Internet Access goes on working (the rendezvous
+    // line goes out from here and needs no inbound port), and only the router's
+    // own UPnP holes are out of reach. Kept apart from last_error, which the
+    // admin page reads as "not operational" and unticks the box for.
+    const bool behind = upnpIp != m_PublicIp;
+    if (behind == m_BehindAnotherNat) return;
+    m_BehindAnotherNat = behind;
+    if (behind)
+        qWarning() << "[InternetAccess] The router's own address" << upnpIp
+                   << "is not the public IP" << m_PublicIp
+                   << "- CGNAT or another router in front: UPnP holes cannot be reached from "
+                      "the internet";
+    else
+        qInfo() << "[InternetAccess] The router's own address is the public IP again";
 }
 
 InternetAccessManager::~InternetAccessManager()
@@ -119,7 +129,12 @@ InternetAccessManager::~InternetAccessManager()
 void InternetAccessManager::start()
 {
     if (m_Active) {
+        // Asked again while running: the page wants a current answer. An error
+        // kept from earlier would untick the box again for something that may
+        // be over, so it is cleared and the one check that sets it is run anew.
         qInfo() << "[InternetAccess] Already active";
+        m_LastError.clear();
+        if (m_Settings->autoIpDetection()) detectPublicIp();
         return;
     }
 
@@ -208,6 +223,7 @@ void InternetAccessManager::stop()
     // router's holes are RouterPortAllocator's (see its switchChanged()).
     m_Active = false;
     m_Phase.clear();
+    m_BehindAnotherNat = false; // compared again at the next start
     qInfo() << "[InternetAccess] Stopped";
 }
 
@@ -346,6 +362,10 @@ QJsonObject InternetAccessManager::statusJson() const
     // reader of a public URL builds it from this one.
     obj[QStringLiteral("external_https_port")] = httpsPort;
 
+    // The router's own address is not the public one (CGNAT, or another router
+    // in front): a notice for the admin page, never an error. A yes or a no,
+    // with no address in it, so the remote view can keep it too.
+    obj[QStringLiteral("behind_another_nat")] = m_BehindAnotherNat;
     if (!m_LastError.isEmpty()) obj[QStringLiteral("last_error")] = m_LastError;
 
     return obj;
@@ -525,6 +545,9 @@ QString InternetAccessManager::detectPublicIpViaHttp()
 bool InternetAccessManager::detectPublicIp()
 {
     qInfo() << "[InternetAccess] Detecting public IP via STUN...";
+    // The only error this manager reports is this one's: a detection that
+    // succeeds now ends the one an earlier run left, periodic checks included.
+    m_LastError.clear();
 
     // Try default STUN servers
     QList<StunClient::StunServer> servers = StunClient::defaultServers();
