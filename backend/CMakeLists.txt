@@ -174,6 +174,25 @@ find_package(Git REQUIRED)
 function(mw_apply_patch dir patch)
     cmake_parse_arguments(PARSE_ARGV 2 ARG "" "REQUIRED_BY" "")
     set(patches "${CMAKE_CURRENT_SOURCE_DIR}/third_party/patches")
+    # The checks below mean something only in the submodule's own repository. A
+    # submodule never checked out is a plain folder inside ours: git then reads the
+    # patch's paths from our root, ignores them all as outside the folder, and
+    # "--reverse --check" passes on nothing, so the patch is taken as applied and
+    # the build fails much later, at a call the patch was there to add.
+    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" rev-parse --show-toplevel
+                    RESULT_VARIABLE no_repo OUTPUT_VARIABLE top ERROR_QUIET
+                    OUTPUT_STRIP_TRAILING_WHITESPACE)
+    file(REAL_PATH "${dir}" want)
+    if(no_repo EQUAL 0)
+        file(REAL_PATH "${top}" top)
+    endif()
+    if(NOT no_repo EQUAL 0 OR NOT top STREQUAL want)
+        file(RELATIVE_PATH sub "${CMAKE_CURRENT_SOURCE_DIR}" "${dir}")
+        message(FATAL_ERROR "${dir} is not a checked-out submodule, so ${patch} cannot be "
+                            "applied to it. Check the submodules out, then configure again:\n"
+                            "  git -C \"${CMAKE_CURRENT_SOURCE_DIR}\" submodule update --init "
+                            "--recursive \"${sub}\"")
+    endif()
     foreach(in_tree IN ITEMS ${ARG_REQUIRED_BY} ${patch})
         execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${dir}" apply --reverse --check
                                 "${patches}/${in_tree}"
