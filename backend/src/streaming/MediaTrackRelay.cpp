@@ -257,6 +257,7 @@ bool MediaTrackRelay::prepare(const rtc::Configuration& config, bool isInternet)
     // RelayBase::kIceTimeoutInternetMs.
     m_IceTimeoutMs = isInternet ? kIceTimeoutInternetMs : kIceTimeoutLocalMs;
 
+    forgetPublicCopies();
     setupPeerConnection(config);
     return true;
 }

@@ -22,6 +22,8 @@
 #include <QJsonObject>
 #include <QObject>
 #include <memory>
+#include <mutex>
+#include <set>
 #include <string>
 #include <cstdint>
 #include <vector>
@@ -245,7 +247,19 @@ protected:
     /// each and had already drifted in its logging.
     ///
     /// @param logTag prefix for this relay's log lines, e.g. "[MediaTrackRelay]".
+    ///
+    /// The rule is mw::ice::hostCandidateVerdict (HostCandidates.h), the same
+    /// for every transport. A copy at the public address goes out once per
+    /// transport and port, however many of the host's addresses copy to it.
+    /// Called on libdatachannel's thread.
     void emitLocalCandidate(const rtc::Candidate& candidate, const char* logTag);
+
+    /// A new connection's candidates: the copies at the public address go out
+    /// anew. Both relays call it from prepare(), before the connection exists.
+    void forgetPublicCopies();
+    /// True the first time `key` (mw::ice::publicCopyKey) is asked for since
+    /// forgetPublicCopies()
+    bool firstPublicCopy(uint32_t key);
 
     /// Log the candidate pair ICE actually nominated, once the PeerConnection
     /// reaches Connected. Nothing else in the logs says which path the media
@@ -309,4 +323,9 @@ protected:
     ///< through the router. See emitLocalCandidate().
     bool m_SuppressIPv6 = false;
     bool m_EmitLanCandidate = false; ///< Also emit the internal host candidate
+
+    /// The copies at the public address already sent for this connection
+    /// (mw::ice::publicCopyKey), on libdatachannel's thread
+    std::mutex m_CopiesLock;
+    std::set<uint32_t> m_CopiesSent;
 };

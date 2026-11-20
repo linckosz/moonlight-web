@@ -18,6 +18,7 @@
 #include "RelayBase.h"
 
 #include "IMediaEngine.h"
+#include "HostCandidates.h"
 #include "IceMuxClient.h"
 #include "IcePriority.h"
 #include "MicRtp.h"
@@ -80,6 +81,30 @@ QString describeCandidate(const rtc::Candidate& c)
         .arg(type, QString::fromStdString(*addr))
         .arg(*port)
         .arg(transport);
+}
+
+/// The rule's name for a candidate's transport (HostCandidates.h)
+mw::ice::LocalCandidate::Transport transportOf(rtc::Candidate::TransportType type)
+{
+    using T = mw::ice::LocalCandidate::Transport;
+    switch (type) {
+    case rtc::Candidate::TransportType::Udp: return T::Udp;
+    case rtc::Candidate::TransportType::TcpPassive: return T::TcpPassive;
+    case rtc::Candidate::TransportType::TcpActive: return T::TcpActive;
+    default: return T::TcpOther;
+    }
+}
+
+const char* transportName(mw::ice::LocalCandidate::Transport transport)
+{
+    using T = mw::ice::LocalCandidate::Transport;
+    switch (transport) {
+    case T::Udp: return "UDP";
+    case T::TcpPassive: return "TCP passive";
+    case T::TcpActive: return "TCP active";
+    case T::TcpOther: break;
+    }
+    return "TCP";
 }
 
 } // namespace
@@ -183,138 +208,109 @@ std::string RelayBase::micOpusFmtp() const
 
 void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* logTag)
 {
-    rtc::Candidate modCandidate = candidate;
-    // The copy on the router's TCP 443, when this candidate has one
-    std::string by443;
-
     QHostAddress addr;
     const bool resolved = candidateAddress(candidate, &addr);
-    const bool isIpv4 = resolved ? addr.protocol() == QAbstractSocket::IPv4Protocol
-                                 : !looksIpv6(candidate.candidate());
+
+    mw::ice::LocalCandidate local;
+    local.host = candidate.type() == rtc::Candidate::Type::Host;
+    local.ipv4 = resolved ? addr.protocol() == QAbstractSocket::IPv4Protocol
+                          : !looksIpv6(candidate.candidate());
     // An unresolved candidate is treated as public: the conservative verdict,
-    // since the tunnel branch below grants an exemption.
-    const NetClassify::Kind kind =
-        resolved ? NetClassify::classify(addr.toString()) : NetClassify::Kind::Public;
+    // since the tunnel branch of the rule grants an exemption.
+    local.kind = resolved ? NetClassify::classify(addr.toString()) : NetClassify::Kind::Public;
+    local.transport = transportOf(candidate.transportType());
+    local.port = candidate.port().value_or(0);
 
-    // If UPnP is active and this is a host candidate, rewrite it with the
-    // public IP and mapped port. This gives the browser a reachable endpoint
-    // through the UPnP-opened router port. On the server's shared ports there
-    // are several, and each has its copy on its own number, when the router
-    // forwards it.
-    // On the shared ports a TCP candidate has its copy where the router
-    // forwards the port in TCP, which it may not where it forwards it in UDP.
-    const bool overTcp = candidate.transportType() != rtc::Candidate::TransportType::Udp;
-    const std::vector<uint16_t>& holes = overTcp ? m_SharedTcpHoles : m_SharedHoles;
-    const bool hasHole =
-        m_OnSharedPorts ? !m_SharedHoles.empty() || !m_SharedTcpHoles.empty() : m_PublicPort > 0;
-    const uint16_t publicPort =
-        mw::ice::publicPortFor(candidate.port().value_or(0), m_OnSharedPorts, m_PublicPort, holes);
-    if (m_ForceHostPublic && !m_PublicIP.empty() && hasHole &&
-        candidate.type() == rtc::Candidate::Type::Host) {
-        if (kind == NetClassify::Kind::Tunnel) {
-            // A mesh VPN interface carries its own NAT traversal and is already
-            // reachable by any peer that can see it. Rewriting it to the public
-            // IP would duplicate the LAN candidate *and* push the media back out
-            // to the internet — silently defeating the tunnel the user chose.
-            // Emit it untouched, and only to a peer inside our own network.
-            if (m_EmitLanCandidate) {
-                qInfo() << logTag << "Tunnel host candidate kept as-is:" << addr.toString();
-                emit signalingIceCandidate(std::string(candidate.candidate()),
-                                           std::string(candidate.mid()));
-            } else {
-                qInfo() << logTag << "Dropping tunnel host candidate for a public peer";
-            }
-            return;
-        }
+    mw::ice::CandidateView view;
+    view.forceHostPublic = m_ForceHostPublic;
+    view.havePublicIp = !m_PublicIP.empty();
+    view.onSharedPorts = m_OnSharedPorts;
+    view.ownHole = m_PublicPort;
+    view.udpHoles = m_SharedHoles;
+    view.tcpHoles = m_SharedTcpHoles;
+    view.tcp443LeadsTo = m_Tcp443LeadsTo;
+    view.suppressIpv6 = m_SuppressIPv6;
+    view.emitLan = m_EmitLanCandidate;
 
-        if (isIpv4) {
-            // For a peer inside our own network (incl. one reaching us through
-            // the public URL via NAT hairpin), also advertise the original
-            // private host candidate so it can connect directly to 192.168.x.x —
-            // many routers don't hairpin UDP, so a public-only candidate never
-            // becomes reachable locally. Gated on m_EmitLanCandidate (false for
-            // public peers) so the internal address is never leaked outside.
-            if (m_EmitLanCandidate)
-                emit signalingIceCandidate(candidate.candidate(), std::string(candidate.mid()));
-            if (publicPort == 0) {
-                // A shared port the router does not forward: nothing at the
-                // public address leads to it. The peer of our own network has
-                // it above; no other is shown an internal address.
-                if (!m_EmitLanCandidate)
-                    qInfo() << logTag << "Host candidate on port" << candidate.port().value_or(0)
-                            << "withheld from a public peer: the router does not forward it";
-                return;
-            }
-            try {
-                modCandidate.changeAddress(m_PublicIP, publicPort);
-                // A reflexive address's priority, below the LAN host candidate
-                // just emitted: a same-LAN peer then prefers the direct pair to
-                // the router's hairpin instead of racing them (IcePriority.h).
-                const uint32_t priority = mw::ice::srflxPriority(candidate.priority());
-                modCandidate = rtc::Candidate(
-                    mw::ice::withPriority(modCandidate.candidate(), priority), candidate.mid());
-                qInfo() << logTag << "Host candidate ->" << QString::fromStdString(m_PublicIP)
-                        << ":" << publicPort << "priority" << priority
-                        << (m_EmitLanCandidate ? "(+ LAN)" : "");
-                // The router's TCP 443 leads to this very port: the same
-                // listener, reached by the one port some networks let out.
-                // Below every other candidate: a browser that gets through
-                // any other way never ends on it.
-                if (mw::ice::has443Copy(candidate.transportType() ==
-                                            rtc::Candidate::TransportType::TcpPassive,
-                                        publicPort, m_Tcp443LeadsTo)) {
-                    rtc::Candidate other = candidate;
-                    other.changeAddress(m_PublicIP, mw::ice::kTcp443);
-                    const uint32_t last = mw::ice::lastResortPriority(candidate.priority());
-                    by443 = mw::ice::withPriority(other.candidate(), last);
-                    qInfo() << logTag << "Host candidate ->" << QString::fromStdString(m_PublicIP)
-                            << ": 443 (TCP) priority" << last;
-                }
-            } catch (const std::exception& e) {
-                qWarning() << logTag << "Failed to rewrite candidate:" << e.what();
-            }
-        } else {
-            // Only the REWRITE is skipped — IPv6 needs no NAT hole, so the
-            // candidate goes out as it is (subject to the non-global gate
-            // below). The old wording said "Skipping IPv6 candidate", which
-            // read as a drop.
-            qInfo() << logTag << "IPv6 candidate kept unrewritten (no NAT to traverse):"
-                    << QString::fromStdString(candidate.candidate());
-        }
+    const mw::ice::CandidateVerdict verdict = mw::ice::hostCandidateVerdict(local, view);
+    using Why = mw::ice::CandidateVerdict::Why;
+    // No address on these lines: the kind of address, the transport, the port
+    const char* kind = NetClassify::toString(local.kind);
+    const char* transport = transportName(local.transport);
+    switch (verdict.why) {
+    case Why::TunnelForLan:
+        qInfo() << logTag << "Tunnel host candidate kept as-is for a peer of our network ("
+                << transport << ")";
+        break;
+    case Why::TunnelWithheld:
+        qInfo() << logTag << "Tunnel host candidate withheld from a public peer (" << transport
+                << ")";
+        break;
+    case Why::NotForwarded:
+        if (!m_EmitLanCandidate)
+            qInfo() << logTag << "Host candidate on port" << local.port << "(" << transport
+                    << ") withheld from a public peer: the router does not forward it";
+        break;
+    case Why::Ipv6Withheld:
+        qInfo() << logTag << "Non-global IPv6 candidate (" << kind << "," << transport
+                << ") withheld from a public peer";
+        break;
+    case Why::AsIs:
+    case Why::Copied:
+    case Why::ActiveForLan: break;
     }
 
-    // IPv6 under UPnP. This used to suppress every IPv6 candidate so ICE was
-    // forced onto the IPv4 UPnP path, on the grounds that residential IPv6 often
-    // blocks unsolicited inbound traffic (DTLS/SCTP timing out silently).
-    //
-    // That cost more than it bought. The IPv4 path it forces goes to the public
-    // address, so a peer on our own LAN reaches us by hairpinning through the
-    // router — measured 2026-08-30: three DataChannel sessions from a Mac two
-    // metres away nominated `srflx <public v4> -> prflx 10.0.0.254`, the
-    // router's own LAN address, at 20 Mbps. The two MediaTrack sessions of the
-    // same run reached a direct IPv6 pair instead, and only because ICE
-    // rediscovered it peer-reflexively — suppression never stopped IPv6, it just
-    // made winning it a race the transports lost or won at random.
-    //
-    // So: a GLOBAL IPv6 address is emitted. It is no more private than the
-    // public IPv4 already advertised beside it, and it is an ADDITIONAL pair —
-    // ICE falls back to the IPv4 pairs if its checks fail, which is precisely
-    // the blocked-inbound case the suppression was guarding against.
-    //
-    // A non-global IPv6 (ULA — including a mesh-VPN address — or link-local)
-    // stays behind the same gate as the private IPv4 host candidate above: only
-    // a peer inside a network we control may see it.
-    // `kind` classifies THIS candidate's own address, so a global v6 is Public
-    // (emit) and a ULA/link-local one is Private (gate it).
-    if (m_SuppressIPv6 && !isIpv4 && NetClassify::isTrustedPeer(kind) && !m_EmitLanCandidate) {
-        qInfo() << logTag << "Suppressing non-global IPv6 candidate:"
-                << QString::fromStdString(modCandidate.candidate()).left(80);
+    const std::string mid = candidate.mid();
+    if (verdict.asIs) emit signalingIceCandidate(std::string(candidate.candidate()), mid);
+    if (verdict.publicPort == 0) return;
+
+    // One copy per transport and port: the host's other addresses copy to the
+    // very same public address and port, which the browser would only check
+    // again
+    if (!firstPublicCopy(mw::ice::publicCopyKey(local.transport, verdict.publicPort))) {
+        qDebug() << logTag << "Public copy on port" << verdict.publicPort << "(" << transport
+                 << ") already announced";
         return;
     }
+    try {
+        rtc::Candidate copy = candidate;
+        copy.changeAddress(m_PublicIP, verdict.publicPort);
+        // A reflexive address's priority, below the LAN host candidate just
+        // emitted: a same-LAN peer then prefers the direct pair to the
+        // router's hairpin instead of racing them (IcePriority.h).
+        const uint32_t priority = mw::ice::srflxPriority(candidate.priority());
+        emit signalingIceCandidate(mw::ice::withPriority(copy.candidate(), priority), mid);
+        qInfo() << logTag << "Host candidate copied at the public address on port"
+                << verdict.publicPort << "(" << transport << ") priority" << priority
+                << (m_EmitLanCandidate ? "(+ LAN)" : "");
+        // The router's TCP 443 leads to this very port: the same listener,
+        // reached by the one port some networks let out. Below every other
+        // candidate: a browser that gets through any other way never ends on it.
+        if (verdict.by443 &&
+            firstPublicCopy(mw::ice::publicCopyKey(local.transport, mw::ice::kTcp443))) {
+            rtc::Candidate other = candidate;
+            other.changeAddress(m_PublicIP, mw::ice::kTcp443);
+            const uint32_t last = mw::ice::lastResortPriority(candidate.priority());
+            emit signalingIceCandidate(mw::ice::withPriority(other.candidate(), last), mid);
+            qInfo() << logTag << "Host candidate copied at the public address on 443 (TCP) priority"
+                    << last;
+        }
+    } catch (const std::exception& e) {
+        // Nothing then: the internal candidate never stands in for its copy
+        qWarning() << logTag << "Failed to rewrite candidate:" << e.what();
+    }
+}
 
-    emit signalingIceCandidate(std::string(modCandidate.candidate()),
-                               std::string(modCandidate.mid()));
-    if (!by443.empty()) emit signalingIceCandidate(by443, std::string(candidate.mid()));
+void RelayBase::forgetPublicCopies()
+{
+    std::lock_guard lock(m_CopiesLock);
+    m_CopiesSent.clear();
+}
+
+bool RelayBase::firstPublicCopy(uint32_t key)
+{
+    std::lock_guard lock(m_CopiesLock);
+    return m_CopiesSent.insert(key).second;
 }
 
 QByteArray RelayBase::micOffMessage(const QString& why)

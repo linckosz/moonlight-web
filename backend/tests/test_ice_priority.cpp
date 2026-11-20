@@ -11,6 +11,7 @@
  * order, and only the priority field of the line changes.
  */
 
+#include "../src/streaming/HostCandidates.h"
 #include "../src/streaming/IcePriority.h"
 
 #include "test_framework.h"
@@ -112,6 +113,178 @@ void testTheCopyOnTcp443()
              std::string("candidate:2 1 TCP 847233279 203.0.113.10 443 typ host tcptype passive"));
 }
 
+// ── What the browser is told of a host candidate (HostCandidates.h) ─────────
+
+using mw::ice::CandidateVerdict;
+using mw::ice::CandidateView;
+using mw::ice::LocalCandidate;
+using Transport = LocalCandidate::Transport;
+using Why = CandidateVerdict::Why;
+using Kind = NetClassify::Kind;
+
+LocalCandidate cand(Kind kind, bool ipv4, Transport transport, uint16_t port, bool host = true)
+{
+    LocalCandidate c;
+    c.host = host;
+    c.ipv4 = ipv4;
+    c.kind = kind;
+    c.transport = transport;
+    c.port = port;
+    return c;
+}
+
+// The server's shared port 48597, forwarded by the router in UDP and in TCP
+CandidateView sharedHole(bool peerOfOurs)
+{
+    CandidateView v;
+    v.forceHostPublic = true;
+    v.havePublicIp = true;
+    v.onSharedPorts = true;
+    v.udpHoles = {48597};
+    v.tcpHoles = {48597};
+    v.suppressIpv6 = true;
+    v.emitLan = peerOfOurs;
+    return v;
+}
+
+// A host with seven addresses, as the bench's: the LAN one, a virtual switch's,
+// WSL's, a virtual machine network's (all private IPv4), a mesh VPN's IPv4
+// (100.64/10) and IPv6 (a ULA), and a global IPv6. Each in UDP and in passive
+// TCP: the same verdict for both transports.
+void testEveryTransportIsJudgedAlike()
+{
+    for (const Transport t : {Transport::Udp, Transport::TcpPassive}) {
+        for (const bool ours : {true, false}) {
+            const CandidateView v = sharedHole(ours);
+            // The private IPv4 ones: a copy at the public address; themselves
+            // to a peer of our network only
+            const auto lan = mw::ice::hostCandidateVerdict(cand(Kind::Private, true, t, 48597), v);
+            CHECK_EQ(lan.asIs, ours);
+            CHECK_EQ(lan.publicPort, uint16_t(48597));
+            CHECK(lan.why == Why::Copied);
+            // The mesh VPN's IPv4: never rewritten, to a peer of our network only
+            const auto vpn = mw::ice::hostCandidateVerdict(cand(Kind::Tunnel, true, t, 48597), v);
+            CHECK_EQ(vpn.asIs, ours);
+            CHECK_EQ(vpn.publicPort, uint16_t(0));
+            CHECK(vpn.why == (ours ? Why::TunnelForLan : Why::TunnelWithheld));
+            // Its ULA: withheld from a public peer
+            const auto ula = mw::ice::hostCandidateVerdict(cand(Kind::Private, false, t, 48597), v);
+            CHECK_EQ(ula.asIs, ours);
+            CHECK_EQ(ula.publicPort, uint16_t(0));
+            // A global IPv6: to everyone, as it is
+            const auto v6 = mw::ice::hostCandidateVerdict(cand(Kind::Public, false, t, 48597), v);
+            CHECK(v6.asIs);
+            CHECK_EQ(v6.publicPort, uint16_t(0));
+        }
+    }
+}
+
+// The copies of the host's addresses are one copy: one per transport and port
+void testOneCopyPerTransportAndPort()
+{
+    using mw::ice::publicCopyKey;
+    CHECK_EQ(publicCopyKey(Transport::Udp, 48597), publicCopyKey(Transport::Udp, 48597));
+    CHECK(publicCopyKey(Transport::Udp, 48597) != publicCopyKey(Transport::TcpPassive, 48597));
+    CHECK(publicCopyKey(Transport::Udp, 48597) != publicCopyKey(Transport::Udp, 48596));
+    CHECK(publicCopyKey(Transport::TcpPassive, 48597) !=
+          publicCopyKey(Transport::TcpPassive, mw::ice::kTcp443));
+
+    // Whichever address comes first (a virtual switch's, here), its copy is
+    // the right one: only the port is taken from the candidate, the router
+    // leads that port to the address the host gave it
+    const CandidateView v = sharedHole(false);
+    const auto first =
+        mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::TcpPassive, 48597), v);
+    CHECK_EQ(first.publicPort, uint16_t(48597));
+}
+
+// An active TCP candidate (port 9, never dialled) has no copy at the public
+// address, and goes, like any internal address, to a peer of our network only
+void testTheActiveCandidate()
+{
+    for (const bool ours : {true, false}) {
+        const CandidateView v = sharedHole(ours);
+        const auto lan =
+            mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::TcpActive, 9), v);
+        CHECK_EQ(lan.asIs, ours);
+        CHECK_EQ(lan.publicPort, uint16_t(0));
+        CHECK(lan.why == Why::ActiveForLan);
+        const auto vpn =
+            mw::ice::hostCandidateVerdict(cand(Kind::Tunnel, true, Transport::TcpActive, 9), v);
+        CHECK_EQ(vpn.asIs, ours);
+        CHECK_EQ(vpn.publicPort, uint16_t(0));
+    }
+    // On a stream's own hole too: its port was copied onto the hole before
+    CandidateView own;
+    own.forceHostPublic = true;
+    own.havePublicIp = true;
+    own.ownHole = 46100;
+    own.suppressIpv6 = true;
+    const auto active =
+        mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::TcpActive, 9), own);
+    CHECK(!active.asIs);
+    CHECK_EQ(active.publicPort, uint16_t(0));
+}
+
+void testOwnHoleAndPortsNotForwarded()
+{
+    // A stream's own hole: any port of its socket is copied onto the hole
+    CandidateView own;
+    own.forceHostPublic = true;
+    own.havePublicIp = true;
+    own.ownHole = 46100;
+    for (const Transport t : {Transport::Udp, Transport::TcpPassive}) {
+        const auto c = mw::ice::hostCandidateVerdict(cand(Kind::Private, true, t, 48550), own);
+        CHECK(!c.asIs);
+        CHECK_EQ(c.publicPort, uint16_t(46100));
+    }
+    // A shared port the router does not forward: to a peer of ours only
+    const auto notForwarded = mw::ice::hostCandidateVerdict(
+        cand(Kind::Private, true, Transport::Udp, 48596), sharedHole(false));
+    CHECK(!notForwarded.asIs);
+    CHECK_EQ(notForwarded.publicPort, uint16_t(0));
+    CHECK(notForwarded.why == Why::NotForwarded);
+    CHECK(mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::Udp, 48596),
+                                        sharedHole(true))
+              .asIs);
+    // The router's TCP 443 leads to 48597: a second copy, of the passive TCP one only
+    CandidateView by443 = sharedHole(false);
+    by443.tcp443LeadsTo = 48597;
+    CHECK(mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::TcpPassive, 48597),
+                                        by443)
+              .by443);
+    CHECK(!mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::Udp, 48597), by443)
+               .by443);
+}
+
+void testReflexiveCandidatesGoAsTheyAre()
+{
+    // Never judged: their address is the one the world already sees (a
+    // carrier-grade NAT's 100.64/10 included)
+    for (const bool ours : {true, false})
+        for (const Kind k : {Kind::Public, Kind::Tunnel, Kind::Private}) {
+            const auto r = mw::ice::hostCandidateVerdict(
+                cand(k, true, Transport::Udp, 50000, /*host=*/false), sharedHole(ours));
+            CHECK(r.asIs);
+            CHECK_EQ(r.publicPort, uint16_t(0));
+        }
+}
+
+// Without a hole, a host candidate goes out as it is, whoever the peer: no
+// copy at the public address, nothing held back. What a peer outside our own
+// network is told then is a question apart, not this rule's.
+void testWithoutAHole()
+{
+    CandidateView none;
+    for (const Transport t : {Transport::Udp, Transport::TcpPassive, Transport::TcpActive}) {
+        const auto c = mw::ice::hostCandidateVerdict(cand(Kind::Private, true, t, 48597), none);
+        CHECK(c.asIs);
+        CHECK_EQ(c.publicPort, uint16_t(0));
+    }
+    CHECK(
+        mw::ice::hostCandidateVerdict(cand(Kind::Public, true, Transport::Udp, 48597), none).asIs);
+}
+
 } // namespace
 
 void run_ice_priority_tests()
@@ -121,4 +294,10 @@ void run_ice_priority_tests()
     testWithPriorityLeavesAMalformedLineAlone();
     testPublicPortOfAHostCandidate();
     testTheCopyOnTcp443();
+    testEveryTransportIsJudgedAlike();
+    testOneCopyPerTransportAndPort();
+    testTheActiveCandidate();
+    testOwnHoleAndPortsNotForwarded();
+    testReflexiveCandidatesGoAsTheyAre();
+    testWithoutAHole();
 }
