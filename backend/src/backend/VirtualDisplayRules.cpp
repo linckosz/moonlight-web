@@ -19,6 +19,7 @@
 
 #include "common/Edition.h"
 
+#include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QRegularExpression>
@@ -151,6 +152,29 @@ std::optional<Request> parseRequest(const QByteArray& json, QString* error)
     }
     req.benchSecondary = req.action == Request::Action::Activate && benchSecondary.toBool(false);
     return req;
+}
+
+std::optional<Request> requestForVerb(const QString& verb, QString* error)
+{
+    Request req;
+    if (verb == toString(Request::Action::Install)) {
+        req.action = Request::Action::Install;
+    } else if (verb == toString(Request::Action::Uninstall)) {
+        req.action = Request::Action::Uninstall;
+    } else {
+        if (error) *error = QStringLiteral("unknown verb (install|uninstall)");
+        return std::nullopt;
+    }
+    return req;
+}
+
+QString exchangeDirRefusal(const QString& asked, const QString& own, bool privileged)
+{
+    const QString a = QDir::cleanPath(QDir::fromNativeSeparators(asked));
+    const QString o = QDir::cleanPath(QDir::fromNativeSeparators(own));
+    if (!privileged || a.compare(o, Qt::CaseInsensitive) == 0) return QString();
+    return QStringLiteral("%1 is not this helper's directory (%2)")
+        .arg(QDir::toNativeSeparators(a), QDir::toNativeSeparators(o));
 }
 
 QString gpuOfSettings(const QString& xml)

@@ -76,6 +76,8 @@ constexpr qint64 kMaxFileBytes = 1024 * 1024;
 
 struct Context
 {
+    /// The exchange directory; empty for a request built from the installer's
+    /// verb, which has none: the verdict then goes to stdout and the log only.
     QString dir;
     VirtualDisplay::Request request;
     VirtualDisplay::Result result;
@@ -87,16 +89,18 @@ struct Context
 int finish(Context& ctx)
 {
     const QByteArray json = VirtualDisplay::toJson(ctx.result);
-    // Like every file of the exchange directory: by its name in that
-    // directory, as a regular file (PrivilegedPlace.h, SharedDir).
-    QFile f(ctx.dir + QStringLiteral("/result.json"));
-    QString why;
-    if (mw::place::openShared(f, QIODevice::WriteOnly, &why)) {
-        f.write(json);
-        f.close();
-    } else {
-        Logger::warning(
-            QStringLiteral("[vdisplay-apply] cannot write %1: %2").arg(f.fileName(), why));
+    if (!ctx.dir.isEmpty()) {
+        // Like every file of the exchange directory: by its name in that
+        // directory, as a regular file (PrivilegedPlace.h, SharedDir).
+        QFile f(ctx.dir + QStringLiteral("/result.json"));
+        QString why;
+        if (mw::place::openShared(f, QIODevice::WriteOnly, &why)) {
+            f.write(json);
+            f.close();
+        } else {
+            Logger::warning(
+                QStringLiteral("[vdisplay-apply] cannot write %1: %2").arg(f.fileName(), why));
+        }
     }
     std::fwrite(json.constData(), 1, size_t(json.size()), stdout);
     std::fflush(stdout);
@@ -1718,36 +1722,49 @@ int stageMode(Context& ctx)
 
 } // namespace
 
-int run(const QString& stageArg, const QString& dirArg)
+int run(const QString& stageArg, const QString& dirArg, const std::optional<QString>& verbArg)
 {
     Context ctx;
-    ctx.dir = VirtualDisplay::stagingDir();
     const QString stage = stageArg.isEmpty() ? QStringLiteral("all") : stageArg;
-    if (!dirArg.isEmpty()) {
-        const QString asked = QDir::cleanPath(QDir::fromNativeSeparators(dirArg));
-        // A process with more rights than its user works in the directory it
-        // works out for itself: one it is handed has to be that one.
-        if (mw::place::isPrivileged() &&
-            asked.compare(QDir::cleanPath(ctx.dir), Qt::CaseInsensitive) != 0)
+    QString error;
+    if (verbArg) {
+        // The installer's verb: the request is built here, from a closed
+        // list, and no directory is read or written. The node half alone:
+        // the stages that work in the exchange directory never run for a
+        // verb, since it has none.
+        if (stageArg != QLatin1String("driver"))
+            return failAt(ctx, QStringLiteral("request"),
+                          QStringLiteral("a verb runs the driver stage only"));
+        if (!dirArg.isEmpty())
+            return failAt(ctx, QStringLiteral("request"),
+                          QStringLiteral("a verb takes no directory"));
+        const auto built = VirtualDisplay::requestForVerb(*verbArg, &error);
+        if (!built) return failAt(ctx, QStringLiteral("request"), error);
+        ctx.request = *built;
+    } else {
+        ctx.dir = VirtualDisplay::stagingDir();
+        if (!dirArg.isEmpty()) {
+            // A process with more rights than its user works in the directory
+            // it works out for itself: one it is handed has to be that one.
+            const QString refusal =
+                VirtualDisplay::exchangeDirRefusal(dirArg, ctx.dir, mw::place::isPrivileged());
+            if (!refusal.isEmpty()) return failAt(ctx, QStringLiteral("request"), refusal);
+            ctx.dir = QDir::cleanPath(QDir::fromNativeSeparators(dirArg));
+        }
+
+        QFile req(ctx.dir + QStringLiteral("/request.json"));
+        QString why;
+        if (!mw::place::openShared(req, QIODevice::ReadOnly, &why))
+            return failAt(ctx, QStringLiteral("request"),
+                          QStringLiteral("no request file at %1 (%2)").arg(req.fileName(), why));
+        if (req.size() > kMaxFileBytes)
             return failAt(
                 ctx, QStringLiteral("request"),
-                QStringLiteral("%1 is not this helper's directory (%2)")
-                    .arg(QDir::toNativeSeparators(asked), QDir::toNativeSeparators(ctx.dir)));
-        ctx.dir = asked;
+                QStringLiteral("the request file at %1 is too large").arg(req.fileName()));
+        const auto parsed = VirtualDisplay::parseRequest(req.read(kMaxFileBytes), &error);
+        if (!parsed) return failAt(ctx, QStringLiteral("request"), error);
+        ctx.request = *parsed;
     }
-
-    QFile req(ctx.dir + QStringLiteral("/request.json"));
-    QString why;
-    if (!mw::place::openShared(req, QIODevice::ReadOnly, &why))
-        return failAt(ctx, QStringLiteral("request"),
-                      QStringLiteral("no request file at %1 (%2)").arg(req.fileName(), why));
-    if (req.size() > kMaxFileBytes)
-        return failAt(ctx, QStringLiteral("request"),
-                      QStringLiteral("the request file at %1 is too large").arg(req.fileName()));
-    QString error;
-    const auto parsed = VirtualDisplay::parseRequest(req.read(kMaxFileBytes), &error);
-    if (!parsed) return failAt(ctx, QStringLiteral("request"), error);
-    ctx.request = *parsed;
 
 #ifdef Q_OS_WIN
     using Action = VirtualDisplay::Request::Action;

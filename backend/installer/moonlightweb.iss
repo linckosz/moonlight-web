@@ -1213,12 +1213,13 @@ end;
 // Display": `install` creates the driver's device node from the files under
 // {app}\drivers\vdd, named, disabled, and creates none when one is there;
 // `uninstall` removes it (and the driver package, unless another node still
-// uses it). The request is a file holding the verb and nothing else; the
-// helper re-hashes the driver against the constants compiled into it before
-// SetupAPI sees a byte. Exit 0 or 3010 (reboot wanted) both mean done.
+// uses it). The verb goes on the command line, like the virtual HID helper's
+// below: the helper takes `install` or `uninstall` and nothing else, builds
+// its request from it, and reads no file and no directory for it. It
+// re-hashes the driver against the constants compiled into it before SetupAPI
+// sees a byte. Exit 0 or 3010 (reboot wanted) both mean done.
 procedure RunVirtualDisplayHelper(verb: String);
 var
-  dir: String;
   rc: Integer;
 begin
 #if MyArch == "arm64"
@@ -1227,11 +1228,8 @@ begin
   Log(Format('virtual display helper (%s): skipped, no driver on ARM64', [verb]));
   Exit;
 #endif
-  dir := ExpandConstant('{tmp}\vdisplay');
-  ForceDirectories(dir);
-  if not SaveStringToFile(dir + '\request.json', '{"action":"' + verb + '"}', False) then Exit;
   Exec(ExpandConstant('{app}\{#MyAppExe}'),
-       VDisplayArgs + ' --stage=driver --vdisplay-dir "' + dir + '"',
+       VDisplayArgs + ' --stage=driver --vdisplay-verb ' + verb,
        ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, rc);
   Log(Format('virtual display helper (%s): exit %d', [verb, rc]));
 end;

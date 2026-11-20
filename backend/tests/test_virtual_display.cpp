@@ -111,6 +111,66 @@ void run_virtual_display_tests()
         CHECK(!toJson(a).contains("restore_primary"));
     }
 
+    SECTION("VirtualDisplay — the installer's verb is one of two, and the request holds it alone");
+    {
+        const auto install = requestForVerb(QStringLiteral("install"), &err);
+        CHECK(install.has_value());
+        const auto uninstall = requestForVerb(QStringLiteral("uninstall"), &err);
+        CHECK(uninstall.has_value());
+        if (install && uninstall) {
+            CHECK(install->action == Request::Action::Install);
+            CHECK(uninstall->action == Request::Action::Uninstall);
+            // Nothing beside the verb: the same request a file holding only
+            // the verb is parsed to.
+            for (const Request* r : {&*install, &*uninstall}) {
+                const auto fromFile = parseRequest(
+                    QByteArray("{\"action\":\"") + toString(r->action).toLatin1() + "\"}", &err);
+                CHECK(fromFile.has_value());
+                if (fromFile) CHECK(toJson(*r) == toJson(*fromFile));
+                CHECK(r->restorePrimary.isEmpty());
+                CHECK(r->gpu.isEmpty());
+                CHECK(!r->exclusive && !r->benchHdr && !r->benchSecondary);
+            }
+        }
+    }
+    for (const QString& word :
+         {QStringLiteral("activate"), QStringLiteral("deactivate"), QStringLiteral("others_back"),
+          QStringLiteral("Install"), QStringLiteral("install "), QStringLiteral(""),
+          QStringLiteral("install;uninstall"), QStringLiteral("C:\\Users\\x\\vdisplay")}) {
+        err.clear();
+        CHECK(!requestForVerb(word, &err).has_value());
+        CHECK(!err.isEmpty());
+    }
+
+    SECTION("VirtualDisplay — a privileged helper works in its own exchange directory only");
+    {
+        const QString own = QStringLiteral("C:/Users/u/AppData/Local/MoonlightWeb/vdisplay");
+        // Its own directory, however it is spelled, is taken.
+        CHECK(exchangeDirRefusal(own, own, true).isEmpty());
+        CHECK(exchangeDirRefusal(QStringLiteral("c:/users/U/AppData/Local/MoonlightWeb/vdisplay/"),
+                                 own, true)
+                  .isEmpty());
+#ifdef Q_OS_WIN
+        // Backslashes are a separator on Windows only.
+        CHECK(exchangeDirRefusal(QStringLiteral("c:\\users\\U\\AppData\\Local\\MoonlightWeb\\"
+                                                "vdisplay\\"),
+                                 own, true)
+                  .isEmpty());
+#endif
+        // Any other is refused, and the refusal names both.
+        for (const QString& other :
+             {QStringLiteral("C:\\Users\\u\\AppData\\Local\\Temp\\is-6AC0R.tmp\\vdisplay"),
+              QStringLiteral("C:/Users/u/AppData/Local/MoonlightWeb/vdisplay/.."),
+              QStringLiteral("C:/Users/u/AppData/Local/MoonlightWeb/vdisplay2"),
+              QStringLiteral("D:/vdisplay")}) {
+            const QString why = exchangeDirRefusal(other, own, true);
+            CHECK(!why.isEmpty());
+            CHECK(why.contains(QStringLiteral("is not this helper's directory")));
+        }
+        // A process with no more rights than its user works where it is told.
+        CHECK(exchangeDirRefusal(QStringLiteral("D:/vdisplay"), own, false).isEmpty());
+    }
+
     SECTION("VirtualDisplay — the result file is read only once complete");
     CHECK(!parseResult("").has_value());
     CHECK(!parseResult("{\"st").has_value());
