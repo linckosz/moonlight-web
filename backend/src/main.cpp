@@ -2365,6 +2365,10 @@ int main(int argc, char* argv[])
     QCommandLineOption vdisplayDirOption("vdisplay-dir",
                                          "With --vdisplay-apply: the staging directory", "dir");
     parser.addOption(vdisplayDirOption);
+    QCommandLineOption vdisplayVerbOption(
+        "vdisplay-verb", "With --vdisplay-apply: the installer's verb, in place of a request file.",
+        "install|uninstall");
+    parser.addOption(vdisplayVerbOption);
     // Left behind by a server whose stream turned the other displays off:
     // brings them back if that server dies (VirtualDisplayApply::guard).
     QCommandLineOption vdisplayGuardOption(
@@ -2483,8 +2487,11 @@ int main(int argc, char* argv[])
     // Before the single-instance lock: the helper is a deliberate second
     // process of the same binary, started while the server holds the lock.
     if (parser.isSet(vdisplayApplyOption))
-        return VirtualDisplayApply::run(parser.value(vdisplayStageOption),
-                                        parser.value(vdisplayDirOption));
+        return VirtualDisplayApply::run(
+            parser.value(vdisplayStageOption), parser.value(vdisplayDirOption),
+            parser.isSet(vdisplayVerbOption)
+                ? std::optional<QString>(parser.value(vdisplayVerbOption))
+                : std::nullopt);
     if (parser.isSet(vdisplayGuardOption))
         return VirtualDisplayApply::guard(parser.value(vdisplayGuardOption));
     if (parser.isSet(vhidApplyOption))

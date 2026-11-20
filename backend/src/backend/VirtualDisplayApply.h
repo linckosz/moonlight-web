@@ -19,6 +19,8 @@
 
 #include <QString>
 
+#include <optional>
+
 /**
  * @brief The `--vdisplay-apply` mode: the part of adding a virtual display
  * that needs rights the server does not have.
@@ -27,7 +29,9 @@
  * as one child per stage (the desktop halves in the console session, the
  * node half as SYSTEM), or by a hand-elevated instance. It reads
  * request.json from the staging directory, does exactly what that says,
- * writes result.json and prints the same JSON line on stdout. Never a
+ * writes result.json and prints the same JSON line on stdout. The installer
+ * and its uninstaller name their verb instead (`--vdisplay-verb`): no file is
+ * read or written then, the answer is the exit code and stdout. Never a
  * window, never a message box: the task runs hidden on a desktop that may
  * have no monitor at all.
  *
@@ -55,8 +59,14 @@ namespace VirtualDisplayApply {
 
 /// @param stage "all" | "snapshot" | "driver" | "mode"
 /// @param dir   staging directory; empty = VirtualDisplay::stagingDir()
+/// @param verb  the installer's verb, `install` or `uninstall`: the request is
+///              built from it (VirtualDisplay::requestForVerb), with no file
+///              read or written and no directory taken; any other word, an
+///              empty one included, is refused. None = the request file of
+///              the staging directory.
 /// @return process exit code: 0 ok, 1 failed, 3010 ok but reboot required
-int run(const QString& stage, const QString& dir);
+int run(const QString& stage, const QString& dir,
+        const std::optional<QString>& verb = std::nullopt);
 
 /// The `--vdisplay-guard` mode (Windows): left behind by a server whose
 /// stream turned the other displays off (Request::exclusive), it waits on

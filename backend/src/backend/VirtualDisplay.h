@@ -449,6 +449,19 @@ struct Request
 /// its contents are a choice among five verbs, one display key and a mode,
 /// never free-form input. Returns nullopt with @p error filled on any deviation.
 std::optional<Request> parseRequest(const QByteArray& json, QString* error);
+
+/// The request the installer's verb stands for (`--vdisplay-verb`): the
+/// installer and its uninstaller name one of two verbs, `install` or
+/// `uninstall`, and the helper builds the request from it, with no file and no
+/// directory. Any other word is refused: nullopt with @p error filled.
+std::optional<Request> requestForVerb(const QString& verb, QString* error);
+
+/// Whether a helper may work in the exchange directory @p asked
+/// (`--vdisplay-dir`) when its own is @p own: empty when it may, the reason
+/// otherwise. A process with more rights than its user (@p privileged) works
+/// in its own directory only; any other process in the one it is handed.
+QString exchangeDirRefusal(const QString& asked, const QString& own, bool privileged);
+
 QByteArray toJson(const Request& req);
 QString toString(Request::Action action);
 

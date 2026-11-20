@@ -65,6 +65,7 @@ These are started by the server itself, its service, its scheduled tasks or its 
 | `--has-user-rights` | The installer, run as the person who started it, to learn whether to start the server as that account (Windows). The answer is the exit code. |
 | `--remove-host-data` (with `--with-logs`) | The uninstaller, to delete the crash dumps kept under the install directory, and its logs when the configuration is removed (Windows). |
 | `--vdisplay-apply` (with `--stage`, `--vdisplay-dir`), `--vdisplay-guard` | The server and its elevated task, for the virtual display. |
+| `--vdisplay-apply` (with `--stage`, `--vdisplay-verb`) | The installer and the uninstaller, for the virtual display's driver. |
 | `--vhid-apply` (with `--vhid-dir`) | The installer, for the HID passthrough driver. |
 | `--update-apply` | The elevated task that runs a staged update. |
 | `--open-on-desktop` | The service, to open a native host app on the console user's desktop. |
