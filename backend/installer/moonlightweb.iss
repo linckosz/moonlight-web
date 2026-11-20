@@ -337,6 +337,10 @@ var
   // The server runs as an NSSM service (session 0): stop/start it around the file
   // copy instead of killing and relaunching a tray process.
   ServiceInstalled: Boolean;
+  // This Setup runs as the system's own account (LocalSystem), as the exe reads
+  // it from Setup's token (SetupRunsAsSystem). Such a Setup is nobody's: it
+  // leaves the tasks that run as a person exactly as they are.
+  SetupIsSystem: Boolean;
   // This Setup started no server: nobody with their own rights only started
   // it, and there is no logon task to go through (RunProvisionChecklist).
   ServerNotStarted: Boolean;
@@ -983,6 +987,39 @@ begin
          '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
+// --- A Setup run as the system ----------------------------------------------
+//
+// Setup can run as LocalSystem (a deployment tool, a task made to run as the
+// system). Its own account is then nobody's: a task registered for it would
+// name the machine account, and would replace the one the person who installed
+// has. So such a Setup registers, replaces and removes none of the tasks that
+// run as a person, and says so in its log. The exe tells which account Setup
+// runs as, from Setup's own token (`--setup-account`, common/OwnerAccount.h):
+// 0 a person's, 18 the system's. Any other answer, or none, is taken for the
+// system's: the person's tasks stay as they are, and the log says why.
+function SetupRunsAsSystem(): Boolean;
+var
+  rc: Integer;
+begin
+  Result := True;
+  if not Exec(ExpandConstant('{app}\{#MyAppExe}'), '--setup-account', ExpandConstant('{app}'),
+              SW_HIDE, ewWaitUntilTerminated, rc) then begin
+    Log('WARNING: the account Setup runs as could not be asked: taken for the system''s');
+    Exit;
+  end;
+  if rc = 0 then
+    Result := False
+  else if rc = 18 then
+    Log('setup runs as the system')
+  else
+    Log(Format('WARNING: the account Setup runs as answered %d: taken for the system''s', [rc]));
+end;
+
+procedure LogTaskLeft(const name: String);
+begin
+  Log(Format('setup runs as the system: the "%s" task is left as it is', [name]));
+end;
+
 // The start-at-logon box, made true on the machine: register the task (over
 // any existing one, so an update also refreshes its exe path) or drop it. The
 // same task the app's own switch drives afterwards (tray menu, admin page).
@@ -992,6 +1029,12 @@ procedure ApplyAutostartChoice(want: Boolean);
 var
   rc: Integer;
 begin
+  // A Setup run as the system is nobody's: the task, and the answer recorded
+  // for it, stay as the person who installed left them.
+  if SetupIsSystem then begin
+    LogTaskLeft('{#MyAppName}');
+    Exit;
+  end;
   if want then
     RegisterLogonTask()
   else if LogonTaskExists() then
@@ -1473,8 +1516,9 @@ procedure WaitForOwnerLink();
 var
   rc: Integer;
 begin
-  // Nothing to prefer, or nobody to show it to, or no server to ask.
-  if WizardSilent or ServerNotStarted then Exit;
+  // Nothing to prefer, or nobody to show it to, or no server to ask. A Setup
+  // run as the system has no person of its own to ask for.
+  if WizardSilent or ServerNotStarted or SetupIsSystem then Exit;
   if not (InternetAuthorized or SettingsBoolEnabled('internet_access_enabled')) then Exit;
 
   ProgressPage.SetText(ExpandConstant('{cm:ResolveLinkWait}'), '');
@@ -1498,10 +1542,11 @@ begin
   end;
 end;
 
-// Whether the Finished page may offer the server's page.
+// Whether the Finished page may offer the server's page. Never to a Setup run
+// as the system: the page would open in the system's own browser session.
 function ServerWasStarted(): Boolean;
 begin
-  Result := not ServerNotStarted;
+  Result := (not ServerNotStarted) and (not SetupIsSystem);
 end;
 
 // The server is the user's: it runs with that person's own rights, never with
@@ -1543,6 +1588,21 @@ begin
   if ServiceInstalled then
     Exec(ExpandConstant('{sys}\net.exe'), 'start {#MyAppName}', '', SW_HIDE,
          ewWaitUntilTerminated, rc)
+  // A Setup run as the system starts no server of its own: only the person's
+  // logon task can, as that person, at its least-privileged level. Without
+  // one, nothing starts. Nobody's first steps to follow either.
+  else if SetupIsSystem then begin
+    followFirstRun := False;
+    if LogonTaskExists() then begin
+      Log('setup runs as the system: the server is started by the "{#MyAppName}" task, ' +
+          'as the account it names');
+      Exec('schtasks.exe', '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
+    end else begin
+      ServerNotStarted := True;
+      Log('setup runs as the system: the server is not started, there is no logon task. ' +
+          'It starts at the next logon of the person who installed, or from the Start menu.');
+    end;
+  end
   // On an update this setup is itself running elevated (started by the app
   // through the "MoonlightWeb Update" task), so Exec'ing the exe here would
   // leave the server running as administrator until the next logon. Going
@@ -1707,25 +1767,42 @@ begin
   // First: everything below that runs MoonlightWeb.exe needs its runtime.
   InstallVCRuntime();
 
+  // Which account this Setup runs as, before anything below touches a task
+  // or starts the server: a Setup run as the system leaves every task that
+  // runs as a person as it is (SetupRunsAsSystem).
+  SetupIsSystem := SetupRunsAsSystem();
+
   // Register the elevated on-demand task that lets the (unprivileged) server
   // apply the next update by itself, with no UAC prompt. Refreshed on every
   // install so the action always matches the current staging convention.
 #ifndef DevEdition
-  RegisterUpdateTask();
+  if SetupIsSystem then
+    LogTaskLeft(UpdateTaskName)
+  else
+    RegisterUpdateTask();
 #endif
   // The virtual display helper task: every edition, since a DEV build can
   // stream a headless machine just as well. Refreshed on every install so
   // the action follows {app}. Not on ARM64, which has no driver to apply;
   // the task an earlier installer may have left there goes.
 #if MyArch != "arm64"
-  RegisterVirtualDisplayTask();
+  if SetupIsSystem then
+    LogTaskLeft(VDisplayTaskName)
+  else
+    RegisterVirtualDisplayTask();
 #else
-  Exec('schtasks.exe', '/Delete /TN "' + VDisplayTaskName + '" /F', '', SW_HIDE,
-       ewWaitUntilTerminated, rc);
+  if SetupIsSystem then
+    LogTaskLeft(VDisplayTaskName)
+  else
+    Exec('schtasks.exe', '/Delete /TN "' + VDisplayTaskName + '" /F', '', SW_HIDE,
+         ewWaitUntilTerminated, rc);
 #endif
   // The elevated stream worker task: every edition, refreshed so the action
   // follows {app}.
-  RegisterStreamWorkerTask();
+  if SetupIsSystem then
+    LogTaskLeft(WorkerTaskName)
+  else
+    RegisterStreamWorkerTask();
   // And the launcher service above it, which the worker prefers when it is
   // there. Both are kept: the task is the fallback if the service is stopped.
   RegisterWorkerService();

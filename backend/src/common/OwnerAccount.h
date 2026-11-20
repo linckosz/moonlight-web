@@ -106,4 +106,17 @@ enum class StartAs
 };
 StartAs startAs(bool privileged, const QString& recordedSid, const QString& accountSid);
 
+/// What the installer is told when it asks, as itself, which account it runs
+/// as (`--setup-account`): the system's own, or a person's. The values are
+/// the verb's exit codes. Person comes from one path only, a SID that reads
+/// and is not LocalSystem's: an account that cannot be read is Unknown, which
+/// the installer takes for the system, and so is any code it does not know.
+enum class SetupAccount
+{
+    Person = 0,  ///< a person's account, read from the token
+    Unknown = 2, ///< no SID, or one that does not read
+    System = 18, ///< LocalSystem (S-1-5-18)
+};
+SetupAccount setupAccount(const QString& sid);
+
 } // namespace mw::owneraccount

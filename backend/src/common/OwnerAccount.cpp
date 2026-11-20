@@ -199,4 +199,18 @@ StartAs startAs(bool privileged, const QString& recordedSid, const QString& acco
     return same(recordedSid, accountSid) ? StartAs::Yes : StartAs::OtherAccount;
 }
 
+SetupAccount setupAccount(const QString& sid)
+{
+#ifdef Q_OS_WIN
+    const PSID parsed = sidFromText(sid);
+    if (!parsed) return SetupAccount::Unknown;
+    const bool system = ::IsWellKnownSid(parsed, WinLocalSystemSid);
+    ::LocalFree(parsed);
+    return system ? SetupAccount::System : SetupAccount::Person;
+#else
+    Q_UNUSED(sid);
+    return SetupAccount::Unknown;
+#endif
+}
+
 } // namespace mw::owneraccount
