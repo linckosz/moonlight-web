@@ -79,6 +79,9 @@ class Cdp:
         self.reply_timeout = reply_timeout
         self.ws = page_ws(port)
         self.n = 0
+        # A list while a command needs the events that arrive between replies
+        # (fullscreen: the page's console during the click); None drops them.
+        self.events = None
 
     def call(self, method, **params):
         self.n += 1
@@ -98,6 +101,8 @@ class Cdp:
                 msg = json.loads(self.ws.recv())
             except websocket.WebSocketTimeoutException:
                 continue
+            if self.events is not None and "method" in msg:
+                self.events.append(msg)
             if msg.get("id") == self.n:
                 if "error" in msg:
                     raise RuntimeError(msg["error"])
@@ -365,13 +370,42 @@ def main():
             why = (found or {}).get("why", "the page answered nothing")
             raise SystemExit(f"fullscreen not asked: {why}; page {c.eval(state_js)}")
         pos = found["pos"]
+        # The page says why a refusal happened only in its console
+        # ("[StreamView] requestFullscreen failed: <Chrome's message>"), so the
+        # console is listened to across the click. Runtime.enable replays the
+        # messages logged before it: only those from the click on are kept, by
+        # the page's own clock (the one the timestamps come from: Chrome may run
+        # on another machine, whose clock is not this one's).
+        c.events = []
+        c.call("Runtime.enable")
+        clicked_ms = c.eval("Date.now()")
         c.click(*pos)
-        time.sleep(1.5)
+        c.ws.settimeout(0.25)  # restored by the next call()
+        end = time.time() + 1.5
+        while time.time() < end:
+            try:
+                c.events.append(json.loads(c.ws.recv()))
+            except Exception:
+                continue
+        said = []
+        for msg in c.events:
+            p = msg.get("params") or {}
+            if msg.get("method") != "Runtime.consoleAPICalled" or p.get("timestamp", 0) < clicked_ms:
+                continue
+            text = " ".join(str(a.get("value", a.get("description", ""))) for a in p.get("args", []))
+            # Only the page's own fullscreen lines, on one line each and short:
+            # nothing else of the console (an address, a link) is ever carried.
+            if "requestFullscreen" in text or "exitFullscreen" in text:
+                said.append(" ".join(text.split())[:300])
+        c.events = None
+        c.call("Runtime.disable")
         state = c.eval(state_js)
         if not c.eval("!!document.fullscreenElement"):
             # cssFs true: requestFullscreen was refused and the page fell back
             # to filling itself (StreamViewFullscreen._requestFullscreen).
-            raise SystemExit(f"fullscreen refused after the click at {pos}: page {state}")
+            console = " | ".join(said) if said else "no requestFullscreen line"
+            raise SystemExit(f"fullscreen refused after the click at {pos}: page {state}; "
+                             f"its console said: {console}")
         print("fullscreen at", pos, "->", True, state)
     elif cmd == "exitfs":
         c.key_combo("x", "KeyX", 1 | 2 | 8)
