@@ -79,6 +79,48 @@ describe('BrowserDetect.detectPlatform', () => {
         expect(detectPlatform().isTouchDevice).toBe(true);
     });
 
+    it('classifies Chrome Android tablets sending a Linux desktop UA as tablet', () => {
+        const linuxChrome =
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36';
+        // Client Hints reporting Android non-mobile
+        withNavigator({
+            userAgent: linuxChrome,
+            maxTouchPoints: 10,
+            userAgentData: { platform: 'Android', mobile: false },
+        });
+        expect(detectPlatform()).toEqual({ type: 'tablet', isTouchDevice: true });
+
+        // Client Hints reporting Android mobile
+        withNavigator({
+            userAgent: linuxChrome,
+            maxTouchPoints: 5,
+            userAgentData: { platform: 'Android', mobile: true },
+        });
+        expect(detectPlatform()).toEqual({ type: 'mobile', isTouchDevice: true });
+
+        // Desktop-site spoofed Linux UA + coarse primary pointer with no hover (e.g. Tab S8)
+        const prevMatchMedia = window.matchMedia;
+        window.matchMedia = (q) => ({ matches: q === '(pointer: coarse)' });
+        try {
+            withNavigator({ userAgent: linuxChrome, maxTouchPoints: 10 });
+            expect(detectPlatform()).toEqual({ type: 'tablet', isTouchDevice: true });
+
+            // Real Linux touchscreen laptop has hover + fine primary pointer -> stays desktop
+            window.matchMedia = (q) => ({ matches: q === '(hover: hover)' });
+            expect(detectPlatform().type).toBe('desktop');
+
+            // Chromebook (CrOS) stays desktop even if coarse-only
+            window.matchMedia = (q) => ({ matches: q === '(pointer: coarse)' });
+            withNavigator({
+                userAgent: 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) Chrome/130.0.0.0',
+                maxTouchPoints: 10,
+            });
+            expect(detectPlatform().type).toBe('desktop');
+        } finally {
+            window.matchMedia = prevMatchMedia;
+        }
+    });
+
     it('isIphone reflects the user agent', () => {
         withNavigator({ userAgent: UA.iphone });
         expect(isIphone()).toBe(true);
