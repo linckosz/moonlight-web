@@ -2,7 +2,7 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 /**
  * 15/11/2026: an iPhone back from 35 minutes in the background pressed a card;
@@ -21,6 +21,7 @@ vi.mock('../js/net/tunnelBridge.js', async (importOriginal) => ({
 
 const { BackendClient } = await import('../js/api/BackendClient.js');
 const { noteNotCarried, notCarriedSoFar } = await import('../js/net/tunnelBridge.js');
+const pairing = await import('../js/util/pairingCrypto.js');
 
 /** What BackendClient throws for an answer that is not OK. */
 function answered(status, code) {
@@ -126,6 +127,134 @@ describe('launchAppKeepingLine and a line that fails under it', () => {
         });
         expect(launch).toHaveBeenCalledTimes(1);
     });
+});
+
+// SR, E2: the same, over the real launchApp and the host's launch challenges
+// (LaunchGate). A launch made again asks for a new challenge and signs it; a
+// key the host refused is never asked again, whatever the line did before.
+describe('launchAppKeepingLine and the launch challenges', () => {
+    let posts;
+
+    /** Each route answers from its own queue, in order: an answer, or a
+     *  function that throws what the line or the host did. */
+    const host = (queues) => {
+        posts = [];
+        vi.spyOn(BackendClient, 'post').mockImplementation(async (path, body) => {
+            posts.push({ path, body: structuredClone(body) });
+            const next = queues[path.split('/').pop()]?.shift();
+            if (next === undefined) throw new Error(`Nothing should ask ${path}`);
+            return typeof next === 'function' ? next() : next;
+        });
+    };
+    const sent = (route) => posts.filter((p) => p.path.endsWith(`/${route}`));
+    const routes = () => posts.map((p) => p.path.split('/').pop());
+    const challenge = (nonce) => ({ required: true, nonce, host_id: 'H' });
+    const withoutProof = (body) => {
+        const rest = { ...body };
+        delete rest.launch_proof;
+        return rest;
+    };
+
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        line.ready.mockClear();
+        BackendClient._quitTickets.clear();
+        vi.spyOn(console, 'warn').mockImplementation(() => {});
+        vi.spyOn(pairing, 'signLaunchProof').mockImplementation(
+            async (_label, _hostId, nonce) => `sig:${nonce}`,
+        );
+    });
+    afterEach(() => {
+        vi.restoreAllMocks();
+        BackendClient._quitTickets.clear();
+    });
+
+    it('signs the launch made again over a new challenge: two challenges, two signatures', async () => {
+        host({
+            'launch-proof': [challenge('N1'), challenge('N2')],
+            start: [
+                () => {
+                    throw notCarried('/api/hosts/host/start');
+                },
+                { status: 'streaming' },
+            ],
+        });
+        let askedBeforeTheLine = -1;
+        line.ready.mockImplementationOnce(async () => {
+            askedBeforeTheLine = posts.length;
+        });
+
+        const result = await BackendClient.launchAppKeepingLine('host', 1, { video_codec: 'hevc' });
+
+        expect(result).toEqual({ status: 'streaming' });
+        expect(routes()).toEqual(['launch-proof', 'start', 'launch-proof', 'start']);
+        // The new line is waited for once, between the two launches.
+        expect(line.ready).toHaveBeenCalledTimes(1);
+        expect(askedBeforeTheLine).toBe(2);
+
+        const signs = pairing.signLaunchProof.mock.calls;
+        expect(signs).toHaveLength(2);
+        expect(signs.map((c) => c[2])).toEqual(['N1', 'N2']);
+        // The same launch, for the same host, signed twice over its own challenge.
+        expect(signs[1]).toEqual([pairing.LAUNCH_LABEL, 'H', 'N2', signs[0][3]]);
+
+        const [first, second] = sent('start');
+        expect(first.body.launch_proof).toEqual({ nonce: 'N1', sig: 'sig:N1' });
+        expect(second.body.launch_proof).toEqual({ nonce: 'N2', sig: 'sig:N2' });
+        expect(second.body.launch_proof.nonce).not.toBe(first.body.launch_proof.nonce);
+        expect(second.body.launch_proof.sig).not.toBe(first.body.launch_proof.sig);
+        // Nothing of the first launch is replayed: its challenge and signature
+        // appear in nothing sent after it, and the launch itself is the same.
+        expect(JSON.stringify(posts.slice(2))).not.toMatch(/N1/);
+        expect(withoutProof(second.body)).toEqual(withoutProof(first.body));
+        expect(second.body).toMatchObject({ appId: 1, video_codec: 'hevc' });
+    });
+
+    it.each(['key_refused', 'launch_proof_required'])(
+        'never asks again over a %s the host answered',
+        async (code) => {
+            const refusal = answered(409, code);
+            host({
+                'launch-proof': [challenge('N1')],
+                start: [
+                    () => {
+                        throw refusal;
+                    },
+                ],
+            });
+
+            await expect(BackendClient.launchAppKeepingLine('host', 1)).rejects.toBe(refusal);
+            expect(routes()).toEqual(['launch-proof', 'start']);
+            expect(pairing.signLaunchProof).toHaveBeenCalledTimes(1);
+            expect(line.ready).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(['key_refused', 'launch_proof_required'])(
+        'asks once more over a lost challenge, and not again over the %s that follows',
+        async (code) => {
+            const refusal = answered(409, code);
+            host({
+                'launch-proof': [
+                    () => {
+                        throw notCarried('/api/hosts/host/launch-proof');
+                    },
+                    challenge('N2'),
+                ],
+                start: [
+                    () => {
+                        throw refusal;
+                    },
+                ],
+            });
+
+            await expect(BackendClient.launchAppKeepingLine('host', 1)).rejects.toBe(refusal);
+            expect(routes()).toEqual(['launch-proof', 'launch-proof', 'start']);
+            expect(pairing.signLaunchProof).toHaveBeenCalledTimes(1);
+            expect(pairing.signLaunchProof.mock.calls[0][2]).toBe('N2');
+            expect(line.ready).toHaveBeenCalledTimes(1);
+        },
+    );
 });
 
 describe('notCarriedSoFar', () => {
