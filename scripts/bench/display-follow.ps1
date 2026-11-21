@@ -576,10 +576,11 @@ function Join-Guest {
     if (-not $token -and $link -match '#t=([^&]+)') { $token = $Matches[1] }
     if (-not $token) { throw "the share opened without a link (fields: $(@($act.PSObject.Properties.Name) -join ', '))" }
     # The link names the share's token and the PIN is the share's: neither goes on
-    # a command line. The guest kiosk opens on a blank page, and both reach it by
-    # cdp.py's standard input.
+    # a command line. The guest kiosk opens on the bench's start page (not
+    # about:blank, content/kiosk-start.html), and both reach it by cdp.py's standard input.
     $guestUrl = $AppUrl.TrimEnd('/') + '/p/' + $token
-    $guestArgs = @('-Url', 'about:blank', '-X', $script:guestRect[0], '-Y', $script:guestRect[1],
+    $kioskStart = [System.Uri]::new((Join-Path $PSScriptRoot 'content\kiosk-start.html')).AbsoluteUri
+    $guestArgs = @('-Url', $kioskStart, '-X', $script:guestRect[0], '-Y', $script:guestRect[1],
                    '-W', $script:guestRect[2], '-H', $script:guestRect[3], '-DebugPort', $GuestDebugPort,
                    '-ChromeProfile', '.chrome-guest', '-Windowed')
     if ($ClientAdapterLuid) { $guestArgs += @('-AdapterLuid', $ClientAdapterLuid) }

@@ -16,6 +16,7 @@ import argparse
 import fnmatch
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -36,6 +37,10 @@ import install as installer  # noqa: E402
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 PROFILE = os.path.join(os.path.dirname(HERE), ".chrome-client")
 DEBUG_PORT = 9333
+# Where the client's Chrome starts before it is sent anywhere: a page of the bench's
+# own, not about:blank, whose kiosk refuses fullscreen to every page it shows
+# afterwards (content/kiosk-start.html). An URI: a folder with a space is encoded right.
+KIOSK_START = pathlib.Path(os.path.dirname(HERE), "content", "kiosk-start.html").as_uri()
 
 
 def load_matrix():
@@ -575,7 +580,7 @@ def run_pass(d, chapter, machine, spec, base, seconds, settle, access):
         # (docs/bench-campaign.md §4). The browser is reopened only when the
         # placement changes, and put back where it was for a pass without one.
         if spec.get("clientGpu") != KIOSK["gpu"]:
-            kiosk_start("about:blank", on_gpu=spec.get("clientGpu"))
+            kiosk_start(KIOSK_START, on_gpu=spec.get("clientGpu"))
             d.reconnect()
             access["_current"] = None
         # Reaching a host through the rendezvous is a slower thing than dialling
@@ -754,7 +759,7 @@ def run_chapter(key, matrix, access_by_machine, only=None, one_pass=None, resume
 
     out = []
     first = access_by_machine.get(machines[0], {})
-    kiosk_start(first.get("lan") or "about:blank")
+    kiosk_start(first.get("lan") or KIOSK_START)
     d = drive.Driver(DEBUG_PORT)
 
     for machine in machines:
@@ -875,7 +880,7 @@ def shots_chapter1(access, only=None):
     machines = [m for m in fleet.MACHINES if not only or m in only]
     if not machines:
         return []
-    kiosk_start("about:blank")
+    kiosk_start(KIOSK_START)
     d = drive.Driver(DEBUG_PORT)
     out = []
     for mid in machines:

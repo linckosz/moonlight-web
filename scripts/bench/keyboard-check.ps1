@@ -230,8 +230,11 @@ try {
     # Inside the try: from the moment the kiosk exists, the finally ends it.
     if ($OwnerLink) {
         $r = $ClientRect -split ','
-        # On a blank page first: it goes to the app once the link has opened its session.
-        & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url 'about:blank' `
+        # On the bench's own start page first, not about:blank (whose kiosk refuses
+        # fullscreen afterwards, content/kiosk-start.html): it goes to the app once
+        # the link has opened its session.
+        $kioskStart = [System.Uri]::new((Join-Path $PSScriptRoot 'content\kiosk-start.html')).AbsoluteUri
+        & powershell -NoProfile -File "$PSScriptRoot\kiosk.ps1" -Url $kioskStart `
             -X $r[0] -Y $r[1] -W $r[2] -H $r[3] -DebugPort $DebugPort -ChromeProfile '.chrome-owner' | Out-Host
         # The link goes from the instance's exe to the kiosk through a pipe, and
         # nowhere else; this prints yes/no only (owner_kiosk.py).

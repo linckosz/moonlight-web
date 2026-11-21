@@ -20,6 +20,7 @@ put on a command line or in the environment:
 import glob
 import json
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -34,6 +35,9 @@ import drive  # noqa: E402
 
 CDP = os.path.join(BENCH, "cdp.py")
 KIOSK = os.path.join(BENCH, "kiosk.ps1")
+# Where a guest's kiosk starts: not about:blank, whose kiosk refuses fullscreen to
+# every page it shows afterwards (content/kiosk-start.html).
+KIOSK_START = pathlib.Path(BENCH, "content", "kiosk-start.html").as_uri()
 # A guest link names its token in its path on the LAN, in its fragment through
 # the introduction server.
 LINK_RE = re.compile(r"/p/[A-Za-z0-9_-]{8,}|#t=[A-Za-z0-9_-]{8,}")
@@ -111,9 +115,9 @@ def deactivate(owner, slot):
 
 
 def open_kiosk(port, profile, rect, extra=()):
-    """The guest's Chrome on a blank page, in the throwaway profile @p profile."""
+    """The guest's Chrome on the bench's start page, in the throwaway profile @p profile."""
     x, y, w, h = rect
-    subprocess.run(["powershell", "-NoProfile", "-File", KIOSK, "-Url", "about:blank",
+    subprocess.run(["powershell", "-NoProfile", "-File", KIOSK, "-Url", KIOSK_START,
                     "-X", str(x), "-Y", str(y), "-W", str(w), "-H", str(h),
                     "-DebugPort", str(port), "-ChromeProfile", profile] + list(extra),
                    capture_output=True, text=True)
