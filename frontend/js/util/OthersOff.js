@@ -14,8 +14,11 @@
  * default: on wherever the admin allows it (VDEXDEF, 16/11/2026).
  *
  * The host's card says both (nativeDisplay.others_off): `allowed`, and
- * `inherited` (what a browser that never chose gets). The displays a stream
- * turned off come as dark cards of their own (App.isOff).
+ * `inherited` (what a browser that never chose gets), and `active` (a stream
+ * has them off right now). The displays a stream turned off come as dark
+ * cards of their own (App.isOff); `active` changing changes the host's card,
+ * and a page already open re-asks the app list (HostListView), so the cards
+ * go dark and come back without a reload.
  */
 
 /** The native host's others_off block, or null where there is none. */
