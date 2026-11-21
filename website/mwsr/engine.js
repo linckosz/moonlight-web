@@ -8,6 +8,12 @@
 // cache-busting URLs), bound and fed as the lab binds and feeds them
 // (scripts/bench/scaler-lab/scaler-lab.js): the figures of the page are the
 // README's method, on the visitor's GPU.
+//
+// 'mwsr' is the kernel alone, at its law. 'mwsr-q' is MoonlightWeb's quality
+// mode as its WebGPU renderer draws it: that kernel into a texture of the
+// output's size, then the renderer's sharpening pass (MWSR_SHARPEN_WGSL) at the
+// gain mwsrSharpen gives for the case. Where that gain is 0 (a reduction, 1:1,
+// from x2 on, HDR) the client draws no pass, and neither does this row.
 
 const VS = /* wgsl */ `
 struct VSOut {
@@ -90,6 +96,7 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 /** The upscalers, in the order of the page. `wrap`: runs inside the reversible tone map on HDR. */
 export const KERNELS = [
   { id: 'mwsr', name: 'MWSR', half: true },
+  { id: 'mwsr-q', name: 'MWSR Quality', half: false },
   { id: 'fsr1', name: 'FSR1', half: true, wrap: true },
   { id: 'nis', name: 'NIS', half: false, wrap: true },
   { id: 'sgsr1', name: 'SGSR1', half: true, wrap: true },
@@ -97,7 +104,7 @@ export const KERNELS = [
 ];
 
 export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => {} }) {
-  const { mwsrDownConstants, mwsrRegime, mwsrUniforms, mwsrWgsl } = mwsr;
+  const { mwsrDownConstants, mwsrRegime, mwsrSharpen, mwsrUniforms, mwsrWgsl } = mwsr;
   const { nisCoefTexture, nisConfig } = nis;
   if (!navigator.gpu) throw new Error('nogpu');
   const adapter = await navigator.gpu.requestAdapter(
@@ -142,6 +149,8 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
   const plTex = layout([{ sampler: {} }, { texture: { sampleType: 'float' } }, { buffer: {} }]);
   const plSamp = layout([{ sampler: {} }, { texture: { sampleType: 'float' } }]);
   const plOne = layout([{ texture: { sampleType: 'unfilterable-float' } }]);
+  // the quality mode's pass, bound as the client binds it: texture 0, sampler 1, uniforms 2
+  const plPass = layout([{ texture: { sampleType: 'float' } }, { sampler: {} }, { buffer: {} }]);
   const plNis = layout([
     { sampler: {} },
     { texture: { sampleType: 'float' } },
@@ -225,6 +234,8 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
       return t;
     };
     const inTex = up(inW, inH, input);
+    // the quality mode's pass at this case: its gain, 0 where the client draws none
+    const gain = mwsrSharpen(inW, inH, outW, outH, { mode: 'quality', hdr });
     C = {
       outW,
       outH,
@@ -235,6 +246,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
       bpp,
       inTex,
       reg,
+      gain,
       native: native ? up(outW, outH, native) : null,
       out: Object.fromEntries(KERNELS.map((k) => [k.id, tex(outW, outH, format, RW)])),
       interm: tex(outW, outH, format, RW),
@@ -262,6 +274,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
           ]),
         ),
         mwsr: ubo(mwsrUniforms(inW, inH, outW, outH, { hdr })),
+        sharpen: ubo(new Float32Array([1 / outW, 1 / outH, gain, 0])),
       },
     };
     if (hdr) {
@@ -314,6 +327,15 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
           constants,
         );
         return [{ pipeline: pl, group: bind(pl, [sampler, sv, { buffer: C.u.mwsr }]), view: dv }];
+      }
+      case 'mwsr-q': {
+        // the kernel in its 32-bit text, the one the client runs, then the pass over its picture
+        if (!(C.gain > 0)) return passes('mwsr', false, { c444 }, src, dst);
+        const pl = pipeline('mwsrpass', K.MWSR_SHARPEN_WGSL, f, plPass);
+        return [
+          ...passes('mwsr', false, { c444 }, src, C.interm),
+          { pipeline: pl, group: bind(pl, [C.interm.createView(), sampler, { buffer: C.u.sharpen }]), view: dv },
+        ];
       }
       case 'fsr1': {
         const e = pipeline('easu' + (half ? 'h' : ''), half ? K.EASU_H_WGSL : K.EASU_WGSL, f, 'auto', [
@@ -556,6 +578,8 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     mwsrMode: () => C && C.reg.mode,
     /** The text MWSR runs in this case: 'up', 'down1', 'down9lin'… */
     mwsrKey: () => C && mwsr.mwsrRegimeKey(C.reg),
+    /** The gain of the quality mode's pass in this case: 0, no pass, and 'mwsr-q' draws what 'mwsr' draws. */
+    sharpenGain: () => (C ? C.gain : 0),
     vendor: info.vendor,
     architecture: info.architecture,
     /** What the GPU refused since the last call. */

@@ -1909,3 +1909,33 @@ Bruno adopte J, le noyau des recherches de la nuit du 02/11 : le §3.2 décrit l
 - **HDR sans marge.** `kl` 0 sur une entrée qui passe 1,0, sinon la borne fabrique des hautes lumières.
 - **Un seul noyau.** Sur tous les appareils, sans chemin Y seul (V1, V2) : `mwsr-yuv.js` casse donc bruyamment sur ces deux variantes, leurs résultats restent au journal.
 - **La réduction devient nette (journal J58).** Bruno retient la Mixte à l'œil, 11 images sur 11 : de ×0,5 à 1:1, là où le vote voit du détail, une croix de 4 lectures donne le détail et la borne, plus doux sur un bord franc (`MWSR_DOWN_LAW`). La référence Lanczos-3 du labo favorise les filtres proches d'elle : le LPIPS baisse aux jeux à ×0,67 et au texte à ×0,5, et c'est l'œil qui a tranché. Rien sous ×0,5, rien en HDR.
+
+## 17. Deux modes : Performance et Qualité (21/11/2026)
+
+Décision de Bruno : MWSR a deux modes, et c'est l'appareil qui choisit. La case « Amélioration vidéo » reste seule, sans liste ni réglage. Le journal J59 porte les mesures.
+
+- **Performance.** Le noyau seul. Sa force vaut 1,15 là où la loi vaut 1, jusqu'à ×4/3, et rejoint le 1,35 de la loi à ×2 par la même droite en ln(ratio).
+- **Qualité.** Le noyau à sa loi, puis une passe du renderer sur l'image agrandie : `R = c + gain × (c − moyenne des quatre voisins)`, tenu canal par canal dans la plage du pixel et de ces quatre voisins. Le gain vaut 0,3 jusqu'à ×4/3, 0,15 à ×1,5 et 0 à partir de ×2, en droites de ln(ratio) (`MWSR_MODES`, `mwsrSharpen`). Cinq texels chargés, ni division ni boucle. C'est la formule de la réduction (§16), avec un seul gain et sans marge.
+- **À qui la passe appartient.** Au renderer (`MWSR_SHARPEN_WGSL` en WebGPU, `MWSR_SHARPEN_FS` en WebGL2), pas au shader MIT de `mwsr/` : sans mode, la loi reste celle du noyau seul, que lisent le labo, `mwsr/` et la page de comparaison.
+- **Qui prend quoi** (`gpuTierOf`, `mwsrQualityWanted`, `pickAutoEnhancer`). Qualité sur un ordinateur dont le contexte du stream nomme une carte graphique dédiée : GTX et RTX de NVIDIA, Radeon RX d'AMD, Arc A et B d'Intel, M Pro, M Max et M Ultra d'Apple. Performance sur un GPU intégré, un téléphone, une tablette, et partout où le nom ne dit rien. `localStorage.mw_mwsr_mode` (`quality` ou `performance`) force l'un ou l'autre pour le labo, sans interface.
+- **L'échelle.** `mwsr-q` et `gl-mwsr-q` sont un cran au-dessus de `mwsr` et `gl-mwsr` : une carte qui ne tient pas la passe garde le noyau.
+- **HDR.** Le noyau seul, à sa loi, comme avant. L'étude du 21/11 (J59) n'a trouvé aucune passe qui garde la couleur sur toutes ses images.
+- **À partir de ×2**, les deux modes dessinent la même image.
+- **L'overlay** nomme le mode : « MWSR Quality », « MWSR Performance », et « MWSR » seul en HDR.
+
+Sur neuf images à ×4/3, contre l'image native (LPIPS, plus bas est plus proche ; PSNR et VMAF NEG, plus haut est plus proche) :
+
+| | LPIPS | PSNR | VMAF NEG |
+|---|---|---|---|
+| Qualité (le noyau, puis la passe au gain 0,3) | 0,0320 | 34,42 dB | 85,95 |
+| Performance (le noyau à la force 1,15) | 0,0339 | 34,87 dB | 86,10 |
+| Le noyau seul, à sa loi | 0,0346 | 35,18 dB | 86,45 |
+| FSR1, notre portage | 0,0344 | 34,90 dB | 85,67 |
+
+Les deux modes gagnent donc en LPIPS, la mesure que MWSR suit d'abord, et perdent un peu en PSNR et en VMAF NEG. À ×2, sur sept images, MWSR reste derrière notre portage de FSR1 dans les deux modes (0,0764 contre 0,0701).
+
+La passe coûte, par image à 1440p : 0,047 ms sur une RTX 5060 Ti, 0,160 ms sur un Mac M1 Pro, 1,06 ms sur la Radeon intégrée du Ryzen 9 9900X. Le mode Qualité entier y prend 0,13 à 0,15 ms sur la RTX (FSR1 : 0,27 à 0,28) et 0,49 à 0,54 ms sur le M1 Pro (FSR1 : 0,96 à 0,97). Sur ces trois GPU, la passe WebGPU est à 1/255 au plus de sa formule, et la passe WebGL2 dessine les mêmes octets.
+
+La page de comparaison a une ligne « MWSR Quality » : le noyau puis la passe, comme le client. Là où le client ne dessine pas de passe, elle le dit et redonne la ligne de MWSR.
+
+Reste : l'essai des deux modes par Bruno sur un stream réel, et, après la v0.4.4, une borne de luminance dans le noyau HDR (J59).

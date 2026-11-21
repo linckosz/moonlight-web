@@ -315,8 +315,9 @@ outputs.set(
    A tool page in English, outside PAGES: neither translated nor in the menu,
    in the sitemap through ENGLISH_ONLY. It runs what MoonlightWeb ships: its
    kernels are written here from the product's modules (and the lab's 16-bit
-   ports of FSR1 and SGSR1, so that each runs at its best precision), so a
-   shader changed in the product and not rebuilt here fails --check. */
+   ports of FSR1 and SGSR1, so that each runs at its best precision), with the
+   sharpening pass of MWSR's quality mode, so a shader changed in the product
+   and not rebuilt here fails --check. */
 {
   const REPO = path.dirname(SITE);
   const read = (rel) => fs.readFileSync(path.join(REPO, rel), 'utf8').replace(/\r\n/g, '\n');
@@ -344,6 +345,8 @@ outputs.set(
     RCAS_WGSL: wgsl('RCAS_WGSL'),
     EASU_H_WGSL,
     RCAS_H_WGSL,
+    // the pass the client draws after MWSR in its quality mode (the page's "MWSR Quality" row)
+    MWSR_SHARPEN_WGSL: wgsl('MWSR_SHARPEN_WGSL'),
   };
   const notice = (rel) =>
     read(rel)
@@ -359,7 +362,8 @@ outputs.set(
       ' *\n' +
       ' * The kernels the comparison runs, as MoonlightWeb ships them: the WGSL of\n' +
       ' * frontend/js/stream/renderers/WebGpuRenderer.js (GPL-3.0-or-later), which\n' +
-      ' * ports FSR1, NIS and SGSR1, and the lab\'s 16-bit ports of FSR1 and SGSR1\n' +
+      ' * ports FSR1, NIS and SGSR1 and holds the sharpening pass of MWSR\'s quality\n' +
+      ' * mode, and the lab\'s 16-bit ports of FSR1 and SGSR1\n' +
       ' * (scripts/bench/scaler-lab/fsr1-half.js, sgsr1-half.js). The vendors\'\n' +
       ' * notices of the code they port:\n' +
       ' *\n' +

@@ -81,6 +81,7 @@ const NAMES = {
   native: 'Native',
   input: 'Input',
   mwsr: 'MWSR',
+  'mwsr-q': 'MWSR Quality',
   fsr1: 'FSR1',
   nis: 'NIS',
   sgsr1: 'SGSR1',
@@ -1027,7 +1028,9 @@ function renderTable() {
   // a table begun goes on, a finished one starts again
   if (!measuring) $('measure').textContent = measured ? 'Measure again' : waiting && shows ? 'Continue' : 'Measure';
   // one line under every name where any row may need it: rows of one height, and nothing moves when a measure ends
-  const lines = engine.hasF16 || engine.mwsrMode() === 'down';
+  // the quality mode where the client draws no pass (a reduction, 1:1, from ×2 on, HDR): the kernel alone
+  const noPass = !(engine.sharpenGain() > 0);
+  const lines = engine.hasF16 || engine.mwsrMode() === 'down' || noPass;
   $('table').tBodies[0].innerHTML = KERNELS.map((k) => {
     const r = R[k.id] || {};
     const cells = SCORE_COLUMNS.map((key) => {
@@ -1049,13 +1052,16 @@ function renderTable() {
     }
     // under the name, what its time or its text is
     const reduces = k.id === 'mwsr' && engine.mwsrMode() === 'down';
+    const alone = k.id === 'mwsr-q' && noPass;
     const refused = k.id !== 'mwsr' && r.f16 === 'refused';
-    const said = reduces ? 'reduction' : refused ? 'Half refused' : t ? t.tag : '';
+    const said = reduces ? 'reduction' : alone ? 'kernel alone' : refused ? 'Half refused' : t ? t.tag : '';
     const why = reduces
       ? 'MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light, lightly sharpened from ×0.5 to 1:1'
-      : refused
-        ? `Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only`
-        : t && t.both;
+      : alone
+        ? 'The quality mode adds its sharpening pass above 1:1 and below ×2, on SDR. Here the client draws MWSR alone: this row is MWSR’s again'
+        : refused
+          ? `Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only`
+          : t && t.both;
     const under = lines
       ? `<small class="subline"><span class="widest">Half precision</span><span${said && why ? ` title="${why}"` : ''}>${said}</span></small>`
       : '';

@@ -343,6 +343,14 @@
         then from ×0.5 to 1:1 a light sharpening where the block sees detail, gentler on a strong edge and none on HDR.
         FSR1, NIS and SGSR1 are made to enlarge (NIS from ×1 to ×2): below ×1 they run as they are, as the client runs
         them.</li>
+      <li><strong>MWSR Quality</strong> is the mode MoonlightWeb's client takes by itself on a computer with a dedicated
+        graphics card: MWSR, then a sharpening pass of the client over the scaled picture. The pass moves each pixel
+        away from the mean of its four neighbours by a gain (0.3 up to ×1.33, less above, none from ×2) and holds it
+        within the range of itself and those neighbours. It belongs to the client, not to the MIT shader in
+        <code>mwsr/</code>, and the row's time is the two passes'. Where the client draws no pass (×2, ×1 and below,
+        HDR), the row says <em>kernel alone</em> and is MWSR's row again. On an integrated GPU, a phone or a tablet the
+        client runs MWSR alone, its sharpness raised by 15 % up to ×1.33; the MWSR row here is the kernel at its own
+        law, as in the README.</li>
       <li><strong>The scores</strong> are computed in this tab when you press the button, each one as soon as it is ready. They leave it only at the end of a measure.
         LPIPS (AlexNet, v0.1) says how far a picture looks from the native frame to a human eye: it was made to judge
         upscalers and image restoration, and lower is closer. Its network runs on your GPU, and the page fetches its

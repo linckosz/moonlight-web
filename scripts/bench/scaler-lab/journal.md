@@ -3355,3 +3355,34 @@ SGSR1, à sa meilleure précision, n'est pas derrière MWSR partout sur cette im
 Le tableau de la page : les barres partent d'un même point, la précision se lit sous le nom (« Half precision », « Half ≈ full », « Half refused »), toutes les lignes ont une hauteur, et « port » quitte la ligne de NIS, puisque la section « The ports » le dit. Reste la note de son volet, « MoonlightWeb's per-fragment port ».
 
 **Bruno confirme le f32 partout (04/11), au vu de ces mesures.** La question reste fermée jusqu'à ce que les envois de la page la rouvrent, l'iPhone et le Mac d'abord. Dans le tableau de la page, deux scores qui se lisent de la même façon sont tous les deux en gras, ce que les tableaux fixes faisaient déjà : la comparaison se fait sur la valeur arrondie, et non plus sur la valeur brute.
+
+## 2026-11-21 — J59, deux modes : Performance, et Qualité avec une passe de notre formule
+
+**La décision de Bruno.** MWSR a deux modes, choisis par l'appareil, sans réglage : Qualité sur un ordinateur à carte graphique dédiée (M Pro, M Max et M Ultra d'Apple compris), Performance sur GPU intégré, téléphone et tablette, et là où le nom du GPU ne dit rien. En HDR, le noyau seul, comme avant. L'overlay dit « MWSR Quality », « MWSR Performance », ou « MWSR » en HDR.
+
+**Les deux images.** Performance : le noyau seul, force 1,15 jusqu'à ×4/3, puis la droite de la loi jusqu'à 1,35 à ×2. Qualité : le noyau à sa loi, puis une passe sur l'image agrandie. La première passe essayée reprenait le calcul du RCAS d'AMD ; Bruno a demandé une formule à nous. C'est celle de la réduction (J58), avec un seul gain et sans marge : `R = c + gain × (c − moyenne des quatre voisins)`, tenu canal par canal dans la plage du pixel et de ses quatre voisins. Gain 0,3 jusqu'à ×4/3, 0,15 à ×1,5, 0 à partir de ×2. Cinq texels chargés, ni division ni boucle.
+
+**Les scores, neuf images à ×4/3, contre l'image native (LPIPS, PSNR en dB, VMAF NEG).**
+- le noyau seul, à sa loi : ,0346 ; 35,18 ; 86,45 ;
+- Performance (force 1,15) : ,0339 ; 34,87 ; 86,10 ;
+- Qualité, notre passe au gain 0,3 : ,0320 ; 34,42 ; 85,95 ;
+- la passe au calcul du RCAS d'AMD, écartée : ,0319 ; 34,44 ; 85,88 ;
+- FSR1, notre portage : ,0344 ; 34,90 ; 85,67.
+
+Le gain : 0,25 donne ,0321, 34,55 et 86,06 ; 0,35 donne ,0319, 34,30 et 85,85. Bruno a pris 0,3. Trois raffinements ont été mesurés et laissés, aucun ne faisant mieux : un gain qui suit la force du contour, une borne élargie au 3×3, un gain qui tombe sur un texel isolé.
+
+À ×1,5, sur sept images : le noyau seul ,0531, 34,54, 85,24 ; Performance ,0524, 34,34, 84,92 ; notre portage de FSR1 ,0490, 34,64, 85,10. Notre passe au gain 0,15 n'y a été mesurée que sur trois de ces sept images (,0286 contre ,0306 pour le noyau seul, sur ces trois). À ×2, sept images, les deux modes sont l'image du noyau : ,0764, 34,41, 79,83, derrière notre portage de FSR1 (,0701, 36,06, 81,96).
+
+**La passe du produit, vérifiée sur carte.** Sur une RTX 5060 Ti (huit cas), un Mac M1 Pro (quatre cas) et la Radeon intégrée du 9900X (un cas) : la passe WebGPU est à 1/255 au plus du calcul en JavaScript, sans octet au-delà, et la passe WebGL2 dessine les mêmes octets que la passe WebGPU. Temps GPU de la passe à 1440p : 0,047 à 0,049 ms sur la RTX (0,064 à 0,067 avec le calcul du RCAS), 0,160 ms sur le M1 Pro (0,290), 1,06 ms sur la Radeon intégrée (2,19). À 4K : 0,105 à 0,116 ms sur la RTX, 0,356 à 0,384 ms sur le M1 Pro. Le mode Qualité entier, vers 1440p : 0,13 à 0,15 ms sur la RTX (FSR1 0,27 à 0,28), 0,49 à 0,54 ms sur le M1 Pro (FSR1 0,96 à 0,97).
+
+**HDR : la passe n'entre pas.** Étude sur SwiftShader, neuf images à ×1,33 et ×1,5, le vrai renderer. Sur le chemin `tonemap`, l'image est du SDR et la passe suit sa formule à 1/255. Sur le chemin `linear`, elle ne crée pas de haute lumière (le pic monte de 0,9 % au plus) et laisse les marches sombres à un code près, mais elle éloigne la couleur de la source sur sept images sur neuf (ΔE ITP, +0,04 à +0,27) et sort de la borne 4×4 du contrôle sur 0,09 % des pixels de la rampe. Six variantes essayées en numpy sur les images du noyau, aucune ne tient sur les neuf : la passe sur la luma seule tient sur quatre, en lumière linéaire sur quatre ou cinq. Bruno garde donc le noyau seul en HDR. Le coût en flottants et l'œil sur un écran HDR n'ont pas été mesurés.
+
+Trouvé en passant, dans le noyau HDR d'aujourd'hui et sans la passe : sur un texte lumineux en 4:2:0, de 1080p vers 1440p, le pic de sortie dépasse celui de la source de 11,5 % (1 651 nits pour 1 480 ; 5 724 pour 5 127 sur le texte à 4 000 nits). Rien en 4:4:4, rien de 720p vers 1080p. `hdr_check.py` n'a aucun cas de texte à ×1,33 : à ajouter, avec une borne de luminance à étudier après la v0.4.4 (décision de Bruno).
+
+**Un piège du banc sur la Radeon intégrée.** Une page de mesure qui envoie 300 dessins de FSR1 d'un seul bloc (2,8 s de GPU sur cette carte) perd le GPU : `DXGI_ERROR_DEVICE_HUNG`, le chien de garde de Windows. En morceaux de 50 dessins, rien. Le noyau tient ses 300 dessins d'un bloc (2,5 ms chacun). La page de comparaison coupe déjà ses lots en tranches d'environ 100 ms.
+
+**La page de comparaison.** Une ligne « MWSR Quality » après MWSR : le noyau dans une texture à la taille de sortie, puis la passe du renderer (`MWSR_SHARPEN_WGSL`, écrite dans `kernels.js` par `build-site.mjs`) au gain de `mwsrSharpen`. Où le gain vaut 0 (réduction, 1:1, ×2, HDR), la ligne dessine le noyau seul et le dit sous son nom. La ligne MWSR reste le noyau à sa loi, celui du README ; le mode Performance n'a pas de ligne.
+
+Essayée sur SwiftShader, par le crochet de labo de la page : à ×1,33, sur Junk Shop en 4:2:0 et sur le texte en 4:4:4 avec `CHROMA444`, la ligne est la formule de la passe sur l'image du noyau, à 1/255 au plus ; à ×2, à 1:1, à ×0,75 et sur le texte HDR, ses octets sont ceux de MWSR et la ligne dit « kernel alone ». Une mesure entière lui donne ses scores et son temps, et l'envoi la nomme `mwsr-q`. Sur les cinq images SDR de la page, à ×1,33 en 4:2:0, son LPIPS passe devant celui de MWSR sur trois (0 A.D. ,1561 contre ,1768 ; texte ,0428 contre ,0451 ; iso ,0379 contre ,0421) et derrière sur deux (Junk Shop ,0162 contre ,0153 ; Gears ,0271 contre ,0266) : ces images sont réduites, jamais encodées. Pas essayée sur une vraie carte.
+
+**Pas fait.** L'essai des deux modes par Bruno sur un stream réel. Aucun œil n'a comparé les deux modes sur un téléphone ni sur un GPU intégré.
