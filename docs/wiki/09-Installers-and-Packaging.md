@@ -189,7 +189,7 @@ Every installer comes in two editions, decided by `release.yml`: a `v*` tag buil
 | macOS | `com.moonlightweb.server`, LaunchAgent `com.moonlightweb.agent` | `com.moonlightweb.server.dev`, `com.moonlightweb.agent.dev` — TCC asks for its grants once, separately |
 | Linux | package `moonlightweb`, unit `moonlightweb.service`, `/usr/bin/moonlightweb` | `moonlightweb-dev` for all three; udev/modules-load files renamed (no two owners); firewall opens its TCP ports only |
 | State | `…/MoonlightWeb/MoonlightWeb` (settings.json, QSettings) | `…/MoonlightWeb/MoonlightWebDev` |
-| Ports | 80 / 443 | 48080 / 48443, signaling 48501 — the `--dev` block |
+| Ports | 80 / 443 | 48080 / 48443, signaling 48501 — the `--dev` block; streams 48574-48597 and media pool 46200-46231, beside the release's 48550-48573 |
 | Introduction server | `stream.moonlightweb.top` | `stream.dev.moonlightweb.top` (staging) |
 | Icons (exe, tray, tab, shortcuts) | steel grey | cobalt `#3D6BFF` (`scripts/make-dev-icons.py`); logos and website unchanged |
 | Version shown | `0.3.0` | `0.3.0.gb7c-dev` |
