@@ -371,6 +371,11 @@ target_link_libraries(run_tests PRIVATE
 )
 
 # libopus, for MicUplink: the same submodule and options as the server build.
+# Static, as the server builds it: libjuice, added further down, declares
+# BUILD_SHARED_LIBS ON in the cache, and libopus follows that flag. Without this,
+# a second configure of the same folder builds opus.dll under opus-mic, which is
+# not next to the runner, and run_tests no longer starts.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 if(NOT TARGET opus)
     set(OPUS_BUILD_SHARED_LIBRARY OFF CACHE BOOL "" FORCE)
     set(OPUS_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
