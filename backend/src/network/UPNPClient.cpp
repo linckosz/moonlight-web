@@ -183,16 +183,34 @@ bool UPNPClient::discover(int timeoutMs)
         return false;
     }
 
-    // Status 1 = valid IGD found (WANIPConnection or WANPPPConnection)
-    // Status 2 = valid IGD but not connected to the internet
-    // Status 3 = WANIPC device found but not a valid IGD
-    if (igdStatus == 1) {
-        qInfo() << "[UPNP] Valid IGD found and connected";
-    } else if (igdStatus == 2) {
-        qWarning() << "[UPNP] Valid IGD found but NOT connected to internet";
-        // Still usable — we can add mappings that will work when it connects
+    // What the statuses mean since miniupnpc API 18 (the submodule is API 21):
+    //   UPNP_CONNECTED_IGD    (1) a router that says it is connected, with a
+    //                             public WAN address;
+    //   UPNP_PRIVATEIP_IGD    (2) a router that says it is connected, but its WAN
+    //                             address is a reserved one (CGNAT, or another
+    //                             router in front): its mappings are made but the
+    //                             internet does not reach them;
+    //   UPNP_DISCONNECTED_IGD (3) a router whose WAN connection says it is down,
+    //                             which is also what one set as a bridge or put
+    //                             behind another router can answer;
+    //   UPNP_UNKNOWN_DEVICE   (4) a UPnP device that is not a router at all.
+    // 2 is kept: the mappings cost nothing, and checkDoubleNat() tells the user
+    // what it means. 3 and 4 have no WAN to map on.
+    if (igdStatus == UPNP_CONNECTED_IGD) {
+        qInfo() << "[UPNP] Router found, connected, with a public WAN address";
+    } else if (igdStatus == UPNP_PRIVATEIP_IGD) {
+        qWarning() << "[UPNP] Router found, connected, but its WAN address is a reserved one "
+                      "(CGNAT or another router in front): its mappings will not be reachable "
+                      "from the internet";
+    } else if (igdStatus == UPNP_DISCONNECTED_IGD) {
+        qWarning() << "[UPNP] Router found, but it reports its WAN connection down (bridge "
+                      "mode or another router in front can answer this): not used, status="
+                   << igdStatus;
+        cleanup();
+        return false;
     } else {
-        qWarning() << "[UPNP] IGD found but not usable, status=" << igdStatus;
+        qWarning() << "[UPNP] UPnP device found, but it is not a router: not used, status="
+                   << igdStatus;
         cleanup();
         return false;
     }
