@@ -402,6 +402,11 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
   }
   const readOut = (id) => read(C.out[id]);
   const readScratch = () => read(C.scratch);
+  /** A whole picture of the case, as the panes name it ('native', 'input' or an upscaler): its size and pixels. */
+  async function readPicture(id) {
+    const t = id === 'native' ? C.native : id === 'input' ? C.inTex : C.out[id];
+    return { width: t.width, height: t.height, data: await read(t) };
+  }
 
   // ── timing ──
   const qs = hasTs ? device.createQuerySet({ type: 'timestamp', count: 2 }) : null;
@@ -559,6 +564,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     draw,
     readOut,
     readScratch,
+    readPicture,
     time,
     pane,
     get case() {

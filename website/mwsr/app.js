@@ -746,18 +746,68 @@ function captions() {
   for (const p of panes) {
     if (p.flip) {
       const [on, off] = flipped(p);
-      p.cap.innerHTML = `<b>${nameOf(on)}</b><span class="m">${line(on)}</span><span class="m next">${TAP}: ${nameOf(off)}</span>`;
+      p.cap.innerHTML = `<b>${nameOf(on)}</b>${dl(on)}<span class="m">${line(on)}</span><span class="m next">${TAP}: ${nameOf(off)}</span>`;
       p.side.textContent = nameOf(on);
       p.canvas.setAttribute('aria-label', `${nameOf(on)}: ${TAP}, or press Space, for ${nameOf(off)}`);
       continue;
     }
     if (p.wipe) {
-      p.cap.innerHTML = `<b>${nameOf(p.a)}</b><span class="m">${line(p.a)}</span><b>${nameOf(p.b)}</b><span class="m">${line(p.b)}</span>`;
+      p.cap.innerHTML = `<b>${nameOf(p.a)}</b>${dl(p.a)}<span class="m">${line(p.a)}</span><b>${nameOf(p.b)}</b>${dl(p.b)}<span class="m">${line(p.b)}</span>`;
       continue;
     }
-    p.cap.innerHTML = `<b>${nameOf(p.a)}</b><span class="m">${line(p.a)}</span>`;
+    p.cap.innerHTML = `<b>${nameOf(p.a)}</b>${dl(p.a)}<span class="m">${line(p.a)}</span>`;
   }
 }
+
+// ── a pane's whole picture, as a PNG: the case's pixels as the GPU drew them, made here, sent nowhere ──
+// HDR has no PNG of its own here: an 8-bit file would clip all the light above SDR white
+const DL_HDR_TIP = 'No PNG of an HDR picture: an 8-bit PNG would clip all the light above SDR white.';
+function dl(id) {
+  const what = `${nameOf(id)}, the whole picture, as a PNG`;
+  return C && C.hdr
+    ? `<button type="button" class="dl" aria-disabled="true" data-tip="${DL_HDR_TIP}" aria-label="${what}: ${DL_HDR_TIP}">⤓ PNG</button>`
+    : `<button type="button" class="dl" data-id="${id}" title="Download ${what}" aria-label="Download ${what}">⤓ PNG</button>`;
+}
+function fileName(id) {
+  const scale = SCALES.find(([v]) => v === S.scale)[1];
+  const pic = S.pic === 'file' ? 'picture' : S.pic;
+  return `${pic}-x${scale}-${S.chroma}${S.c444 ? '-c444' : ''}-${id}.png`;
+}
+let saving = false;
+async function savePicture(id) {
+  if (saving || !engine || !C || C.hdr) return;
+  saving = true;
+  // a download is the eye's: a measure under way waits for it, as for a pan
+  eyeFirst();
+  const my = token;
+  try {
+    const { width, height, data } = await engine.readPicture(id);
+    if (my !== token) return;
+    for (let i = 3; i < data.length; i += 4) data[i] = 255;
+    const cv = document.createElement('canvas');
+    cv.width = width;
+    cv.height = height;
+    cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.buffer), width, height), 0, 0);
+    const blob = await new Promise((done) => cv.toBlob(done, 'image/png'));
+    if (!blob || my !== token) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName(id);
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) {
+    status('The PNG could not be made: ' + e.message, 'bad');
+  } finally {
+    saving = false;
+    eyeFirst();
+  }
+}
+$('panes').addEventListener('click', (e) => {
+  const b = e.target.closest('button.dl');
+  if (b && b.dataset.id) savePicture(b.dataset.id);
+});
 // The figures come during a measure: their place is kept from the start (mwsr.css), or they would push the table
 // and its button down, under a visitor's finger, by up to two lines per row of panes on a phone.
 const WIDEST_FIGURES = 'LPIPS 0.0000 · < 0.00 % over · 0.000 ms';

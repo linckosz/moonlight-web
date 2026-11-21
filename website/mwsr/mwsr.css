@@ -107,6 +107,19 @@ small{color:var(--muted); font-size:.78em}
 .pane .side{position:absolute; top:.5rem; font:700 .75rem var(--mono); color:#fff; background:rgba(4,7,11,.75);
   padding:.1rem .45rem; border-radius:6px; pointer-events:none}
 .pane figcaption .next{margin-left:auto}
+/* a pane's whole picture as a PNG: small enough to keep the caption's height; in HDR, greyed, its reason above the caption */
+.pane figcaption{position:relative}
+.pane figcaption .dl{align-self:center; font:600 .68rem/1.2 var(--mono); color:var(--muted); background:none;
+  border:1px solid var(--line); border-radius:999px; padding:0 .45rem; cursor:pointer}
+.pane figcaption .dl:hover, .pane figcaption .dl:focus-visible{color:var(--cyan); border-color:var(--line-glow); outline:none}
+/* greyed by its colours, not by opacity: the bubble is its ::after and would fade with it */
+.pane figcaption .dl[aria-disabled="true"]{color:rgba(150,160,175,.45); border-color:rgba(150,160,175,.25); cursor:help}
+.pane figcaption .dl[aria-disabled="true"]::after{content:attr(data-tip); display:none; position:absolute; z-index:5;
+  left:.5rem; right:.5rem; bottom:calc(100% + 6px); padding:.45rem .6rem; border:1px solid var(--line-glow);
+  border-radius:8px; background:var(--panel-2); color:var(--txt); text-align:left;
+  font:400 .8rem/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; box-shadow:0 6px 24px rgba(0,0,0,.45);
+  pointer-events:none}
+.pane figcaption .dl[aria-disabled="true"]:hover::after, .pane figcaption .dl[aria-disabled="true"]:focus::after{display:block}
 .pane canvas:focus-visible{outline:2px solid var(--cyan); outline-offset:-2px}
 .pane .side.l{left:.5rem}
 .pane .side.r{right:.5rem}
