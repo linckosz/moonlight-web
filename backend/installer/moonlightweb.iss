@@ -397,7 +397,7 @@ function LogonTaskExists(): Boolean;
 var
   rc: Integer;
 begin
-  Result := Exec('schtasks.exe', '/Query /TN "{#MyAppName}"', '', SW_HIDE,
+  Result := Exec(ExpandConstant('{sys}\schtasks.exe'), '/Query /TN "{#MyAppName}"', '', SW_HIDE,
                  ewWaitUntilTerminated, rc) and (rc = 0);
 end;
 
@@ -983,7 +983,7 @@ begin
     '</Task>' + #13#10;
   xmlPath := ExpandConstant('{tmp}\mw-task.xml');
   if SaveStringToFile(xmlPath, xml, False) then
-    Exec('schtasks.exe', '/Create /TN "{#MyAppName}" /XML "' + xmlPath + '" /F',
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Create /TN "{#MyAppName}" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
@@ -1038,7 +1038,7 @@ begin
   if want then
     RegisterLogonTask()
   else if LogonTaskExists() then
-    Exec('schtasks.exe', '/Delete /TN "{#MyAppName}" /F', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "{#MyAppName}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
   // Recorded AFTER the attempt and regardless of whether it succeeded: this is
   // the intent, and the next update needs it precisely in the case where
@@ -1096,7 +1096,7 @@ begin
     '</Task>' + #13#10;
   xmlPath := ExpandConstant('{tmp}\mw-update-task.xml');
   if SaveStringToFile(xmlPath, xml, False) then
-    Exec('schtasks.exe', '/Create /TN "' + UpdateTaskName + '" /XML "' + xmlPath + '" /F',
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Create /TN "' + UpdateTaskName + '" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
@@ -1138,7 +1138,7 @@ begin
     '</Task>' + #13#10;
   xmlPath := ExpandConstant('{tmp}\mw-vdisplay-task.xml');
   if SaveStringToFile(xmlPath, xml, False) then
-    Exec('schtasks.exe', '/Create /TN "' + VDisplayTaskName + '" /XML "' + xmlPath + '" /F',
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Create /TN "' + VDisplayTaskName + '" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
@@ -1181,7 +1181,7 @@ begin
     '</Task>' + #13#10;
   xmlPath := ExpandConstant('{tmp}\mw-worker-task.xml');
   if SaveStringToFile(xmlPath, xml, False) then
-    Exec('schtasks.exe', '/Create /TN "' + WorkerTaskName + '" /XML "' + xmlPath + '" /F',
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Create /TN "' + WorkerTaskName + '" /XML "' + xmlPath + '" /F',
          '', SW_HIDE, ewWaitUntilTerminated, rc);
 end;
 
@@ -1382,7 +1382,7 @@ begin
     Exec(ExpandConstant('{sys}\net.exe'), 'stop {#MyAppName}', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
   // End the logon task first so its supervisor cannot relaunch what we kill.
-  Exec('schtasks.exe', '/End /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
   Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, rc);
   // taskkill returns before Windows has actually torn the process down.
   Sleep(2000);
@@ -1596,7 +1596,7 @@ begin
     if LogonTaskExists() then begin
       Log('setup runs as the system: the server is started by the "{#MyAppName}" task, ' +
           'as the account it names');
-      Exec('schtasks.exe', '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
+      Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
     end else begin
       ServerNotStarted := True;
       Log('setup runs as the system: the server is not started, there is no logon task. ' +
@@ -1609,7 +1609,7 @@ begin
   // through the logon task instead brings it back at its normal, least
   // privileged level.
   else if UpdateMode and LogonTaskExists() then
-    Exec('schtasks.exe', '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc)
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc)
   else begin
     // Start the windowless tray server now so provisioning.json is read and
     // the A-record runs, as the person who started Setup: the server never
@@ -1632,7 +1632,7 @@ begin
     end else if LogonTaskExists() then
       // Nobody with their own rights only started Setup: the logon task
       // starts the server at its least-privileged level.
-      Exec('schtasks.exe', '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc)
+      Exec(ExpandConstant('{sys}\schtasks.exe'), '/Run /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc)
     else begin
       ServerNotStarted := True;
       Log('server not started: Setup was started with an administrator''s rights and ' +
@@ -1794,7 +1794,7 @@ begin
   if SetupIsSystem then
     LogTaskLeft(VDisplayTaskName)
   else
-    Exec('schtasks.exe', '/Delete /TN "' + VDisplayTaskName + '" /F', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "' + VDisplayTaskName + '" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
 #endif
   // The elevated stream worker task: every edition, refreshed so the action
@@ -2005,13 +2005,13 @@ begin
     // Stop the running server first: remove the logon task (so it cannot be
     // relaunched), end any task-started instance, then force-kill the tray
     // process. Otherwise MoonlightWeb.exe keeps running and locks {app} files.
-    Exec('schtasks.exe', '/End /TN "{#MyAppName}"', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "{#MyAppName}"', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
-    Exec('schtasks.exe', '/Delete /TN "{#MyAppName}" /F', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "{#MyAppName}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     // The elevated on-demand update launcher goes too — leaving it behind would
     // keep an elevated task pointing at an exe that is no longer there.
-    Exec('schtasks.exe', '/Delete /TN "' + UpdateTaskName + '" /F', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "' + UpdateTaskName + '" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     DelTree(ExpandConstant('{localappdata}\{#MyAppName}\update'), True, True, True);
     // Where --update-apply verified and ran the last installer (~60 MB).
@@ -2024,11 +2024,11 @@ begin
     // The HID passthrough's driver, unless another edition still uses it.
     RunVirtualHidHelper('uninstall');
     // The virtual display helper task and its staging directory.
-    Exec('schtasks.exe', '/Delete /TN "' + VDisplayTaskName + '" /F', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "' + VDisplayTaskName + '" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     DelTree(ExpandConstant('{localappdata}\{#MyAppName}\vdisplay'), True, True, True);
     // The elevated stream worker task.
-    Exec('schtasks.exe', '/Delete /TN "' + WorkerTaskName + '" /F', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "' + WorkerTaskName + '" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     // The launcher service, while the exe that knows how to remove it is still
     // under {app} — and before the taskkill below, which would take it too.
