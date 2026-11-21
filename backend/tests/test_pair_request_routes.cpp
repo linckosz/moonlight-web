@@ -383,7 +383,8 @@ void testFromElsewhereWhenTheAdministratorAllowsIt()
     Device tv;
     tv.address = QStringLiteral("198.51.100.20");
     const QString code = askAndReveal(s, tv);
-    HttpRequest member = approval(tv, code, s.auth->createSession(kPhone, "Laptop"));
+    HttpRequest member =
+        approval(tv, code, s.auth->createSession(SessionOrigin::Unknown, kPhone, "Laptop"));
     member.isLocal = false;
     CHECK_EQ(error(s.send(member)), QStringLiteral("not_allowed"));
     CHECK_EQ(error(s.send(approval(tv, otherThan(code)))), QStringLiteral("code_mismatch"));
@@ -646,8 +647,9 @@ void testOnlyTheAdministratorAnswers()
     CHECK_EQ(s.guarded.size(), 1);
     // A session, remembered or not, without the administrator's right nor a key
     // of its own to sign with: 403, even on this LAN.
-    const QString member = s.auth->createSession(kPhone, "Laptop");
-    const QString guest = s.auth->createSession(kPhone, "Kiosk", false, /*ephemeral=*/true);
+    const QString member = s.auth->createSession(SessionOrigin::Unknown, kPhone, "Laptop");
+    const QString guest =
+        s.auth->createSession(SessionOrigin::Unknown, kPhone, "Kiosk", false, /*ephemeral=*/true);
     for (const QString& token : {member, guest}) {
         HttpRequest get = fromTv("GET", path);
         get.headers.insert(QStringLiteral("cookie"), "mw_session=" + token);
@@ -683,7 +685,7 @@ void testAPairedSessionOnThisLanAnswersToo()
 
     // A phone of the house, paired by its PIN, its key bound: not the administrator.
     const QByteArray pem = PairingCrypto::generatePrivateKeyPem();
-    const QString member = s.auth->createSession(kPhone, "Kitchen phone");
+    const QString member = s.auth->createSession(SessionOrigin::Unknown, kPhone, "Kitchen phone");
     CHECK(s.auth->bindSessionKey(member, PairingCrypto::publicKeySpkiFromPrivatePem(pem)));
     const auto asMember = [&](HttpRequest req) {
         req.isLocal = false;
@@ -767,7 +769,7 @@ void testAPairedSessionOnThisLanAnswersToo()
     CHECK_EQ(s.send(no).statusCode, 200);
 
     // A session with no key of its own, even on a line ICE put on this LAN: no.
-    const QString keyless = s.auth->createSession(kPhone, "Old laptop");
+    const QString keyless = s.auth->createSession(SessionOrigin::Unknown, kPhone, "Old laptop");
     HttpRequest bare = fromTv("GET", path);
     bare.viaTunnel = true;
     bare.hostTrusted = false;
@@ -784,7 +786,7 @@ struct Member
 
     Member(Server& s, const QString& name, bool ephemeral = false)
     {
-        token = s.auth->createSession(kPhone, name, false, ephemeral);
+        token = s.auth->createSession(SessionOrigin::Unknown, kPhone, name, false, ephemeral);
         CHECK(s.auth->bindSessionKey(token, PairingCrypto::publicKeySpkiFromPrivatePem(pem)));
     }
 
@@ -1065,7 +1067,7 @@ void testTheCodeIsTypedAndSigned()
     // A session with a pairing key signs what it sends; another key's signature
     // or none is refused, and counted.
     const QByteArray pagePem = PairingCrypto::generatePrivateKeyPem();
-    const QString admin = s.auth->createSession(kPhone, "Owner's phone");
+    const QString admin = s.auth->createSession(SessionOrigin::Unknown, kPhone, "Owner's phone");
     CHECK(s.auth->bindSessionKey(admin, PairingCrypto::publicKeySpkiFromPrivatePem(pagePem)));
     CHECK_EQ(error(s.send(approval(d, code, admin))), QStringLiteral("bad_signature"));
     const auto signedBy = [&](const QByteArray& pem, const QString& typed) {
@@ -1124,7 +1126,7 @@ void testALostAnswerIsAskedAgain()
     Server s;
     Device d;
     const QString code = askAndReveal(s, d);
-    const QString admin = s.auth->createSession(kPhone, "Owner's phone");
+    const QString admin = s.auth->createSession(SessionOrigin::Unknown, kPhone, "Owner's phone");
     CHECK_EQ(s.send(approval(d, code, admin)).statusCode, 200);
     const QString first = cookieOf(s.send(d.claim(s.hostId())));
     CHECK(s.auth->validateSession(first));
@@ -1163,7 +1165,7 @@ void testRevokingTheApproverRevokesTheDevice()
     Server s;
     Device d;
     const QString code = askAndReveal(s, d);
-    const QString admin = s.auth->createSession(kPhone, "Owner's phone");
+    const QString admin = s.auth->createSession(SessionOrigin::Unknown, kPhone, "Owner's phone");
     CHECK_EQ(s.send(approval(d, code, admin)).statusCode, 200);
     const QString tv = cookieOf(s.send(d.claim(s.hostId())));
     CHECK(s.auth->validateSession(tv));
@@ -1174,7 +1176,7 @@ void testRevokingTheApproverRevokesTheDevice()
     Device next;
     next.address = QStringLiteral("192.168.1.177");
     const QString nextCode = askAndReveal(s, next);
-    const QString other = s.auth->createSession(kPhone, "Owner's tablet");
+    const QString other = s.auth->createSession(SessionOrigin::Unknown, kPhone, "Owner's tablet");
     CHECK_EQ(s.send(approval(next, nextCode, other)).statusCode, 200);
     s.auth->destroySession(s.auth->sessionIdForToken(other));
     CHECK_EQ(error(s.send(next.claim(s.hostId()))), QStringLiteral("refused"));

@@ -700,11 +700,13 @@ void rememberMeDaysTests()
         auth.destroyAllSessions();
         CHECK_EQ(auth.rememberMeDays(), 365);
 
-        const QString phone = auth.createSession("192.168.1.30", "Phone");
-        const QString kiosk = auth.createSession("198.51.100.30", "Kiosk", false, true);
-        const QString hostHere = auth.createSession("127.0.0.1", "Host here", true);
-        const QString hostLine =
-            auth.createSession("192.168.1.31", "Host line", true, false, /*viaTunnel=*/true);
+        const QString phone = auth.createSession(SessionOrigin::Unknown, "192.168.1.30", "Phone");
+        const QString kiosk =
+            auth.createSession(SessionOrigin::Unknown, "198.51.100.30", "Kiosk", false, true);
+        const QString hostHere =
+            auth.createSession(SessionOrigin::Unknown, "127.0.0.1", "Host here", true);
+        const QString hostLine = auth.createSession(SessionOrigin::Unknown, "192.168.1.31",
+                                                    "Host line", true, false, /*viaTunnel=*/true);
         CHECK_EQ(auth.cookieMaxAgeFor(phone), 365 * day);
         CHECK_EQ(auth.cookieMaxAgeFor(kiosk), 8 * 3600);     // "Remember me" declined
         CHECK_EQ(auth.cookieMaxAgeFor(hostHere), 365 * day); // a host session on a socket
@@ -715,7 +717,8 @@ void rememberMeDaysTests()
         // either, from the moment it administers. The password is set so the
         // flag survives the reload below, as it does on a real server.
         CHECK(auth.setAdminPassword("correct-horse"));
-        const QString admin = auth.createSession("192.168.1.34", "Admin PC");
+        const QString admin =
+            auth.createSession(SessionOrigin::Unknown, "192.168.1.34", "Admin PC");
         CHECK_EQ(auth.cookieMaxAgeFor(admin), 365 * day);
         CHECK(auth.promoteSessionToAdmin(admin));
         CHECK_EQ(auth.cookieMaxAgeFor(admin), 90 * day);
@@ -740,8 +743,8 @@ void rememberMeDaysTests()
         AuthManager auth(&settings);
         CHECK_EQ(auth.rememberMeDays(), 90);
         CHECK_EQ(auth.activeSessionCount(), 0); // the 200-day-old ones are gone
-        const QString recent = auth.createSession("192.168.1.32", "Recent");
-        const QString old = auth.createSession("192.168.1.33", "Old");
+        const QString recent = auth.createSession(SessionOrigin::Unknown, "192.168.1.32", "Recent");
+        const QString old = auth.createSession(SessionOrigin::Unknown, "192.168.1.33", "Old");
         auth.saveSessions();
         ageSessions(91, QStringLiteral("Old"));
         auth.loadSessions();
@@ -811,7 +814,7 @@ void lanHttpSessionTests()
     {
         AuthManager auth(&settings);
         auth.destroyAllSessions();
-        const QString phone = auth.createSession("192.168.1.30", "Phone");
+        const QString phone = auth.createSession(SessionOrigin::Unknown, "192.168.1.30", "Phone");
         const QString approver = auth.sessionIdForToken(phone);
         const QString tv = auth.createLanHttpSession("::ffff:192.168.1.50", tvName, approver);
         CHECK(!tv.isEmpty());
@@ -951,7 +954,7 @@ void lanHttpSessionTests()
     {
         AuthManager auth(&settings);
         auth.destroyAllSessions();
-        const QString phone = auth.createSession("192.168.1.30", "Phone");
+        const QString phone = auth.createSession(SessionOrigin::Unknown, "192.168.1.30", "Phone");
         const QString tv =
             auth.createLanHttpSession("192.168.1.50", tvName, auth.sessionIdForToken(phone));
         auth.destroySession(auth.sessionIdForToken(phone));
@@ -1013,7 +1016,7 @@ void purgeTests()
     // A phone not seen for 91 days, streaming: only an absence of visits,
     // which a running stream never counts as one. Its row goes, its stream
     // runs on (no signal), as before (security review, 20/11, O3).
-    const QString phone = auth.createSession("192.168.1.30", "Phone away");
+    const QString phone = auth.createSession(SessionOrigin::Unknown, "192.168.1.30", "Phone away");
     const QString phoneId = auth.sessionIdForToken(phone);
     auth.setSessionStreaming(phone, true);
     auth.setSessionTimesForTesting(phoneId, now - 120 * day, now - 91 * day);
@@ -1024,7 +1027,8 @@ void purgeTests()
 
     // A device the old TV let in, itself past its sliding bound: the TV's end
     // does not take it along as a revocation would, so no signal for it.
-    const QString let = auth.createSession("192.168.1.31", "Let in by the TV");
+    const QString let =
+        auth.createSession(SessionOrigin::Unknown, "192.168.1.31", "Let in by the TV");
     const QString letId = auth.sessionIdForToken(let);
     CHECK(auth.setSessionApprover(let, tvId));
     auth.setSessionTimesForTesting(letId, now - 100 * day, now - 91 * day);
@@ -1035,7 +1039,7 @@ void purgeTests()
     auth.setSessionTimesForTesting(secondId, now - 91 * day, now - day);
 
     // One that has not run out at all.
-    const QString fresh = auth.createSession("192.168.1.32", "Phone here");
+    const QString fresh = auth.createSession(SessionOrigin::Unknown, "192.168.1.32", "Phone here");
     auth.saveSessions(); // the old TVs on disk with their old times
     CHECK(onDisk(tvId));
 
@@ -1096,7 +1100,7 @@ void purgeTests()
     CHECK(!auth.validateSession(phone));
 
     // A revocation still takes along what the session let in.
-    const QString owner = auth.createSession("192.168.1.33", "Owner");
+    const QString owner = auth.createSession(SessionOrigin::Unknown, "192.168.1.33", "Owner");
     const QString ownersTv =
         auth.createLanHttpSession("192.168.1.53", "Owner's TV", auth.sessionIdForToken(owner));
     const QString ownersTvId = auth.sessionIdForToken(ownersTv);
@@ -1112,11 +1116,11 @@ void purgeTests()
 
     // A listener that calls back in (destroys a session of the same cascade)
     // finds it gone already: one signal per session, none for an unknown id.
-    const QString top = auth.createSession("192.168.1.34", "Top");
+    const QString top = auth.createSession(SessionOrigin::Unknown, "192.168.1.34", "Top");
     const QString topId = auth.sessionIdForToken(top);
     const QString mid = auth.createLanHttpSession("192.168.1.54", "Mid", topId);
     const QString midId = auth.sessionIdForToken(mid);
-    const QString low = auth.createSession("192.168.1.35", "Low");
+    const QString low = auth.createSession(SessionOrigin::Unknown, "192.168.1.35", "Low");
     const QString lowId = auth.sessionIdForToken(low);
     CHECK(auth.setSessionApprover(low, midId));
     const QMetaObject::Connection reentrant = QObject::connect(
@@ -1136,6 +1140,344 @@ void purgeTests()
 
     auth.destroyAllSessions();
     auth.saveSessions();
+}
+
+// ── TVs let in for a short while by a paired device (issue #42, TVNONADM) ───
+
+/// A fresh P-256 public key, as a paired browser binds it.
+QByteArray deviceKey()
+{
+    return PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
+}
+
+void shortTvTests()
+{
+    SECTION("SessionOrigin — set by the server, kept on disk");
+
+    QTemporaryDir tmp;
+    AppSettings settings;
+    settings.m_FilePath = tmp.path() + "/settings.json";
+    writeSettings(settings, {}); // remember_me_days 90; short approval on, 8 h
+    const qint64 day = 24 * 3600;
+    const qint64 hour = 3600;
+
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const QString pin = auth.createSession(SessionOrigin::Pin, "192.168.1.30", "By PIN");
+        const QString qr = auth.createSession(SessionOrigin::Qr, "192.168.1.31", "By QR");
+        auth.createSession(SessionOrigin::Certificate, "192.168.1.32", "By certificate");
+        auth.createSession(SessionOrigin::HomeScreen, "192.168.1.33", "From the home screen");
+        auth.createSession(SessionOrigin::HostKey, "192.168.1.34", "By host key");
+        auth.createSession(SessionOrigin::PinProof, "192.168.1.35", "By PIN proof");
+        // Tv is a TV's alone: asked for an HTTPS session, it is not given.
+        const QString notTv = auth.createSession(SessionOrigin::Tv, "192.168.1.36", "Claims TV");
+        const QString tv = auth.createLanHttpSession("192.168.1.50", "A TV", {});
+        CHECK(auth.sessionForToken(pin).origin == SessionOrigin::Pin);
+        CHECK(auth.sessionForToken(qr).origin == SessionOrigin::Qr);
+        CHECK(auth.sessionForToken(notTv).origin == SessionOrigin::Unknown);
+        CHECK(auth.sessionForToken(tv).origin == SessionOrigin::Tv);
+        auth.saveSessions();
+
+        // Read back as written, each name its own; what the file cannot say
+        // is Unknown, and a TV is a TV whatever it says.
+        editStoredSession("By QR", [](QJsonObject& s) { s.remove("origin"); });
+        editStoredSession("By PIN proof", [](QJsonObject& s) { s["origin"] = "admin"; });
+        editStoredSession("By certificate", [](QJsonObject& s) { s["origin"] = "tv"; });
+        editStoredSession("A TV", [](QJsonObject& s) { s["origin"] = "pin"; });
+        auth.loadSessions();
+        QHash<QString, SessionOrigin> byName;
+        for (const SessionInfo& s : auth.sessions())
+            byName.insert(s.machineName, s.origin);
+        CHECK(byName.value("By PIN") == SessionOrigin::Pin);
+        CHECK(byName.value("By QR") == SessionOrigin::Unknown);
+        CHECK(byName.value("By PIN proof") == SessionOrigin::Unknown);
+        CHECK(byName.value("By certificate") == SessionOrigin::Unknown);
+        CHECK(byName.value("From the home screen") == SessionOrigin::HomeScreen);
+        CHECK(byName.value("By host key") == SessionOrigin::HostKey);
+        CHECK(byName.value("A TV") == SessionOrigin::Tv);
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+
+    SECTION("Short approval — who may let a TV in, and until when");
+
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const QString phone = auth.createSession(SessionOrigin::Pin, "192.168.1.30", "Galaxy S23");
+        CHECK(auth.bindSessionKey(phone, deviceKey()));
+        const QString phoneId = auth.sessionIdForToken(phone);
+        CHECK(auth.mayLetInShortly(phone));
+        CHECK(auth.shortApprovalAllowed());
+        CHECK_EQ(auth.shortApprovalHours(), 8);
+
+        // Each origin of the list, and only those (S1); Unknown alone is
+        // told to pair again.
+        const auto stateFor = [&auth](SessionOrigin origin) {
+            const QString t = auth.createSession(origin, "192.168.1.40", "Origin");
+            auth.bindSessionKey(t, deviceKey());
+            const AuthManager::ShortApproval state = auth.shortApprovalState(t);
+            auth.destroySession(auth.sessionIdForToken(t));
+            return state;
+        };
+        CHECK(stateFor(SessionOrigin::Pin) == AuthManager::ShortApproval::Allowed);
+        CHECK(stateFor(SessionOrigin::PinProof) == AuthManager::ShortApproval::Allowed);
+        CHECK(stateFor(SessionOrigin::Qr) == AuthManager::ShortApproval::Allowed);
+        CHECK(stateFor(SessionOrigin::Unknown) == AuthManager::ShortApproval::ReappairNeeded);
+        CHECK(stateFor(SessionOrigin::Certificate) == AuthManager::ShortApproval::Refused);
+        CHECK(stateFor(SessionOrigin::HomeScreen) == AuthManager::ShortApproval::Refused);
+        CHECK(stateFor(SessionOrigin::HostKey) == AuthManager::ShortApproval::Refused);
+        // Unknown, but not remembered, or without a key: refused, never told
+        // to pair again.
+        const QString guest =
+            auth.createSession(SessionOrigin::Unknown, "192.168.1.41", "Guest", false, true);
+        auth.bindSessionKey(guest, deviceKey());
+        CHECK(auth.shortApprovalState(guest) == AuthManager::ShortApproval::Refused);
+        const QString keyless =
+            auth.createSession(SessionOrigin::Unknown, "192.168.1.42", "No key");
+        CHECK(auth.shortApprovalState(keyless) == AuthManager::ShortApproval::Refused);
+        const QString host =
+            auth.createSession(SessionOrigin::Unknown, "192.168.1.43", "Host", true);
+        auth.bindSessionKey(host, deviceKey());
+        CHECK(auth.shortApprovalState(host) == AuthManager::ShortApproval::Refused);
+
+        // Its TV: bound, for 8 hours, with the device.
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        const QString tv = auth.createShortLanHttpSession("192.168.1.60", "TV", phoneId);
+        CHECK(auth.validateLanHttpSession(tv, "192.168.1.60"));
+        const SessionInfo info = auth.sessionForToken(tv);
+        CHECK(info.approverBound);
+        CHECK(info.endsAt >= now + 8 * hour && info.endsAt <= now + 8 * hour + 5);
+        CHECK_EQ(info.approvedBy, phoneId);
+        CHECK(info.origin == SessionOrigin::Tv);
+        // R8: its cookie never outlives it, never below zero.
+        CHECK(auth.lanHttpCookieMaxAge(tv) > 8 * hour - 5 &&
+              auth.lanHttpCookieMaxAge(tv) <= 8 * hour);
+        // Not for an address that is not private, nor from a TV's session.
+        CHECK(auth.createShortLanHttpSession("8.8.8.8", "TV", phoneId).isEmpty());
+        CHECK(auth.createShortLanHttpSession("192.168.1.61", "TV", auth.sessionIdForToken(tv))
+                  .isEmpty());
+        CHECK(auth.createShortLanHttpSession("192.168.1.61", "TV", "no-such-session").isEmpty());
+
+        // Never past the device's own end: one hour left to it, one hour to the TV.
+        auth.setSessionTimesForTesting(phoneId, now - 100 * day, now - 90 * day + hour);
+        const QString shortly = auth.createShortLanHttpSession("192.168.1.62", "TV", phoneId);
+        const qint64 endsAt = auth.sessionForToken(shortly).endsAt;
+        CHECK(endsAt > now + hour - 10 && endsAt <= now + hour);
+        // None left to it: no TV, no cookie.
+        auth.setSessionTimesForTesting(phoneId, now - 100 * day, now - 91 * day);
+        CHECK(auth.createShortLanHttpSession("192.168.1.63", "TV", phoneId).isEmpty());
+
+        // At most 12 hours, whatever the setting says.
+        auth.setSessionTimesForTesting(phoneId, now, now);
+        CHECK(settings.setLanHttpShortHours(12));
+        CHECK_EQ(auth.shortApprovalHours(), AuthManager::SHORT_TV_MAX_HOURS);
+        CHECK(!settings.setLanHttpShortHours(24));
+        CHECK_EQ(settings.lanHttpShortHours(), 12);
+        CHECK(settings.setLanHttpShortHours(8));
+
+        // The device goes, however: logged out, its TV with it.
+        const QString again = auth.createShortLanHttpSession("192.168.1.64", "TV", phoneId);
+        CHECK(auth.validateLanHttpSession(again, "192.168.1.64"));
+        CHECK(auth.logoutSession(phone));
+        CHECK(!auth.validateLanHttpSession(again, "192.168.1.64"));
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+
+    SECTION("Short approval — wrong codes hold a device back, by session (S3, R4)");
+
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        qint64 clock = 1'800'000'000;
+        auth.setRateClockForTesting([&clock]() { return clock; });
+        const QString phone = auth.createSession(SessionOrigin::Qr, "192.168.1.30", "Phone");
+        CHECK(auth.bindSessionKey(phone, deviceKey()));
+        const QString phoneId = auth.sessionIdForToken(phone);
+        // Two, then a window gone by: counted again from none.
+        CHECK(!auth.countShortApproverWrongCode(phoneId));
+        CHECK(!auth.countShortApproverWrongCode(phoneId));
+        clock += AuthManager::SHORT_APPROVER_WINDOW_SECS + 1;
+        CHECK(!auth.countShortApproverWrongCode(phoneId));
+        CHECK(!auth.countShortApproverWrongCode(phoneId));
+        CHECK(auth.mayLetInShortly(phone));
+        // The third within the window: held back for a while.
+        CHECK(auth.countShortApproverWrongCode(phoneId));
+        CHECK(!auth.mayLetInShortly(phone));
+        // Not by address: another device at the same one may.
+        const QString sameIp = auth.createSession(SessionOrigin::Pin, "192.168.1.30", "Other");
+        CHECK(auth.bindSessionKey(sameIp, deviceKey()));
+        CHECK(auth.mayLetInShortly(sameIp));
+        clock += AuthManager::SHORT_APPROVER_BLOCK_SECS;
+        CHECK(auth.mayLetInShortly(phone));
+        CHECK(!auth.countShortApproverWrongCode(QString()));
+        auth.setRateClockForTesting({});
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+
+    SECTION("Short approval — each TV ends at its own time, by either clock (R6, S5)");
+
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        QStringList revoked;
+        QStringList destroyed;
+        QObject::connect(&auth, &AuthManager::streamingSessionRevoked,
+                         [&revoked](const QString& id) { revoked.append(id); });
+        QObject::connect(&auth, &AuthManager::sessionDestroyed,
+                         [&destroyed](const QString& id) { destroyed.append(id); });
+        const QString a = auth.createSession(SessionOrigin::Pin, "192.168.1.30", "Phone A");
+        const QString b = auth.createSession(SessionOrigin::Qr, "192.168.1.31", "Phone B");
+        const QString tvA =
+            auth.createShortLanHttpSession("192.168.1.60", "TV A", auth.sessionIdForToken(a));
+        const QString tvB =
+            auth.createShortLanHttpSession("192.168.1.61", "TV B", auth.sessionIdForToken(b));
+        const QString tvAId = auth.sessionIdForToken(tvA);
+        const QString tvBId = auth.sessionIdForToken(tvB);
+        auth.setSessionStreaming(tvA, true);
+        auth.setSessionStreaming(tvB, true);
+        // One timer, armed for the nearer end: 8 hours away for both.
+        const int armed = auth.shortTimerRemainingForTesting();
+        CHECK(armed > int(8 * hour - 10) * 1000 && armed <= int(8 * hour) * 1000 + 100);
+
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        // TV A: its steady clock up, while the wall clock, set back, says ten
+        // hours more. It ends all the same (S5), and is refused at once.
+        auth.setShortEndForTesting(tvAId, now + 10 * hour, 0);
+        CHECK(!auth.validateLanHttpSession(tvA, "192.168.1.60"));
+        CHECK(auth.shortTimerRemainingForTesting() <= 100);
+        auth.endShortTvsDueForTesting();
+        CHECK_EQ(revoked, QStringList{tvAId});
+        CHECK(destroyed.contains(tvAId)); // its socket is closed (O2)
+        CHECK(!auth.sessions().isEmpty());
+        // TV B runs on, and the timer is armed for it.
+        CHECK(auth.validateLanHttpSession(tvB, "192.168.1.61"));
+        CHECK(auth.shortTimerRemainingForTesting() > int(7 * hour) * 1000);
+
+        // TV B: the wall clock past its end, the steady one not: it ends too.
+        auth.setShortEndForTesting(tvBId, now - 1, 2 * hour * 1000);
+        CHECK(!auth.validateLanHttpSession(tvB, "192.168.1.61"));
+        auth.endShortTvsDueForTesting();
+        CHECK_EQ(revoked, (QStringList{tvAId, tvBId}));
+        // None left: the timer stops. The phones stay.
+        CHECK_EQ(auth.shortTimerRemainingForTesting(), -1);
+        CHECK(auth.validateSession(a));
+        CHECK(auth.validateSession(b));
+        // Nothing due: nothing said.
+        auth.endShortTvsDueForTesting();
+        CHECK_EQ(revoked.size(), qsizetype(2));
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+
+    SECTION("Short approval — the purge and the setting (R7, S6)");
+
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        QStringList revoked;
+        QObject::connect(&auth, &AuthManager::streamingSessionRevoked,
+                         [&revoked](const QString& id) { revoked.append(id); });
+        // What HttpServer closes a TV's WebSocket on (O2).
+        QStringList destroyed;
+        QObject::connect(&auth, &AuthManager::sessionDestroyed,
+                         [&destroyed](const QString& id) { destroyed.append(id); });
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        // A phone gone past its sliding bound, with a TV it let in for a short
+        // while and one it let in as the administrator once did.
+        const QString phone = auth.createSession(SessionOrigin::Pin, "192.168.1.30", "Phone away");
+        const QString phoneId = auth.sessionIdForToken(phone);
+        const QString shortTv = auth.createShortLanHttpSession("192.168.1.60", "Short TV", phoneId);
+        const QString shortTvId = auth.sessionIdForToken(shortTv);
+        const QString adminTv = auth.createLanHttpSession("192.168.1.61", "Admin TV", phoneId);
+        auth.setSessionStreaming(shortTv, true);
+        auth.setSessionStreaming(phone, true);
+        auth.setSessionTimesForTesting(phoneId, now - 100 * day, now - 91 * day);
+        auth.purgeExpiredSessions();
+        // R7: the short TV goes with it, its stream cut; the other is kept,
+        // without an approver; the phone's own stream runs on (O3).
+        CHECK(!auth.validateLanHttpSession(shortTv, "192.168.1.60"));
+        CHECK_EQ(revoked, QStringList{shortTvId});
+        CHECK(auth.validateLanHttpSession(adminTv, "192.168.1.61"));
+        CHECK(auth.sessionForToken(adminTv).approvedBy.isEmpty());
+        // The short TV's socket is closed; the phone's row, dropped on its
+        // sliding bound, is not announced (O3), nor is the kept TV.
+        CHECK_EQ(destroyed, QStringList{shortTvId});
+
+        // S6: the setting turned off, the next purge ends what is left.
+        const QString other = auth.createSession(SessionOrigin::Qr, "192.168.1.31", "Phone here");
+        const QString leftTv = auth.createShortLanHttpSession("192.168.1.62", "Left TV",
+                                                              auth.sessionIdForToken(other));
+        CHECK(auth.validateLanHttpSession(leftTv, "192.168.1.62"));
+        const QString leftTvId = auth.sessionIdForToken(leftTv);
+        settings.setLanHttpShortApproval(false);
+        CHECK(!auth.shortApprovalAllowed());
+        CHECK(!auth.mayLetInShortly(other));
+        destroyed.clear();
+        auth.purgeExpiredSessions();
+        CHECK(!auth.validateLanHttpSession(leftTv, "192.168.1.62"));
+        CHECK_EQ(destroyed, QStringList{leftTvId});
+        CHECK(auth.validateLanHttpSession(adminTv, "192.168.1.61"));
+        CHECK(auth.validateSession(other));
+        settings.setLanHttpShortApproval(true);
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
+
+    SECTION("Short approval — read back from disk, never longer than it was given");
+
+    {
+        AuthManager auth(&settings);
+        auth.destroyAllSessions();
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        const QString phone = auth.createSession(SessionOrigin::Pin, "192.168.1.30", "Phone");
+        const QString phoneId = auth.sessionIdForToken(phone);
+        const QString kept = auth.createShortLanHttpSession("192.168.1.60", "Kept", phoneId);
+        const QString past = auth.createShortLanHttpSession("192.168.1.61", "Past", phoneId);
+        auth.saveSessions();
+        // One per device: only the last is left of these two; write the
+        // others by hand from it.
+        CHECK(!auth.validateLanHttpSession(kept, "192.168.1.60"));
+        CHECK(auth.validateLanHttpSession(past, "192.168.1.61"));
+        // Its end in the past: dropped. Beyond 12 hours: brought back to 12.
+        // Made in the future: dropped. Its approver gone: dropped.
+        const auto rewrite = [&](const std::function<void(QJsonObject&)>& edit) {
+            editStoredSession("Past", edit);
+            auth.loadSessions();
+            return auth.sessionForToken(past);
+        };
+        SessionInfo s = rewrite([now](QJsonObject& o) { o["ends_at"] = now - 1; });
+        CHECK(s.token.isEmpty());
+        auth.saveSessions(); // nothing of it on disk now
+        const QString later = auth.createShortLanHttpSession("192.168.1.61", "Past", phoneId);
+        auth.saveSessions();
+        editStoredSession("Past", [now](QJsonObject& o) { o["ends_at"] = now + 100 * hour; });
+        auth.loadSessions();
+        const SessionInfo capped = auth.sessionForToken(later);
+        CHECK(capped.approverBound);
+        CHECK(capped.endsAt <= now + 12 * hour + 5);
+        CHECK(auth.lanHttpCookieMaxAge(later) <= 12 * hour + 5);
+        editStoredSession("Past", [now](QJsonObject& o) { o["created_at"] = now + day; });
+        auth.loadSessions();
+        CHECK(!auth.validateLanHttpSession(later, "192.168.1.61"));
+
+        const QString orphan = auth.createShortLanHttpSession("192.168.1.62", "Orphan", phoneId);
+        auth.saveSessions();
+        editStoredSession("Phone", [](QJsonObject& o) { o["token"] = "someone-else"; });
+        auth.loadSessions();
+        CHECK(!auth.validateLanHttpSession(orphan, "192.168.1.62"));
+        // A TV the administrator let in is read back as before.
+        const QString adminTv = auth.createLanHttpSession("192.168.1.63", "Admin TV", {});
+        auth.saveSessions();
+        auth.loadSessions();
+        CHECK(auth.validateLanHttpSession(adminTv, "192.168.1.63"));
+        CHECK(!auth.sessionForToken(adminTv).approverBound);
+        auth.destroyAllSessions();
+        auth.saveSessions();
+    }
 }
 
 } // namespace
@@ -1303,7 +1645,7 @@ void run_auth_manager_tests()
     }
 
     // ── Sessions ───────────────────────────────────────────────────────────
-    QString token = auth.createSession("198.51.100.20", "Laptop");
+    QString token = auth.createSession(SessionOrigin::Unknown, "198.51.100.20", "Laptop");
     CHECK(!token.isEmpty());
     CHECK(auth.validateSession(token));
     CHECK(!auth.validateSession("bogus-token"));
@@ -1362,8 +1704,8 @@ void run_auth_manager_tests()
     CHECK(!AuthManager::isTokenOf(token, QString()));
 
     // Whatever the streaming flag says: it follows one stream only, the latest.
-    const QString tokenA = auth.createSession("198.51.100.23");
-    const QString tokenB = auth.createSession("198.51.100.24");
+    const QString tokenA = auth.createSession(SessionOrigin::Unknown, "198.51.100.23");
+    const QString tokenB = auth.createSession(SessionOrigin::Unknown, "198.51.100.24");
     auth.setSessionStreaming(tokenA, true);
     auth.setSessionStreaming(tokenB, true); // A's flag is cleared, A still streams
     revoked.clear();
@@ -1378,7 +1720,7 @@ void run_auth_manager_tests()
     CHECK(AuthManager::isTokenOf(tokenB, revoked.value(0)));
 
     // Every session at once: every stream, with an empty id.
-    auth.createSession("198.51.100.21");
+    auth.createSession(SessionOrigin::Unknown, "198.51.100.21");
     revoked.clear();
     auth.destroyAllSessions();
     CHECK_EQ(auth.activeSessionCount(), 0);
@@ -1394,9 +1736,9 @@ void run_auth_manager_tests()
     // data and not from the hash layout: rows that move between two refreshes
     // send a click to the wrong device's Revoke button. Ties (same second) fall
     // back to the id, so the list is fully determined either way.
-    const QString tokA = auth.createSession("198.51.100.30", "A");
-    const QString tokB = auth.createSession("198.51.100.31", "B");
-    const QString tokC = auth.createSession("198.51.100.32", "C");
+    const QString tokA = auth.createSession(SessionOrigin::Unknown, "198.51.100.30", "A");
+    const QString tokB = auth.createSession(SessionOrigin::Unknown, "198.51.100.31", "B");
+    const QString tokC = auth.createSession(SessionOrigin::Unknown, "198.51.100.32", "C");
     QList<SessionInfo> ordered = auth.sessions();
     CHECK_EQ(ordered.size(), 3);
     for (int i = 1; i < ordered.size(); ++i) {
@@ -1425,8 +1767,9 @@ void run_auth_manager_tests()
     // takes — and it can only ever reach their own session. Without this, the
     // only way out is the admin page, which someone in an internet café cannot
     // open: they would walk away leaving a 90-day session on a public machine.
-    const QString mine = auth.createSession("198.51.100.40", "Bar PC");
-    const QString theirs = auth.createSession("198.51.100.41", "Someone else");
+    const QString mine = auth.createSession(SessionOrigin::Unknown, "198.51.100.40", "Bar PC");
+    const QString theirs =
+        auth.createSession(SessionOrigin::Unknown, "198.51.100.41", "Someone else");
     CHECK(auth.logoutSession(mine));
     CHECK(!auth.validateSession(mine));
     CHECK(auth.validateSession(theirs));   // the neighbour is untouched
@@ -1440,13 +1783,14 @@ void run_auth_manager_tests()
     // ── "Remember me" declined ─────────────────────────────────────────────
     // Same session object, two differences: it never reaches the disk, and it
     // expires in hours rather than months.
-    const QString temp = auth.createSession("198.51.100.42", "Kiosk", false, /*ephemeral=*/true);
+    const QString temp = auth.createSession(SessionOrigin::Unknown, "198.51.100.42", "Kiosk", false,
+                                            /*ephemeral=*/true);
     CHECK(auth.validateSession(temp));
     CHECK(auth.isEphemeralSession(temp));
     CHECK_EQ(auth.sessions().size(), 1);
     CHECK(auth.sessions().first().ephemeral);
 
-    const QString kept = auth.createSession("198.51.100.43", "Home PC");
+    const QString kept = auth.createSession(SessionOrigin::Unknown, "198.51.100.43", "Home PC");
     CHECK(!auth.isEphemeralSession(kept));
     CHECK(!auth.isEphemeralSession("bogus-token"));
 
@@ -1467,7 +1811,8 @@ void run_auth_manager_tests()
             PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
         const QByteArray keyB =
             PairingCrypto::publicKeySpkiFromPrivatePem(PairingCrypto::generatePrivateKeyPem());
-        const QString session = auth.createSession("198.51.100.50", "Phone");
+        const QString session =
+            auth.createSession(SessionOrigin::Unknown, "198.51.100.50", "Phone");
         CHECK(auth.sessionPairingKey(session).isEmpty()); // like one older than binding
         CHECK(!auth.bindSessionKey(session, QByteArray("not a key")));
         CHECK(auth.bindSessionKey(session, keyA));
@@ -1525,7 +1870,7 @@ void run_auth_manager_tests()
 
     // A session is promoted, not created: the password raises what an
     // already-admitted device may do.
-    QString adminToken = auth.createSession(adminIp, "Living room PC");
+    QString adminToken = auth.createSession(SessionOrigin::Unknown, adminIp, "Living room PC");
     CHECK(!auth.isAdminSession(adminToken));
     CHECK(auth.promoteSessionToAdmin(adminToken));
     CHECK(auth.isAdminSession(adminToken));
@@ -1538,13 +1883,15 @@ void run_auth_manager_tests()
     // relayed connection — and HttpServer asks this question to tell them apart.
     // Only a session created BY a tunnel redemption answers yes.
     {
-        const QString onSocket = auth.createSession("127.0.0.1", "Host machine", /*isHost=*/true);
+        const QString onSocket = auth.createSession(SessionOrigin::Unknown, "127.0.0.1",
+                                                    "Host machine", /*isHost=*/true);
         CHECK(auth.isHostSession(onSocket));
         CHECK(!auth.isTunnelHostSession(onSocket));
 
-        const QString onTunnel = auth.createSession("192.168.1.44", "Host machine (remote link)",
-                                                    /*isHost=*/true, /*ephemeral=*/false,
-                                                    /*viaTunnel=*/true);
+        const QString onTunnel =
+            auth.createSession(SessionOrigin::Unknown, "192.168.1.44", "Host machine (remote link)",
+                               /*isHost=*/true, /*ephemeral=*/false,
+                               /*viaTunnel=*/true);
         CHECK(auth.isHostSession(onTunnel));
         CHECK(auth.isTunnelHostSession(onTunnel));
 
@@ -1611,7 +1958,8 @@ void run_auth_manager_tests()
     // Closing the internet side takes back every unlock: which ones it bought
     // is not recorded, and a LAN unlock is honoured from anywhere afterwards.
     {
-        const QString office = auth.createSession("203.0.113.9", "Office laptop");
+        const QString office =
+            auth.createSession(SessionOrigin::Unknown, "203.0.113.9", "Office laptop");
         CHECK(auth.promoteSessionToAdmin(office));
         auth.setRemoteAdminInternet(false);
         CHECK(!auth.isAdminSession(office));
@@ -1622,7 +1970,7 @@ void run_auth_manager_tests()
     // Removing the password shuts the door again and takes back every unlock;
     // remote administration itself stays on, waiting for a new password.
     {
-        const QString laptop = auth.createSession("192.168.5.40", "Laptop");
+        const QString laptop = auth.createSession(SessionOrigin::Unknown, "192.168.5.40", "Laptop");
         CHECK(auth.promoteSessionToAdmin(laptop));
         auth.clearAdminPassword();
         CHECK(!auth.adminPasswordSet());
@@ -1733,7 +2081,8 @@ void run_auth_manager_tests()
 
     // ── Home-screen handoff ────────────────────────────────────────────────
     {
-        const QString owner = auth.createSession("198.51.100.40", "iOS Safari");
+        const QString owner =
+            auth.createSession(SessionOrigin::Unknown, "198.51.100.40", "iOS Safari");
         const QString key = auth.homeScreenKey(owner);
         CHECK(key.startsWith(AuthManager::HOME_SCREEN_KEY_PREFIX));
         CHECK(key.size() > 40);
@@ -1763,12 +2112,13 @@ void run_auth_manager_tests()
 
         // Past its lifetime it is refused — and spent by the refusal.
         const qint64 now = QDateTime::currentSecsSinceEpoch();
-        const QString late = auth.homeScreenKey(auth.createSession("198.51.100.41", "Old"),
-                                                now - AuthManager::HOME_SCREEN_KEY_TTL_SECS - 5);
+        const QString late =
+            auth.homeScreenKey(auth.createSession(SessionOrigin::Unknown, "198.51.100.41", "Old"),
+                               now - AuthManager::HOME_SCREEN_KEY_TTL_SECS - 5);
         CHECK(!auth.redeemHomeScreenKey(late, now).has_value());
 
         // Past half its life the manifest gets a fresh one.
-        const QString aging = auth.createSession("198.51.100.42", "Aging");
+        const QString aging = auth.createSession(SessionOrigin::Unknown, "198.51.100.42", "Aging");
         const QString first =
             auth.homeScreenKey(aging, now - AuthManager::HOME_SCREEN_KEY_TTL_SECS);
         CHECK(auth.homeScreenKey(aging, now) != first);
@@ -1778,7 +2128,8 @@ void run_auth_manager_tests()
         CHECK(!auth.redeemHomeScreenKey(second).has_value());
 
         // A visitor who declined "remember me" hands out no second session.
-        const QString temporary = auth.createSession("198.51.100.43", "Kiosk", false, true);
+        const QString temporary =
+            auth.createSession(SessionOrigin::Unknown, "198.51.100.43", "Kiosk", false, true);
         CHECK(auth.homeScreenKey(temporary).isEmpty());
         CHECK(auth.homeScreenKey(QString()).isEmpty());
     }
@@ -1825,4 +2176,5 @@ void run_auth_manager_tests()
     rememberMeDaysTests();
     lanHttpSessionTests();
     purgeTests();
+    shortTvTests();
 }

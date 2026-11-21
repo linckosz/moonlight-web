@@ -1204,6 +1204,45 @@ QStringList AppSettings::lanHttpClients() const
     return out;
 }
 
+bool AppSettings::lanHttpShortApproval() const
+{
+    return readAll().value("lan_http_short_approval").toBool(true);
+}
+
+void AppSettings::setLanHttpShortApproval(bool enabled)
+{
+    QJsonObject obj = readAll();
+    obj["lan_http_short_approval"] = enabled;
+    writeAll(obj);
+}
+
+namespace {
+
+bool isShortHoursChoice(double hours)
+{
+    for (const int choice : AppSettings::kLanHttpShortHoursChoices)
+        if (hours == choice) return true;
+    return false;
+}
+
+} // namespace
+
+int AppSettings::lanHttpShortHours() const
+{
+    const QJsonValue v = readAll().value("lan_http_short_hours");
+    if (v.isDouble() && isShortHoursChoice(v.toDouble())) return v.toInt();
+    return kLanHttpShortHoursDefault;
+}
+
+bool AppSettings::setLanHttpShortHours(int hours)
+{
+    if (!isShortHoursChoice(hours)) return false;
+    QJsonObject obj = readAll();
+    obj["lan_http_short_hours"] = hours;
+    writeAll(obj);
+    return true;
+}
+
 QString AppSettings::keyboardLayoutFidelity() const
 {
     const QJsonValue value = readAll().value("keyboard_layout_fidelity");

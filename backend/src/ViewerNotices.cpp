@@ -165,6 +165,18 @@ static QString noticeName(const StreamViewer& v)
     return v.lanHttp ? ViewerNotices::whoOf(v) : ViewerNotices::nameOf(v);
 }
 
+void ViewerNotices::queueLetIn(const QString& id, const QString& text)
+{
+    Pending p;
+    p.id = QStringLiteral("let-in|") + id;
+    p.letIn = text;
+    m_Queue.append(p);
+    while (m_Queue.size() > kMaxPeople) {
+        m_Queue.removeFirst();
+        ++m_Dropped;
+    }
+}
+
 // A person already waiting in the queue keeps their one place in it: whatever
 // they did since, the notice will tell it from their first time to their last.
 void ViewerNotices::queueArrival(const StreamViewer& v, const QDateTime& now)
@@ -263,6 +275,7 @@ bool ViewerNotices::nextWasHeld() const
 // because by then "started" or "stopped" would be news of an unknown moment.
 QString ViewerNotices::text(const Pending& p, const QDateTime& now) const
 {
+    if (!p.letIn.isEmpty()) return p.letIn;
     if (p.to.isValid()) {
         if (p.arrivalTold && !p.held) return tr("%1 stopped streaming this screen").arg(p.name);
         return tr("%1 streamed this screen from %2 to %3")

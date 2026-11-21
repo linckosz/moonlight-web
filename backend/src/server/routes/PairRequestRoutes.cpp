@@ -19,6 +19,7 @@
 
 #include "server/AppSettings.h"
 #include "server/AuthManager.h"
+#include "server/HouseLink.h"
 #include "server/PhonePairing.h"
 #include "server/RequestGuard.h"
 #include "server/RestRouter.h"
@@ -65,68 +66,29 @@ struct Context
     PhonePairing book;
 };
 
-/// Whether @p address sits on one of this host's own links: inside the prefix of
-/// one of its interfaces, an IPv6 address inside that interface's /64. An IPv4
-/// address counts only when private or link-local; a public IPv6 address counts
-/// on a line only, where ICE found it.
+// Where the house is (server/HouseLink.h, moved there unchanged so that the TV
+// let in for a short while answers from the very same place).
+using HouseLink::passedAlong;
+using HouseLink::underALocalName;
+
+HouseLink::Links linksOf(const Context& c)
+{
+    return {c.deps.localSubnets, c.deps.thisMachine};
+}
+
 bool onThisHostsLink(const Context& c, const QString& address, bool line)
 {
-    QHostAddress a(AuthManager::cleanClientAddress(address));
-    bool mapped = false;
-    const quint32 v4 = a.toIPv4Address(&mapped);
-    if (mapped) a = QHostAddress(v4);
-    if (a.isNull() || a.isLoopback() || !c.deps.localSubnets) return false;
-    const bool v6 = a.protocol() == QAbstractSocket::IPv6Protocol;
-    if (!v6 && !AuthManager::isLanAddress(a.toString())) return false;
-    if (v6 && !line && !a.isLinkLocal() && !a.isUniqueLocalUnicast()) return false;
-    const QList<QPair<QHostAddress, int>> subnets = c.deps.localSubnets();
-    for (const auto& net : subnets) {
-        if (net.first.protocol() != a.protocol()) continue;
-        if (a.isInSubnet(net.first, v6 ? 64 : net.second)) return true;
-    }
-    return false;
+    return HouseLink::onThisHostsLink(linksOf(c), address, line);
 }
 
-/// Whether a socket request names this host by a local name
-/// (RequestGuard::isLocalHostName): a Host header is required.
-bool underALocalName(const HttpRequest& req)
-{
-    const QString host = req.headers.value(QStringLiteral("host"));
-    return !host.isEmpty() && RequestGuard::isLocalHostName(host);
-}
-
-/// Whether a proxy passed this socket request along, on this machine or another
-/// (RequestGuard::forwardedByProxy, the list every caller shares). Its sender
-/// may stand anywhere.
-bool passedAlong(const HttpRequest& req)
-{
-    return RequestGuard::forwardedByProxy(req.headers);
-}
-
-/// Whether @p address is this machine's own: the loopback, or what
-/// PairRequestDeps::thisMachine says.
 bool isThisMachine(const Context& c, const QString& address)
 {
-    const QString clean = AuthManager::cleanClientAddress(address);
-    if (QHostAddress(clean).isLoopback()) return true;
-    return c.deps.thisMachine && c.deps.thisMachine(clean);
+    return HouseLink::isThisMachine(linksOf(c), address);
 }
 
-/// The house, where a device asks from and a paired session answers from: this
-/// LAN as AuthManager::fromThisLan judges it, on one of this host's links. On a
-/// line, where ICE found the caller. On a socket, under a local name too
-/// (underALocalName): the public domain is how this host is reached from
-/// anywhere, and only a line says where such a caller stands. A socket request
-/// a proxy passed along (passedAlong) is not the house, and neither is a peer
-/// that is this machine (isThisMachine), on a socket or on a line. Anywhere
-/// else, a private address included, is the internet.
 bool fromThisHousesLink(const Context& c, const HttpRequest& req)
 {
-    if (isThisMachine(c, req.clientAddress)) return false;
-    if (req.viaTunnel) return onThisHostsLink(c, req.clientAddress, true);
-    if (!underALocalName(req) || passedAlong(req)) return false;
-    return AuthManager::fromThisLan(req) &&
-           onThisHostsLink(c, AuthManager::attemptAddress(req.clientAddress, req.headers), false);
+    return HouseLink::fromThisHousesLink(linksOf(c), req);
 }
 
 /// Who may answer a device's request, and with what reach.
@@ -384,7 +346,8 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
         // new session replaces that one, so a request still opens one session.
         if (!p.sessionId.isEmpty()) c->auth.destroySession(p.sessionId);
 
-        const QString token = c->auth.createSession(req.clientAddress, p.machineName);
+        const QString token =
+            c->auth.createSession(SessionOrigin::Qr, req.clientAddress, p.machineName);
         if (!c->auth.bindSessionKey(token, p.deviceKey)) {
             c->auth.destroySession(c->auth.sessionIdForToken(token));
             return HttpResponse::error(500, "Internal error");

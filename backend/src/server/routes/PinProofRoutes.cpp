@@ -269,8 +269,8 @@ void registerPinProofRoutes(RestRouter& router, AuthManager& authManager,
 
         const bool remember = wantsRemember(body);
         const QString machineName = body.value(QStringLiteral("machine_name")).toString();
-        const QString token =
-            authManager.createSession(req.clientAddress, machineName, false, !remember);
+        const QString token = authManager.createSession(SessionOrigin::PinProof, req.clientAddress,
+                                                        machineName, false, !remember);
         geoIpService.lookupIp(req.clientAddress,
                               [&authManager, token](const QString& city, const QString& country) {
                                   authManager.setSessionGeo(token, city, country);

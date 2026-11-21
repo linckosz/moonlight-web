@@ -453,7 +453,12 @@
         "approved": "Onaylandı. Cihaz kendi başına oturum açar.",
         "wrongCode": "Bu, bu cihazın gösterdiği kod değil.",
         "gone": "Bu isteğin süresi doldu veya zaten yanıtlandı. Cihaz kendiliğinden yeni bir kod gösterir: onu yeniden tarayın.",
-        "notAllowed": "Bu cihazı yalnızca yönetici içeri alabilir."
+        "notAllowed": "Bu cihazı yalnızca yönetici içeri alabilir.",
+        "notAllowedShort": "Bu tarayıcı bu cihazı içeri alamaz. Bu sunucunun yöneticisine başvurun.",
+        "reappairNeeded": "Bu cihaz 0.4.4 sürümünden önce eşleştirildi. Bir TV'yi içeri alabilmek için bu cihazı yeniden eşleştirin.",
+        "shortHint": "Yönetici değilsiniz: bu TV {{hours}} saatliğine, {{until}} saatine kadar içeri alınacak.",
+        "shortHintEarlier": "Bu cihaz oturumu kapatırsa TV daha erken çıkarılır. Yönetici bilgilendirilir ve bu erişimi iptal edebilir.",
+        "shortApprove": "{{hours}} saatliğine içeri al"
     },
     "settings": {
         "title": "Yayın Ayarları",
@@ -671,6 +676,13 @@
         "pairRequestInternetDesc": "MoonlightWeb TV uygulaması için: yerel ağınızın dışındaki bir TV, QR kodla eklenmeyi isteyebilir. Yalnızca burada gösterdiği kodu yazdığınızda içeri girer.",
         "pairRequestInternetOn": "İnternetten QR kod istekleri etkinleştirildi",
         "pairRequestInternetOff": "İnternetten QR kod istekleri devre dışı bırakıldı",
+        "shortTv": "Eşleştirilmiş cihazların bir TV'yi kısa süreliğine içeri almasına izin ver",
+        "shortTvDesc": "Yalnızca adresine HTTP üzerinden zaten izin verilmiş bir TV. Süre bitince veya onu içeri alan cihazın oturumuyla birlikte daha erken çıkar. Bu seçenek kapatılınca bu şekilde içeri alınan TV'ler çıkarılır.",
+        "shortTvHours": "Süre",
+        "shortTvHoursValue": "{{hours}} saat",
+        "shortTvHoursDesc": "En fazla 12 saat. Hiçbir zaman onu içeri alan cihazın oturumundan uzun sürmez.",
+        "shortTvSaved": "Ayar kaydedildi",
+        "shortTvLine": "{{name}} tarafından {{until}} saatine kadar içeri alındı · {{name}} cihazının oturumuyla birlikte çıkar",
         "activeSessions": "Etkin Oturumlar",
         "activeSessionsDesc": "Şu anda bu sunucuya bağlı uzak kullanıcılar.",
         "connectionHistory": "Bağlantı geçmişini indir",

@@ -453,7 +453,12 @@
         "approved": "Approved. The device signs in by itself.",
         "wrongCode": "This is not the code this device shows.",
         "gone": "This request has expired or was already answered. The device shows a new code by itself: scan it again.",
-        "notAllowed": "Only the administrator can let this device in."
+        "notAllowed": "Only the administrator can let this device in.",
+        "notAllowedShort": "This browser cannot let this device in. Ask this server's administrator.",
+        "reappairNeeded": "This device was paired before version 0.4.4. Pair it again to be able to let a TV in.",
+        "shortHint": "You are not the administrator: this TV will be let in for {{hours}} h, until {{until}}.",
+        "shortHintEarlier": "It will be signed out earlier if this device signs out. The administrator is told and can revoke it.",
+        "shortApprove": "Let in for {{hours}} h"
     },
     "settings": {
         "title": "Streaming Settings",
@@ -671,6 +676,13 @@
         "pairRequestInternetDesc": "For the MoonlightWeb TV app: a TV outside your local network can ask to be added with a QR code. It gets in only when you type here the code it shows.",
         "pairRequestInternetOn": "QR code requests from the Internet enabled",
         "pairRequestInternetOff": "QR code requests from the Internet disabled",
+        "shortTv": "Let paired devices let a TV in for a short while",
+        "shortTvDesc": "Only a TV whose address is already allowed over HTTP. It leaves at the end of the time, or earlier with the session of the device that let it in. Turning this off makes the TVs let in this way leave.",
+        "shortTvHours": "Duration",
+        "shortTvHoursValue": "{{hours}} h",
+        "shortTvHoursDesc": "12 h at most. Never longer than the session of the device that lets it in.",
+        "shortTvSaved": "Setting saved",
+        "shortTvLine": "Let in by {{name}}, until {{until}} · leaves with {{name}}'s session",
         "activeSessions": "Active Sessions",
         "activeSessionsDesc": "Remote users currently connected to this server.",
         "connectionHistory": "Download connection history",

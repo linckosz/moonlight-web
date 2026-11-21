@@ -80,6 +80,15 @@ AuthManager::AuthManager(AppSettings* settings, QObject* parent)
     m_purgeTimer->setInterval(60 * 60 * 1000); // hourly
     connect(m_purgeTimer, &QTimer::timeout, this, &AuthManager::purgeExpiredSessions);
     m_purgeTimer->start();
+
+    // The end of the next TV let in for a short while (armShortTimer). A
+    // QTimer runs on the steady clock: setting the wall clock back does not
+    // put the end off.
+    m_shortTimer = new QTimer(this);
+    m_shortTimer->setSingleShot(true);
+    m_shortTimer->setTimerType(Qt::PreciseTimer);
+    connect(m_shortTimer, &QTimer::timeout, this, &AuthManager::endShortTvsDue);
+    armShortTimer();
 }
 
 QString AuthManager::hashToken(const QString& token)
@@ -196,6 +205,9 @@ void AuthManager::loadSessions()
         info.viaTunnel = obj["via_tunnel"].toBool(false);
         info.isAdmin = keepAdminFlags && obj["is_admin"].toBool(false);
         info.approvedBy = obj["approved_by"].toString();
+        // What the file says it came from, if it says: a session kept before
+        // the origin was recorded reads Unknown, and stays so (never guessed).
+        info.origin = sessionOriginFromName(obj["origin"].toString());
         // A TV on plain HTTP: bound to an address it must still be able to
         // claim, and never anything more than a TV whatever the file says.
         info.lanHttp = obj["lan_http"].toBool(false);
@@ -204,10 +216,26 @@ void AuthManager::loadSessions()
             info.isHost = false;
             info.isAdmin = false;
             info.viaTunnel = false;
+            info.origin = SessionOrigin::Tv;
             if (info.boundIp.isEmpty() || !LanHttp::isPrivateIpv4(info.boundIp)) {
                 skipped++;
                 continue;
             }
+            // Let in for a short while: never past its end, never past 12 hours
+            // from now whatever the file says, and gone if the clock went back
+            // before the moment it was let in (only the wall clock survives a
+            // restart; within one run, the steady one cuts it, armShortTimer).
+            info.approverBound = obj["approver_bound"].toBool(false);
+            if (info.approverBound) {
+                info.endsAt = static_cast<qint64>(obj["ends_at"].toDouble());
+                if (now < info.createdAt || info.endsAt <= now || info.approvedBy.isEmpty()) {
+                    skipped++;
+                    continue;
+                }
+                info.endsAt = std::min(info.endsAt, now + SHORT_TV_MAX_SECS);
+            }
+        } else if (info.origin == SessionOrigin::Tv) {
+            info.origin = SessionOrigin::Unknown; // only a TV is one
         }
 
         // MW-BIND-v1 pairing key. A stored key that no longer parses is dropped
@@ -230,9 +258,28 @@ void AuthManager::loadSessions()
         loaded++;
     }
 
+    // A TV let in for a short while goes with the session that let it in: one
+    // not loaded (ended meanwhile) takes it along. Such a TV approves no one,
+    // so one pass is enough.
+    QStringList orphans;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (it->approverBound && !m_sessions.contains(it->approvedBy)) orphans.append(it.key());
+    }
+    for (const QString& id : std::as_const(orphans)) {
+        m_sessions.remove(id);
+        loaded--;
+        skipped++;
+    }
+
     Logger::info(
         QString("[AuthManager] Loaded %1 sessions (%2 expired, dropped)").arg(loaded).arg(skipped));
     keepDevicesOfEndedApprovers();
+    m_shortDeadlines.clear();
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (it->approverBound)
+            m_shortDeadlines.insert(it.key(), QDeadlineTimer((it->endsAt - now) * 1000));
+    }
+    armShortTimer();
 }
 
 int AuthManager::keepDevicesOfEndedApprovers(const QSet<QString>& ending)
@@ -241,10 +288,12 @@ int AuthManager::keepDevicesOfEndedApprovers(const QSet<QString>& ending)
     // administrator's to revoke from now on, like a device paired with the PIN.
     // Only a revocation (destroySession) takes the devices along. A session in
     // @p ending is about to go and counts as gone already; one that goes
-    // itself is not counted as kept.
+    // itself is not counted as kept. A TV let in for a short while is never
+    // kept this way: it goes with its approver (approverBound), and the caller
+    // ends it.
     int kept = 0;
     for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
-        if (it->approvedBy.isEmpty()) continue;
+        if (it->approvedBy.isEmpty() || it->approverBound) continue;
         if (m_sessions.contains(it->approvedBy) && !ending.contains(it->approvedBy)) continue;
         it->approvedBy.clear();
         if (!ending.contains(it.key())) kept++;
@@ -751,8 +800,9 @@ AuthManager::ValidateResult AuthManager::validateAdminPassword(const QString& ip
     return result;
 }
 
-QString AuthManager::createSession(const QString& ip, const QString& machineName, bool isHost,
-                                   bool ephemeral, bool viaTunnel)
+QString AuthManager::createSession(SessionOrigin origin, const QString& ip,
+                                   const QString& machineName, bool isHost, bool ephemeral,
+                                   bool viaTunnel)
 {
     // Clean IPv4-mapped IPv6 addresses before storing
     QString cleanIp = cleanClientAddress(ip);
@@ -771,6 +821,8 @@ QString AuthManager::createSession(const QString& ip, const QString& machineName
     info.isHost = isHost;
     info.ephemeral = ephemeral;
     info.viaTunnel = viaTunnel;
+    // Never a TV's: those are made by createLanHttpSession alone.
+    info.origin = origin == SessionOrigin::Tv ? SessionOrigin::Unknown : origin;
 
     m_sessions[id] = info;
     if (!ephemeral) saveSessions();
@@ -812,32 +864,93 @@ QString AuthManager::createLanHttpSession(const QString& peer, const QString& ma
 {
     const QString bound = LanHttp::normalizePeer(peer);
     if (bound.isEmpty() || !LanHttp::isPrivateIpv4(bound)) return {};
-    const QString token = newToken(bound);
-    const QString id = hashToken(token);
-
-    SessionInfo info;
-    info.token = id;
-    info.ip = bound;
-    info.boundIp = bound;
-    info.lanHttp = true;
-    info.machineName = machineName.isEmpty() ? QStringLiteral("Unknown") : machineName;
-    info.createdAt = QDateTime::currentSecsSinceEpoch();
-    info.lastSeen = info.createdAt;
-    info.approvedBy = approverId;
-
-    m_sessions[id] = info;
-    saveSessions();
-    emit sessionCreated(bound, info.machineName);
-    emit sessionsChanged();
+    QList<EndedSession> replaced;
+    const QString token = insertLanHttpSession(bound, machineName, approverId, 0, replaced);
     // The address and the dates; never the name (the tray says who) nor the
     // token.
-    const QString due = QDateTime::fromSecsSinceEpoch(info.createdAt + m_rememberTtlSecs)
-                            .toString(QStringLiteral("yyyy-MM-dd"));
+    const QString due =
+        QDateTime::fromSecsSinceEpoch(QDateTime::currentSecsSinceEpoch() + m_rememberTtlSecs)
+            .toString(QStringLiteral("yyyy-MM-dd"));
     Logger::info(QString("[LanHttp] %1 approved for plain HTTP: %2 days sliding, re-approval due "
                          "by %3")
                      .arg(bound)
                      .arg(LAN_HTTP_SESSION_TTL_SECS / (24 * 3600))
                      .arg(due));
+    return token;
+}
+
+QString AuthManager::createShortLanHttpSession(const QString& peer, const QString& machineName,
+                                               const QString& approverId)
+{
+    // Turned off between the device's answer and the TV's poll: no such TV,
+    // not even until its next request (S6).
+    if (!shortApprovalAllowed()) return {};
+    const QString bound = LanHttp::normalizePeer(peer);
+    if (bound.isEmpty() || !LanHttp::isPrivateIpv4(bound)) return {};
+    const auto approver = m_sessions.constFind(approverId);
+    if (approver == m_sessions.cend() || approver->lanHttp) return {};
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const qint64 endsAt = shortApprovalEndsAt(approverId);
+    if (endsAt <= now) return {}; // nothing left to give: no session, no cookie (R8)
+    const QString approverIp = approver->ip;
+    const QString approverName = approver->machineName;
+
+    QList<EndedSession> replaced;
+    const QString token = insertLanHttpSession(bound, machineName, approverId, endsAt, replaced);
+
+    // What the tray tells the owner (S7, Q3: for information): the TV's
+    // address, the device's name, the end. The log keeps addresses only.
+    m_shortNotices.append({++m_shortNoticeSeq, now, bound, approverName, endsAt});
+    while (m_shortNotices.size() > MAX_SHORT_NOTICES)
+        m_shortNotices.removeFirst();
+    Logger::info(QString("[LanHttp] %1 let in for %2 h by a paired device at %3, until %4")
+                     .arg(bound)
+                     .arg(QString::number((endsAt - now) / 3600.0, 'f', 1))
+                     .arg(approverIp)
+                     .arg(QDateTime::fromSecsSinceEpoch(endsAt).toString(QStringLiteral("HH:mm"))));
+    return token;
+}
+
+QString AuthManager::insertLanHttpSession(const QString& bound, const QString& machineName,
+                                          const QString& approverId, qint64 endsAt,
+                                          QList<EndedSession>& replaced)
+{
+    // One short approval per device and per address (G): a newer one, or an
+    // approval by the administrator at that address, replaces it.
+    QStringList older;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (!it->approverBound) continue;
+        if (it->boundIp == bound || (endsAt > 0 && it->approvedBy == approverId))
+            older.append(it.key());
+    }
+    for (const QString& id : std::as_const(older))
+        takeSession(id, replaced);
+
+    const QString token = newToken(bound);
+    const QString id = hashToken(token);
+    SessionInfo info;
+    info.token = id;
+    info.ip = bound;
+    info.boundIp = bound;
+    info.lanHttp = true;
+    info.origin = SessionOrigin::Tv;
+    info.machineName = machineName.isEmpty() ? QStringLiteral("Unknown") : machineName;
+    info.createdAt = QDateTime::currentSecsSinceEpoch();
+    info.lastSeen = info.createdAt;
+    info.approvedBy = approverId;
+    if (endsAt > 0) {
+        info.approverBound = true;
+        info.endsAt = endsAt;
+        m_shortDeadlines.insert(id, QDeadlineTimer((endsAt - info.createdAt) * 1000));
+    }
+    m_sessions[id] = info;
+
+    // On disk, the old ones gone and the new one in, before either is told.
+    saveSessions();
+    announceEnded(replaced, EndReason::Replaced);
+    armShortTimer();
+    emit sessionCreated(bound, info.machineName);
+    emit sessionsChanged();
     return token;
 }
 
@@ -854,7 +967,12 @@ QString AuthManager::lanHttpSessionId(const QString& token, const QString& peer)
     const QString id = hashToken(token);
     auto it = m_sessions.constFind(id);
     if (it == m_sessions.cend() || !it->lanHttp || it->boundIp != bound) return {};
-    if (expired(*it, QDateTime::currentSecsSinceEpoch())) return {};
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    if (expired(*it, now)) return {};
+    // Let in for a short while: over at its end by either clock, and gone
+    // with its approver, whatever has not yet taken it out of the map (S5).
+    if (it->approverBound && (shortTimeUp(id, now) || !m_sessions.contains(it->approvedBy)))
+        return {};
     return id;
 }
 
@@ -883,8 +1001,161 @@ qint64 AuthManager::lanHttpCookieMaxAge(const QString& token) const
     auto it = m_sessions.constFind(hashToken(token));
     if (it == m_sessions.cend() || !it->lanHttp) return 0;
     const qint64 now = QDateTime::currentSecsSinceEpoch();
+    // Never negative (R8); a TV let in for a short while, until its end only.
+    if (it->approverBound) return std::max<qint64>(0, it->endsAt - now);
     const qint64 untilApprovalEnds = it->createdAt + m_rememberTtlSecs - now;
     return std::max<qint64>(0, std::min(LAN_HTTP_SESSION_TTL_SECS, untilApprovalEnds));
+}
+
+// ── A TV let in for a short while (issue #42, TVNONADM) ─────────────────────
+
+namespace {
+
+/// The ways a person of the house signs in, the only ones that may let a TV
+/// in for a short while (security review, 20/11): this machine's PIN, typed
+/// or proven, and a phone's QR code approved by the house. A list of what is
+/// allowed, so that a way added later is not, until it is named here.
+constexpr SessionOrigin kShortApproverOrigins[] = {SessionOrigin::Pin, SessionOrigin::PinProof,
+                                                   SessionOrigin::Qr};
+
+} // namespace
+
+bool AuthManager::shortApprovalAllowed() const
+{
+    return m_settings && m_settings->lanHttpShortApproval();
+}
+
+int AuthManager::shortApprovalHours() const
+{
+    const int hours =
+        m_settings ? m_settings->lanHttpShortHours() : AppSettings::kLanHttpShortHoursDefault;
+    return std::clamp(hours, 1, SHORT_TV_MAX_HOURS);
+}
+
+AuthManager::ShortApproval AuthManager::shortApprovalState(const QString& token) const
+{
+    if (!shortApprovalAllowed() || !validateSession(token)) return ShortApproval::Refused;
+    const QString id = hashToken(token);
+    const SessionInfo& s = *m_sessions.constFind(id);
+    if (s.ephemeral || s.isHost || s.isAdmin || s.lanHttp || s.pairingKey.isEmpty())
+        return ShortApproval::Refused;
+    const auto held = m_shortApproverFailures.constFind(id);
+    if (held != m_shortApproverFailures.cend() && held->heldUntil > rateNow())
+        return ShortApproval::Refused;
+    if (std::find(std::begin(kShortApproverOrigins), std::end(kShortApproverOrigins), s.origin) !=
+        std::end(kShortApproverOrigins))
+        return ShortApproval::Allowed;
+    // Every condition but its origin holds, and its origin is not known: a
+    // device paired before v0.4.4, which did not keep how a session was made.
+    // Only that exact case is told to pair again (TVNAO1 A); a known origin
+    // outside the list (a certificate, the home screen, the host key) is not.
+    return s.origin == SessionOrigin::Unknown ? ShortApproval::ReappairNeeded
+                                              : ShortApproval::Refused;
+}
+
+bool AuthManager::mayLetInShortly(const QString& token) const
+{
+    return shortApprovalState(token) == ShortApproval::Allowed;
+}
+
+qint64 AuthManager::shortApprovalEndsAt(const QString& approverId) const
+{
+    const auto it = m_sessions.constFind(approverId);
+    if (it == m_sessions.cend()) return 0;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    if (expired(*it, now)) return 0;
+    // Never past the approver's own end: its sliding bound from its last visit.
+    const qint64 last = it->lastSeen > 0 ? it->lastSeen : it->createdAt;
+    const qint64 approverEnds = last + ttlFor(*it);
+    return std::min(now + qint64(shortApprovalHours()) * 3600, approverEnds);
+}
+
+bool AuthManager::countShortApproverWrongCode(const QString& approverId)
+{
+    if (approverId.isEmpty()) return false;
+    const qint64 now = rateNow();
+    ShortApproverFailures& f = m_shortApproverFailures[approverId];
+    if (now - f.windowFrom > SHORT_APPROVER_WINDOW_SECS) {
+        f.wrong = 0;
+        f.windowFrom = now;
+    }
+    if (++f.wrong < SHORT_APPROVER_MAX_WRONG) return false;
+    f.heldUntil = now + SHORT_APPROVER_BLOCK_SECS;
+    f.wrong = 0;
+    f.windowFrom = now;
+    const auto s = m_sessions.constFind(approverId);
+    Logger::warning(QString("[LanHttp] a paired device at %1 typed %2 wrong codes: it may let no "
+                            "TV in for %3 min")
+                        .arg(s == m_sessions.cend() ? QStringLiteral("?") : s->ip)
+                        .arg(SHORT_APPROVER_MAX_WRONG)
+                        .arg(SHORT_APPROVER_BLOCK_SECS / 60));
+    return true;
+}
+
+int AuthManager::endShortLanHttpSessions()
+{
+    QStringList shortTvs;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (it->approverBound) shortTvs.append(it.key());
+    }
+    if (shortTvs.isEmpty()) return 0;
+    QList<EndedSession> ended;
+    for (const QString& id : std::as_const(shortTvs))
+        takeSession(id, ended);
+    saveSessions();
+    announceEnded(ended, EndReason::SettingOff);
+    emit sessionsChanged();
+    return int(ended.size());
+}
+
+bool AuthManager::shortTimeUp(const QString& id, qint64 now) const
+{
+    const auto it = m_sessions.constFind(id);
+    if (it == m_sessions.cend() || !it->approverBound) return false;
+    if (it->endsAt <= 0 || now >= it->endsAt) return true;
+    const auto deadline = m_shortDeadlines.constFind(id);
+    return deadline == m_shortDeadlines.cend() || deadline->hasExpired();
+}
+
+void AuthManager::armShortTimer()
+{
+    if (!m_shortTimer) return; // during construction, before the timer exists
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    qint64 nextMs = -1;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (!it->approverBound) continue;
+        // The nearer of the two clocks' ends.
+        qint64 ms = std::max<qint64>(0, (it->endsAt - now) * 1000);
+        const auto deadline = m_shortDeadlines.constFind(it.key());
+        if (deadline != m_shortDeadlines.cend())
+            ms = std::min<qint64>(ms, std::max<qint64>(0, deadline->remainingTime()));
+        if (nextMs < 0 || ms < nextMs) nextMs = ms;
+    }
+    if (nextMs < 0) {
+        m_shortTimer->stop();
+        return;
+    }
+    // At most 12 hours away; a little after, so that the end has been reached.
+    m_shortTimer->start(int(std::min<qint64>(nextMs + 50, SHORT_TV_MAX_SECS * 1000 + 50)));
+}
+
+void AuthManager::endShortTvsDue()
+{
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    QStringList due;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (shortTimeUp(it.key(), now)) due.append(it.key());
+    }
+    if (due.isEmpty()) {
+        armShortTimer();
+        return;
+    }
+    QList<EndedSession> ended;
+    for (const QString& id : std::as_const(due))
+        takeSession(id, ended);
+    saveSessions();
+    announceEnded(ended, EndReason::Expired); // arms the timer for the next one
+    emit sessionsChanged();
 }
 
 bool AuthManager::isEphemeralSession(const QString& token) const
@@ -909,10 +1180,11 @@ bool AuthManager::logoutSession(const QString& token)
     const QString id = hashToken(token);
     if (!m_sessions.contains(id)) return false;
     // Leaving is not a revocation: a device this session let in stays, the
-    // administrator's to revoke from now on, as when its time runs out.
+    // administrator's to revoke from now on, as when its time runs out. Not a
+    // TV it let in for a short while (approverBound): that one goes with it.
     int kept = 0;
     for (auto it = m_sessions.begin(); it != m_sessions.end(); ++it) {
-        if (it->approvedBy != id) continue;
+        if (it->approvedBy != id || it->approverBound) continue;
         it->approvedBy.clear();
         kept++;
     }
@@ -1207,7 +1479,10 @@ void AuthManager::takeSession(const QString& id, QList<EndedSession>& out)
     if (!m_sessions.contains(id)) return;
     m_homeScreenKeys.remove(id);
     m_homeScreenInstances.remove(id);
-    out.append({id, m_sessions.take(id)});
+    const bool timeUp = shortTimeUp(id, QDateTime::currentSecsSinceEpoch());
+    m_shortDeadlines.remove(id);
+    m_shortApproverFailures.remove(id);
+    out.append({id, m_sessions.take(id), timeUp});
 
     // The sessions this one let in go with it (a device it approved by the
     // QR code it showed, PhonePairing.h), and theirs in turn. Each is out of
@@ -1225,8 +1500,8 @@ void AuthManager::announceEnded(const QList<EndedSession>& ended, EndReason reas
     // What a listener does here (end streams, close a socket, even destroy
     // another session) finds these out of the map and out of the file already:
     // nothing it does can make one of them be announced twice.
-    const QString how =
-        reason == EndReason::Revoked ? QStringLiteral("revoked") : QStringLiteral("expired");
+    const bool expiry = reason == EndReason::Expired;
+    const QString how = expiry ? QStringLiteral("expired") : QStringLiteral("revoked");
     for (const EndedSession& e : ended) {
         emit sessionDestroyed(e.id);
         Logger::info(QString("[Auth] Session destroyed for %1 (machine='%2', remaining: %3)")
@@ -1234,8 +1509,26 @@ void AuthManager::announceEnded(const QList<EndedSession>& ended, EndReason reas
                          .arg(m_sessions.size()));
         if (e.info.streaming)
             Logger::info(QString("[Auth] %1 session was streaming — requesting stream teardown")
-                             .arg(reason == EndReason::Revoked ? QStringLiteral("Revoked")
-                                                               : QStringLiteral("Expired")));
+                             .arg(expiry ? QStringLiteral("Expired") : QStringLiteral("Revoked")));
+        // A TV let in for a short while says why it went: its time, its
+        // approver's end (it came along with it), the administrator's setting,
+        // a newer approval, or a revocation of its own. Its address only,
+        // never a name (S7).
+        if (e.info.approverBound) {
+            QString why = QStringLiteral("revoked");
+            if (reason == EndReason::Replaced)
+                why = QStringLiteral("replaced");
+            else if (reason == EndReason::SettingOff)
+                why = QStringLiteral("setting off");
+            else if (e.timeUp)
+                why = QStringLiteral("time");
+            else if (!m_sessions.contains(e.info.approvedBy))
+                why = QStringLiteral("approver ended");
+            Logger::info(
+                QString("[LanHttp] %1 short approval ended (%2)%3")
+                    .arg(e.info.boundIp, why,
+                         e.info.streaming ? QStringLiteral("; its stream was cut") : QString()));
+        }
         if (e.info.lanHttp)
             Logger::info(
                 QString("[LanHttp] Session for %1 %2%3")
@@ -1245,6 +1538,8 @@ void AuthManager::announceEnded(const QList<EndedSession>& ended, EndReason reas
         // session's other streams end too.
         emit streamingSessionRevoked(e.id);
     }
+    // The next short approval's end, among those left (R6).
+    armShortTimer();
 }
 
 bool AuthManager::renameSession(const QString& token, const QString& machineName)
@@ -1266,9 +1561,19 @@ bool AuthManager::renameSession(const QString& token, const QString& machineName
 void AuthManager::destroyAllSessions()
 {
     int count = m_sessions.size();
+    QStringList tvs;
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (it->lanHttp) tvs.append(it.key());
+    }
     m_sessions.clear();
+    m_shortDeadlines.clear();
+    m_shortApproverFailures.clear();
     saveSessions();
+    armShortTimer();
     if (count > 0) {
+        // The TVs' sockets close (HttpServer), as for each one revoked.
+        for (const QString& id : std::as_const(tvs))
+            emit sessionDestroyed(id);
         emit sessionsChanged();
         Logger::info(QString("[Auth] All %1 sessions destroyed").arg(count));
         // Every stream ends, whichever one the streaming flag follows.
@@ -1278,6 +1583,10 @@ void AuthManager::destroyAllSessions()
 
 void AuthManager::purgeExpiredSessions()
 {
+    // The administrator's setting written off by hand in settings.json: the
+    // TVs let in for a short while go here at the latest (S6).
+    if (!shortApprovalAllowed()) endShortLanHttpSessions();
+
     const qint64 now = QDateTime::currentSecsSinceEpoch();
 
     // Two ways to run out of time, and only one ends a stream. A fixed bound
@@ -1300,6 +1609,14 @@ void AuthManager::purgeExpiredSessions()
         ending.insert(it.key());
     }
     if (ending.isEmpty()) return;
+    // A TV let in for a short while ends with the session that let it in,
+    // however that one ends: on a sliding bound too, its stream with it.
+    for (auto it = m_sessions.cbegin(); it != m_sessions.cend(); ++it) {
+        if (it->approverBound && !ending.contains(it.key()) && ending.contains(it->approvedBy)) {
+            fixed.append(it.key());
+            ending.insert(it.key());
+        }
+    }
 
     // First the devices these let in, which stay (keepDevicesOfEndedApprovers):
     // were takeSession to find them still pointing at their approver, it would

@@ -27,6 +27,7 @@
 #include <QTimer>
 #include <QUrl>
 #include <QIcon>
+#include <QDateTime>
 #include <QElapsedTimer>
 
 #include "ViewerNotices.h"
@@ -202,7 +203,12 @@ private:
     // Who arrived and left, the notices waiting for Windows, and the recent
     // viewers: in this process's memory only (see ViewerNotices).
     ViewerNotices m_Notices;
-    QElapsedTimer m_Clock;     // the gap between two notices
+    QElapsedTimer m_Clock; // the gap between two notices
+    // The latest TV let in for a short while already told (issue #42): none
+    // from before this tray started, so that a tray started again does not
+    // tell them twice.
+    qint64 m_LetInAt = QDateTime::currentSecsSinceEpoch();
+    int m_LetInSeq = 0;
     QIcon m_Icon;              // the icon, and the same with a count: blue, and
     QIcon m_CountIcons[2][10]; // yellow for plain HTTP, 1..9 and 9+, all
     QIcon m_WarnIcon;          // rendered at init, never during a stream

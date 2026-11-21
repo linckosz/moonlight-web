@@ -146,6 +146,12 @@ public:
     /// queue of notices.
     Changes observe(const QList<StreamViewer>& viewers, const QDateTime& now, bool announce);
 
+    /// A TV on plain HTTP let in for a short while by a paired device (issue
+    /// #42): told once, for information, through the same queue as the rest,
+    /// whatever the "tell me" switch says (as for a TV that starts to stream).
+    /// @p id tells one from another; the text is said as it is given.
+    void queueLetIn(const QString& id, const QString& text);
+
     /// A notice is waiting and the gap since the last one has passed: the caller
     /// asks Windows, then calls take() if it would show it, hold() if not.
     bool due(qint64 nowMs) const;
@@ -182,6 +188,7 @@ private:
         bool arrivalTold = false; // only the departure is left to tell
         bool held = false;        // Windows made it wait at least once
         bool plainHttp = false;   // a TV on plain HTTP: a security notice
+        QString letIn;            // a TV let in for a short while: this, as it is
     };
 
     void queueArrival(const StreamViewer& v, const QDateTime& now);

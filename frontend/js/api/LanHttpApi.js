@@ -27,6 +27,7 @@
  */
 
 import { BackendClient } from './BackendClient.js';
+import { loadOrCreateIdentity, signTvApproval, signTvRefusal } from '../util/pairingCrypto.js';
 
 /**
  * Whether this page is a TV listed for plain HTTP, and signed in.
@@ -90,12 +91,35 @@ export async function lanHttpRequest(id) {
     return BackendClient.get(`/api/lan-http/approve/${encodeURIComponent(id)}`);
 }
 
-/** The administrator lets the TV in, with the code read on its screen. */
-export async function lanHttpApprove(id, code) {
-    return BackendClient.post(`/api/lan-http/approve/${encodeURIComponent(id)}`, { code });
+/**
+ * The TV is let in, with the code read on its screen. A paired device that is
+ * not the administrator (the request said `short`) signs its answer with its
+ * pairing key, for the host the request named (MW-LANTV-v1).
+ * @param {string} id
+ * @param {string} code
+ * @param {{short?: boolean, host_id?: string}} [request] what lanHttpRequest said
+ */
+export async function lanHttpApprove(id, code, request) {
+    const body = { code };
+    if (request?.short) {
+        const identity = await loadOrCreateIdentity();
+        const sig = identity ? await signTvApproval(identity, request.host_id, id, code) : null;
+        if (sig) body.sig = sig;
+    }
+    return BackendClient.post(`/api/lan-http/approve/${encodeURIComponent(id)}`, body);
 }
 
-/** The administrator says no. */
-export async function lanHttpRefuse(id) {
-    return BackendClient.post(`/api/lan-http/refuse/${encodeURIComponent(id)}`, {});
+/**
+ * The TV is turned away, signed as a yes is by a paired device.
+ * @param {string} id
+ * @param {{short?: boolean, host_id?: string}} [request]
+ */
+export async function lanHttpRefuse(id, request) {
+    const body = {};
+    if (request?.short) {
+        const identity = await loadOrCreateIdentity();
+        const sig = identity ? await signTvRefusal(identity, request.host_id, id) : null;
+        if (sig) body.sig = sig;
+    }
+    return BackendClient.post(`/api/lan-http/refuse/${encodeURIComponent(id)}`, body);
 }

@@ -377,6 +377,7 @@ add_executable(mw-server
     src/server/ErrorReports.cpp
     src/server/routes/PairRequestRoutes.cpp
     src/server/routes/LanHttpRoutes.cpp
+    src/server/HouseLink.cpp
     src/server/PhonePairing.cpp
     src/server/LogArchive.cpp
     src/server/LogScrubber.cpp

@@ -300,6 +300,22 @@ public:
     // HTTP port, so a change applies without a restart.
     QStringList lanHttpClients() const;
 
+    // ── A TV let in for a short while by a paired device (issue #42) ──────────
+    //
+    // Whether a paired device of the house that is not the administrator may
+    // let one of those TVs in, and for how long (AuthManager::mayLetInShortly).
+    // JSON bool "lan_http_short_approval", default true (Bruno, TVNA-D2 A); JSON
+    // number "lan_http_short_hours", one of 2, 4, 8 or 12, anything else reads
+    // as the default 8 (TVNA-D1 C). Turning the first off sends away the TVs
+    // let in this way. Written by POST /api/admin/settings (the administrator).
+    static constexpr int kLanHttpShortHoursDefault = 8;
+    static constexpr int kLanHttpShortHoursChoices[] = {2, 4, 8, 12};
+    bool lanHttpShortApproval() const;
+    void setLanHttpShortApproval(bool enabled);
+    int lanHttpShortHours() const;
+    /// False, and nothing written, for a value outside the choices.
+    bool setLanHttpShortHours(int hours);
+
     // ── Keyboard layout fidelity ──────────────────────────────────────────────
     //
     // When the host types the character the CLIENT's keyboard layout produced,

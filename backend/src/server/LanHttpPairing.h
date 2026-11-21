@@ -62,7 +62,7 @@ public:
     /// What the TV is given when it asks to be let in.
     struct Opened
     {
-        QString id;    ///< 96 random bits, base64url: the approval page's path
+        QString id;    ///< 128 random bits, base64url (22 characters): the approval page's path
         QString code;  ///< what the administrator types
         QString claim; ///< what the TV asks with, base64url; never kept as it is
     };
@@ -101,7 +101,8 @@ public:
     struct PollResult
     {
         Poll state = Poll::Gone;
-        QString approverId; ///< with Approved: the approving session's id
+        QString approverId;         ///< with Approved: the approving session's id
+        bool shortApproval = false; ///< with Approved: by a paired device, for a short while
     };
 
     /// Where the request stands, asked by the TV with its claim, from the
@@ -120,16 +121,35 @@ public:
     enum class Answer
     {
         Approved,
-        WrongCode, ///< tries remain
-        Gone       ///< unknown, expired, answered, or its last try spent
+        WrongCode,    ///< tries remain
+        TooManyTries, ///< that wrong code was its last try: the request is gone
+        Gone          ///< unknown, expired, or answered
     };
 
-    /// An administrator approves, typing the code the TV shows. @p approverId
-    /// is that session's opaque id, empty for the host machine.
+    /// Someone approves, typing the code the TV shows: the administrator, or
+    /// a paired device of the house for a short while (@p shortApproval, the
+    /// caller having checked it may). @p approverId is that session's opaque
+    /// id, empty for the host machine.
     Answer approve(const QString& id, const QString& typedCode, const QString& approverId,
-                   qint64 now);
+                   qint64 now, bool shortApproval = false);
     /// An administrator refuses: the TV's next ask says so.
     bool refuse(const QString& id, qint64 now);
+
+    /// What a paired device of the house signs with its pairing key to let a
+    /// TV in for a short while, or to refuse it (security review, R1): fields
+    /// each framed by its length (PairingCrypto::buildSignedMessage), a label
+    /// of their own so that no MW-PAIR-v1 signature stands for one of these,
+    /// this host's key id (PairingCrypto::keyId), the request's id, and the
+    /// code exactly as sent.
+    static constexpr char PROTOCOL[] = "MW-LANTV-v1";
+    static QByteArray approveMessage(const QString& hostId, const QString& id, const QString& code);
+    static QByteArray refuseMessage(const QString& hostId, const QString& id);
+    /// The only shape of a request id the paired device's routes take: the
+    /// 22 characters of 128 bits (R2).
+    static bool isRequestId(const QString& id);
+    /// A code in the form a device sends it: CODE_LENGTH characters of the
+    /// alphabet, upper case.
+    static bool isCodeShape(const QString& code);
 
     /// Requests still waiting.
     int pending(qint64 now) const;
@@ -152,6 +172,7 @@ private:
         int tries = 0;
         State state = State::Pending;
         QString approverId;
+        bool shortApproval = false;
     };
 
     static bool expired(const Request& r, qint64 now) { return now - r.createdAt > TTL_SECS; }

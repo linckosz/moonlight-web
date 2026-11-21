@@ -136,7 +136,7 @@ void registerHostKeyRoute(RestRouter& router, AuthManager& authManager, HostKeyD
         if (!deps.spend || !deps.spend(key)) return refuse(QStringLiteral("key does not match"));
 
         QString token =
-            authManager.createSession(req.clientAddress,
+            authManager.createSession(SessionOrigin::HostKey, req.clientAddress,
                                       req.viaTunnel ? QStringLiteral("Host machine (remote link)")
                                                     : QStringLiteral("Host machine"),
                                       true, false, req.viaTunnel);

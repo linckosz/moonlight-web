@@ -17,20 +17,24 @@
 
 #include "LanHttpPairing.h"
 #include "PhonePairing.h"
+#include "common/PairingCrypto.h"
 
 #include <QCryptographicHash>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 
 #include <algorithm>
+#include <cstring>
 
 namespace {
 
 /// Crockford's base32 alphabet, as MW-PAIR-v1's codes: nothing to misread.
 constexpr char kCodeAlphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
-/// Bytes of a request id: 96 bits, 16 characters of base64url, the shape
-/// PhonePairing::isRequestId accepts.
-constexpr int kIdBytes = 12;
+/// Bytes of a request id: 128 bits, 22 characters of base64url, a shape
+/// PhonePairing::isRequestId accepts, and the only one the approval routes of
+/// a paired device take (LanHttpRoutes.cpp, security review R2).
+constexpr int kIdBytes = 16;
 
 QByteArray systemBytes(int n)
 {
@@ -138,6 +142,7 @@ LanHttpPairing::PollResult LanHttpPairing::poll(const QString& id, const QString
     case State::Approved:
         result.state = Poll::Approved;
         result.approverId = r.approverId;
+        result.shortApproval = r.shortApproval;
         break;
     case State::Refused: result.state = Poll::Refused; break;
     }
@@ -154,8 +159,39 @@ std::optional<LanHttpPairing::Shown> LanHttpPairing::find(const QString& id, qin
     return Shown{r.address, TTL_SECS - (now - r.createdAt)};
 }
 
+QByteArray LanHttpPairing::approveMessage(const QString& hostId, const QString& id,
+                                          const QString& code)
+{
+    return PairingCrypto::buildSignedMessage(
+        {QByteArray(PROTOCOL) + "|approve", hostId.toUtf8(), id.toUtf8(), code.toUtf8()});
+}
+
+QByteArray LanHttpPairing::refuseMessage(const QString& hostId, const QString& id)
+{
+    return PairingCrypto::buildSignedMessage(
+        {QByteArray(PROTOCOL) + "|refuse", hostId.toUtf8(), id.toUtf8()});
+}
+
+bool LanHttpPairing::isRequestId(const QString& id)
+{
+    static const QRegularExpression kShape(QStringLiteral("^[A-Za-z0-9_-]{22}$"));
+    return kShape.match(id).hasMatch();
+}
+
+bool LanHttpPairing::isCodeShape(const QString& code)
+{
+    if (code.size() != CODE_LENGTH) return false;
+    for (const QChar ch : code) {
+        if (ch.unicode() > 127 || !std::strchr(kCodeAlphabet, char(ch.unicode())) ||
+            ch.unicode() == 0)
+            return false;
+    }
+    return true;
+}
+
 LanHttpPairing::Answer LanHttpPairing::approve(const QString& id, const QString& typedCode,
-                                               const QString& approverId, qint64 now)
+                                               const QString& approverId, qint64 now,
+                                               bool shortApproval)
 {
     dropExpired(now);
     const int i = indexOf(id);
@@ -164,12 +200,13 @@ LanHttpPairing::Answer LanHttpPairing::approve(const QString& id, const QString&
     if (!sameBytes(PhonePairing::normalizeCode(typedCode).toLatin1(), r.code.toLatin1())) {
         if (++r.tries >= CODE_TRIES) {
             m_Requests.removeAt(i);
-            return Answer::Gone;
+            return Answer::TooManyTries;
         }
         return Answer::WrongCode;
     }
     r.state = State::Approved;
     r.approverId = approverId;
+    r.shortApproval = shortApproval;
     return Answer::Approved;
 }
 

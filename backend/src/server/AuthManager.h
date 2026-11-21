@@ -18,6 +18,7 @@
 #pragma once
 
 #include <QObject>
+#include <QDeadlineTimer>
 #include <QHash>
 #include <QMap>
 #include <QSet>
@@ -29,9 +30,56 @@
 #include <QString>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTimer>
 
 class QTimer;
 struct HttpRequest;
+
+/// How a session came to be: set by the server where the session is made,
+/// never read from a request, never changed afterwards, kept in sessions.json
+/// (security review, 20/11). It decides one thing only: whether the session
+/// may let a TV in for a short while (AuthManager::mayLetInShortly), which the
+/// ways a person of the house signs in by may (kShortApproverOrigins), and
+/// every other way may not, an unknown one or one added later included.
+enum class SessionOrigin
+{
+    Unknown,     ///< absent or unreadable in the file: a session from before this was kept
+    Certificate, ///< /api/auth/validate with a client certificate
+    Pin,         ///< /api/auth/validate with this machine's PIN
+    PinProof,    ///< MW-PIN-v1, the PIN proven without sending it (/api/auth/pin/finish)
+    Qr,          ///< MW-PAIR-v1, a phone's QR code approved by the house
+    HomeScreen,  ///< a home-screen shortcut's single-use key, through the tunnel
+    HostKey,     ///< the host machine's own key
+    Tv           ///< a TV on plain HTTP (createLanHttpSession)
+};
+
+/// Its name in sessions.json and the sessions list.
+inline QString sessionOriginName(SessionOrigin origin)
+{
+    switch (origin) {
+    case SessionOrigin::Certificate: return QStringLiteral("certificate");
+    case SessionOrigin::Pin: return QStringLiteral("pin");
+    case SessionOrigin::PinProof: return QStringLiteral("pinproof");
+    case SessionOrigin::Qr: return QStringLiteral("qr");
+    case SessionOrigin::HomeScreen: return QStringLiteral("homescreen");
+    case SessionOrigin::HostKey: return QStringLiteral("hostkey");
+    case SessionOrigin::Tv: return QStringLiteral("tv");
+    case SessionOrigin::Unknown: break;
+    }
+    return QStringLiteral("unknown");
+}
+
+/// The origin a name stands for; Unknown for any other text, an empty one
+/// included.
+inline SessionOrigin sessionOriginFromName(const QString& name)
+{
+    for (SessionOrigin o : {SessionOrigin::Certificate, SessionOrigin::Pin, SessionOrigin::PinProof,
+                            SessionOrigin::Qr, SessionOrigin::HomeScreen, SessionOrigin::HostKey,
+                            SessionOrigin::Tv}) {
+        if (name == sessionOriginName(o)) return o;
+    }
+    return SessionOrigin::Unknown;
+}
 
 /**
  * Session metadata stored server-side keyed by token.
@@ -94,15 +142,29 @@ struct SessionInfo
     bool lanHttp = false;
     QString boundIp;
 
+    // A TV let in for a short while by a paired device of the house that is not
+    // the administrator (issue #42, TVNONADM): it ends at endsAt (unix secs),
+    // a bound no visit moves, and with the session that let it in (approvedBy),
+    // however that one ends. A TV the administrator let in has neither.
+    bool approverBound = false;
+    qint64 endsAt = 0;
+
+    SessionOrigin origin = SessionOrigin::Unknown;
+
     QJsonObject toJson() const
     {
         QJsonObject obj;
         obj["token"] = token;
+        obj["origin"] = sessionOriginName(origin);
         if (!pairingKey.isEmpty()) obj["pairing_key"] = QString::fromLatin1(pairingKey.toBase64());
         if (!approvedBy.isEmpty()) obj["approved_by"] = approvedBy;
         if (lanHttp) {
             obj["lan_http"] = true;
             obj["bound_ip"] = boundIp;
+        }
+        if (approverBound) {
+            obj["approver_bound"] = true;
+            obj["ends_at"] = endsAt;
         }
         obj["ip"] = ip;
         obj["machine_name"] = machineName;
@@ -221,8 +283,12 @@ public:
     ///                  of sessions.json and expire it after
     ///                  EPHEMERAL_SESSION_TTL_SECS of inactivity. Meant for a
     ///                  browser that is not the visitor's own (public machine).
-    QString createSession(const QString& ip, const QString& machineName = QString(),
-                          bool isHost = false, bool ephemeral = false, bool viaTunnel = false);
+    /// @param origin   How the session came to be (SessionOrigin), said by the
+    ///                  site that makes it and by nothing else: no default, so
+    ///                  that a new way in has to say what it is.
+    QString createSession(SessionOrigin origin, const QString& ip,
+                          const QString& machineName = QString(), bool isHost = false,
+                          bool ephemeral = false, bool viaTunnel = false);
     bool validateSession(const QString& token) const;
     /** True when the raw cookie token belongs to a valid session created without
      *  "remember me". The caller must then keep the cookie session-scoped: a
@@ -287,6 +353,76 @@ public:
 
     /// Days without a visit after which a TV on plain HTTP is signed out (D3).
     static constexpr qint64 LAN_HTTP_SESSION_TTL_SECS = 30LL * 24 * 3600;
+
+    // ── A TV let in for a short while (issue #42, TVNONADM) ────────────────
+    /// The longest a TV is let in for by a paired device that is not the
+    /// administrator, whatever the setting or the file says (Bruno, TVNA-D1 C).
+    static constexpr int SHORT_TV_MAX_HOURS = 12;
+    static constexpr qint64 SHORT_TV_MAX_SECS = SHORT_TV_MAX_HOURS * 3600LL;
+    /// Wrong codes a device may type, across the TVs it lets in, before it
+    /// may let none in for SHORT_APPROVER_BLOCK_SECS (security review, S3).
+    static constexpr int SHORT_APPROVER_MAX_WRONG = 3;
+    static constexpr qint64 SHORT_APPROVER_WINDOW_SECS = 15 * 60;
+    static constexpr qint64 SHORT_APPROVER_BLOCK_SECS = 15 * 60;
+
+    /// Whether the session of the raw cookie @p token may let a TV in for a
+    /// short while: an HTTPS session that is live, remembered, neither the host
+    /// machine's nor the administrator's, made by a way a person of the house
+    /// signs in (kShortApproverOrigins), with its pairing key bound, while the
+    /// administrator allows it (lan_http_short_approval), and not held back by
+    /// its wrong codes. What the request itself must be is the route's to say
+    /// (LanHttpRoutes.cpp).
+    bool mayLetInShortly(const QString& token) const;
+    /// mayLetInShortly in three answers: Allowed when it holds;
+    /// ReappairNeeded when every condition holds but the origin, which is
+    /// SessionOrigin::Unknown exactly (a device paired before v0.4.4, which
+    /// must pair again); Refused for anything else. The route tells
+    /// ReappairNeeded apart only after the device's signature is checked.
+    enum class ShortApproval
+    {
+        Allowed,
+        ReappairNeeded,
+        Refused
+    };
+    ShortApproval shortApprovalState(const QString& token) const;
+    /// Whether the administrator lets paired devices let TVs in for a short
+    /// while (lan_http_short_approval; off without settings), and for how
+    /// many hours (lan_http_short_hours, at most SHORT_TV_MAX_HOURS).
+    bool shortApprovalAllowed() const;
+    int shortApprovalHours() const;
+    /// When a TV let in now by the session @p approverId would have to go:
+    /// shortApprovalHours() from now, never past that session's own end. 0
+    /// for no live session.
+    qint64 shortApprovalEndsAt(const QString& approverId) const;
+    /// A TV's session let in for a short while by the session @p approverId
+    /// (mayLetInShortly held for it): bound to @p peer, ending at
+    /// shortApprovalEndsAt() and with its approver, however that one ends. It
+    /// replaces the TV this approver let in before, and any TV let in for a
+    /// short while at that address. Empty when it cannot be made.
+    QString createShortLanHttpSession(const QString& peer, const QString& machineName,
+                                      const QString& approverId);
+    /// A wrong code typed by the session @p approverId on its way to letting a
+    /// TV in: counted by session id, never by address (R4). Returns whether
+    /// that session is now held back.
+    bool countShortApproverWrongCode(const QString& approverId);
+    /// Every TV let in for a short while goes now, its stream with it: the
+    /// administrator turned the setting off (S6). Returns how many.
+    int endShortLanHttpSessions();
+
+    /// A TV let in for a short while, as the tray tells it once (seq grows by
+    /// one each time): for information, nothing to answer (Q3). The device's
+    /// name is here and in the sessions list only, never in the log (S7).
+    struct ShortNotice
+    {
+        int seq = 0;
+        qint64 at = 0; ///< when, in seconds since the epoch
+        QString tvAddress;
+        QString approverName;
+        qint64 endsAt = 0;
+    };
+    static constexpr int MAX_SHORT_NOTICES = 8;
+    /// The latest ones, oldest first.
+    QList<ShortNotice> shortNotices() const { return m_shortNotices; }
     /** Grant admin access to an existing session (after the password checked
      *  out). Takes the raw cookie token. Returns false for unknown sessions. */
     bool promoteSessionToAdmin(const QString& token);
@@ -586,6 +722,26 @@ public:
         it->lastSeen = lastSeen;
     }
 
+    /// The end of the TV @p id let in for a short while, as if time had
+    /// passed: @p endsAt on the wall clock, and @p steadyMs from now on the
+    /// steady one (negative: left as it is). The timer is armed again. For
+    /// tests; no-op for an id that is not such a TV.
+    void setShortEndForTesting(const QString& id, qint64 endsAt, qint64 steadyMs)
+    {
+        auto it = m_sessions.find(id);
+        if (it == m_sessions.end() || !it->approverBound) return;
+        it->endsAt = endsAt;
+        if (steadyMs >= 0) m_shortDeadlines[id] = QDeadlineTimer(steadyMs);
+        armShortTimer();
+    }
+    /// What the timer does when it fires: ends the TVs whose time is up. For tests.
+    void endShortTvsDueForTesting() { endShortTvsDue(); }
+    /// Milliseconds before that timer fires, -1 while it is stopped. For tests.
+    int shortTimerRemainingForTesting() const
+    {
+        return m_shortTimer && m_shortTimer->isActive() ? m_shortTimer->remainingTime() : -1;
+    }
+
 signals:
     void pinChanged(const QString& newPin);
     void sessionCreated(const QString& ip, const QString& machineName);
@@ -633,6 +789,29 @@ private:
     QHash<QString, HomeScreenKey> m_homeScreenKeys;   // session id -> key
     QHash<QString, QJsonArray> m_homeScreenInstances; // session id -> machines
     QTimer* m_purgeTimer = nullptr;
+
+    // TVs let in for a short while: the steady clock's view of each one's end,
+    // which a wall clock set back does not move (S5), and the one timer that
+    // ends the next one due (armShortTimer).
+    QHash<QString, QDeadlineTimer> m_shortDeadlines; // session id -> its end
+    QTimer* m_shortTimer = nullptr;
+    struct ShortApproverFailures
+    {
+        int wrong = 0;
+        qint64 windowFrom = 0;
+        qint64 heldUntil = 0;
+    };
+    QHash<QString, ShortApproverFailures> m_shortApproverFailures; // session id -> its count
+    QList<ShortNotice> m_shortNotices;
+    int m_shortNoticeSeq = 0;
+    /// Whether the TV @p id let in for a short while has reached its end, by
+    /// either clock.
+    bool shortTimeUp(const QString& id, qint64 now) const;
+    /// (Re)arms m_shortTimer for the next end among the TVs let in for a short
+    /// while; stops it when there are none.
+    void armShortTimer();
+    /// Ends the TVs whose short approval is over, their streams with them.
+    void endShortTvsDue();
 
     QString generatePinInternal();
     QByteArray generateHmac(const QString& data) const;
@@ -719,10 +898,12 @@ private:
     }
 
     /// Whether a session has reached a bound that no visit moves: a TV on
-    /// plain HTTP approved remember_me_days ago. What the hourly purge ends
-    /// with its streams (purgeExpiredSessions).
+    /// plain HTTP approved remember_me_days ago, or let in for a short while
+    /// until a time now past. What the hourly purge ends with its streams
+    /// (purgeExpiredSessions).
     bool endedOnFixedBound(const SessionInfo& s, qint64 now) const
     {
+        if (s.approverBound && (s.endsAt <= 0 || now >= s.endsAt)) return true;
         return s.lanHttp && now - s.createdAt > m_rememberTtlSecs;
     }
 
@@ -731,13 +912,16 @@ private:
     {
         QString id;
         SessionInfo info;
+        bool timeUp = false; ///< a TV let in for a short while, at its end (shortTimeUp)
     };
     /// Why sessions end, for the log lines only (the stream history says
-    /// "Admin" for both, main.cpp).
+    /// "Admin" for all of them, main.cpp).
     enum class EndReason
     {
-        Revoked, ///< destroySession: the administrator, a log-out, a replacement
-        Expired  ///< a fixed bound, in the hourly purge
+        Revoked,   ///< destroySession: the administrator, a log-out
+        Expired,   ///< a fixed bound: the hourly purge, a short approval's end
+        Replaced,  ///< a TV let in for a short while, by a newer approval
+        SettingOff ///< TVs let in for a short while, by the administrator's setting
     };
     /// Takes the session @p id out of the map, with its home-screen keys and
     /// the sessions it let in, theirs in turn, appending each to @p out. No-op
@@ -748,6 +932,14 @@ private:
     /// Tells of the sessions @p ended, once each, in order: sessionDestroyed,
     /// the log lines, and streamingSessionRevoked, which ends their streams.
     void announceEnded(const QList<EndedSession>& ended, EndReason reason);
+    /// A TV's session at @p bound, let in by @p approverId (empty: the host
+    /// machine): for remember_me_days when @p endsAt is 0, until @p endsAt
+    /// otherwise (approverBound). The TVs it replaces (one short approval per
+    /// device and per address) go into @p replaced, announced once the file
+    /// holds the change. Returns the raw token.
+    QString insertLanHttpSession(const QString& bound, const QString& machineName,
+                                 const QString& approverId, qint64 endsAt,
+                                 QList<EndedSession>& replaced);
 
     /// A fresh raw token for a session about to be stored; its opaque id is
     /// hashToken() of it.

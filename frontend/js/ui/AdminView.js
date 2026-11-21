@@ -77,6 +77,10 @@ export class AdminView {
         // Whether a device may also ask to pair by its QR code from outside the
         // LAN. Off by default; either way it gets in only with the code it shows.
         this._pairRequestInternet = false;
+        // Whether a paired device may let a TV on plain HTTP in for a short
+        // while, and for how many hours (issue #42). On, 8 h, by default.
+        this._shortTvApproval = true;
+        this._shortTvHours = 8;
 
         // Server settings state
         this._httpsPort = 443;
@@ -272,6 +276,10 @@ export class AdminView {
             this._httpPort = admin.http_port || 80;
             this._certAuthEnabled = admin.cert_auth_enabled || false;
             this._pairRequestInternet = admin.pair_request_internet === true;
+            this._shortTvApproval = admin.lan_http_short_approval !== false;
+            this._shortTvHours = [2, 4, 8, 12].includes(admin.lan_http_short_hours)
+                ? admin.lan_http_short_hours
+                : 8;
             this._streamNotifications = admin.stream_notifications !== false;
             this._packetMarking = admin.packet_marking !== false;
             this._vdExclusiveSupported = admin.virtual_display_exclusive_supported === true;
@@ -587,6 +595,10 @@ export class AdminView {
                 s.country,
                 s.created_at,
                 !!s.streaming,
+                !!s.lan_http,
+                !!s.approver_bound,
+                s.ends_at || 0,
+                s.approved_by_name || '',
             ]),
         );
     }
@@ -921,6 +933,7 @@ export class AdminView {
                                     : ''
                             }
                             ${this._renderPairRequestInternet()}
+                            ${this._renderShortTvApproval()}
                         </div>
                     </div>
                 `
@@ -1352,12 +1365,26 @@ export class AdminView {
                 const plainHttpBadge = s.lan_http
                     ? `<span class="session-plain-http-badge" title="${this.esc(t('admin.plainHttpTitle'))}">${t('admin.plainHttp')}</span>`
                     : '';
+                // A TV let in for a short while by a paired device: by whom,
+                // until when, and that it goes with that device's session.
+                const shortTvLine =
+                    s.lan_http && s.approver_bound
+                        ? `<div class="session-short-tv">${this.esc(
+                              t('admin.shortTvLine', {
+                                  name: s.approved_by_name || t('common.unknown'),
+                                  until: new Date((s.ends_at || 0) * 1000).toLocaleTimeString([], {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                  }),
+                              }),
+                          )}</div>`
+                        : '';
                 return `
             <tr data-token="${this.esc(s.token)}" class="${s.streaming ? 'session-row-streaming' : ''}">
                 <td><span class="session-name-edit" contenteditable="plaintext-only"
                           spellcheck="false"
                           data-token="${this.esc(s.token)}"
-                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${plainHttpBadge}${streamingBadge}</td>
+                          title="${this.esc(t('admin.editNameTitle'))}">${this.esc(cells.machine)}</span>${plainHttpBadge}${streamingBadge}${shortTvLine}</td>
                 <td>${this._formatDate(s.created_at)}</td>
                 <td>${ip}</td>
                 <td>${location}</td>
@@ -1612,6 +1639,19 @@ export class AdminView {
         if (pairInternetChk) {
             pairInternetChk.addEventListener('change', () =>
                 this._togglePairRequestInternet(pairInternetChk.checked),
+            );
+        }
+        // A TV let in for a short while by a paired device: saved on the spot.
+        const shortTvChk = this.container.querySelector('#chk-short-tv');
+        if (shortTvChk) {
+            shortTvChk.addEventListener('change', () =>
+                this._saveShortTv({ lan_http_short_approval: shortTvChk.checked }),
+            );
+        }
+        const shortTvHours = this.container.querySelector('#sel-short-tv-hours');
+        if (shortTvHours) {
+            shortTvHours.addEventListener('change', () =>
+                this._saveShortTv({ lan_http_short_hours: Number(shortTvHours.value) }),
             );
         }
         const setPassBtn = this.container.querySelector('#btn-set-admin-password');
@@ -2509,6 +2549,49 @@ export class AdminView {
                                 </label>
                                 <p class="setting-desc">${t('admin.pairRequestInternetDesc')}</p>
                             </div>`;
+    }
+
+    // Under the QR code requests: whether a paired device of the house may let a
+    // TV on plain HTTP in for a short while, and for how long (issue #42). On by
+    // default; off, the TVs let in this way go at once.
+    _renderShortTvApproval() {
+        const hours = [2, 4, 8, 12]
+            .map(
+                (h) =>
+                    `<option value="${h}" ${this._shortTvHours === h ? 'selected' : ''}>${t('admin.shortTvHoursValue', { hours: h })}</option>`,
+            )
+            .join('');
+        return `
+                            <div class="u-mt-3" id="admin-short-tv">
+                                <label class="settings-checkbox-label">
+                                    <input type="checkbox" id="chk-short-tv"
+                                           ${this._shortTvApproval ? 'checked' : ''} />
+                                    <span class="settings-checkbox-text">${t('admin.shortTv')}</span>
+                                </label>
+                                <p class="setting-desc">${t('admin.shortTvDesc')}</p>
+                                <label class="setting-desc" for="sel-short-tv-hours">${t('admin.shortTvHours')}</label>
+                                <select id="sel-short-tv-hours" class="settings-select">${hours}</select>
+                                <p class="setting-desc">${t('admin.shortTvHoursDesc')}</p>
+                            </div>`;
+    }
+
+    // Saved on the spot, as the box above. The server answers with what it kept.
+    async _saveShortTv(body) {
+        try {
+            const res = await BackendClient.saveAdminSettings(body);
+            if (typeof res?.lan_http_short_approval === 'boolean')
+                this._shortTvApproval = res.lan_http_short_approval;
+            if (typeof res?.lan_http_short_hours === 'number')
+                this._shortTvHours = res.lan_http_short_hours;
+            Toast.success(t('admin.shortTvSaved'));
+        } catch (err) {
+            console.error('[Admin] Failed to save the short TV approval setting:', err);
+            Toast.error(t('admin.saveFailed', { message: err.message }));
+        }
+        const box = this.container.querySelector('#chk-short-tv');
+        if (box) box.checked = this._shortTvApproval;
+        const sel = this.container.querySelector('#sel-short-tv-hours');
+        if (sel) sel.value = String(this._shortTvHours);
     }
 
     _renderRemoteAdmin() {

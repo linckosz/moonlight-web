@@ -611,6 +611,50 @@ export async function signPairRefusal(identity, hostId, requestId) {
 }
 
 /**
+ * The bytes this page signs to let a TV on plain HTTP in for a short while
+ * (issue #42, LanHttpPairing::approveMessage in backend/src/server/LanHttpPairing.h):
+ * the code exactly as sent, for that request on that host. Same framing, under
+ * a label of its own, so that no signature of MW-PAIR-v1 stands for it.
+ */
+export function tvApprovalMessage(hostId, requestId, code) {
+    return buildSignedMessage(['MW-LANTV-v1|approve', hostId || '', requestId, code]);
+}
+
+/** The bytes this page signs to turn such a TV away (LanHttpPairing::refuseMessage). */
+export function tvRefusalMessage(hostId, requestId) {
+    return buildSignedMessage(['MW-LANTV-v1|refuse', hostId || '', requestId]);
+}
+
+/**
+ * Sign this page's yes to a TV let in for a short while: see
+ * tvApprovalMessage. The host checks it against the key of this browser's
+ * session, so a cookie copied out of this browser cannot let a TV in. Returns
+ * the base64 signature, or null.
+ */
+export async function signTvApproval(identity, hostId, requestId, code) {
+    try {
+        const signed = tvApprovalMessage(identity.hostId || hostId, requestId, code);
+        const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
+        return bytesToBase64(new Uint8Array(sig));
+    } catch (e) {
+        console.error('[MW-LANTV] Could not sign the approval:', e.message);
+        return null;
+    }
+}
+
+/** Sign this page's no to such a TV, as a yes is signed. Returns base64, or null. */
+export async function signTvRefusal(identity, hostId, requestId) {
+    try {
+        const signed = tvRefusalMessage(identity.hostId || hostId, requestId);
+        const sig = await crypto.subtle.sign(SIGN_PARAMS, identity.privateKey, signed);
+        return bytesToBase64(new Uint8Array(sig));
+    } catch (e) {
+        console.error('[MW-LANTV] Could not sign the refusal:', e.message);
+        return null;
+    }
+}
+
+/**
  * The single sha-256 fingerprint an SDP commits to, uppercase hex with colons,
  * or null.
  *

@@ -22,9 +22,11 @@
  * rendezvous, which keeps that path). This question, over the host list, names
  * the TV by its address, says in its own line that it uses plain HTTP and can
  * stream but never administer, and asks for the code the TV shows. The server
- * compares it and, once it matches, the TV signs itself in. Only the
- * administrator may answer (an admin session, or this server's own computer);
- * anyone else is told so.
+ * compares it and, once it matches, the TV signs itself in. The administrator
+ * (an admin session, or this server's own computer) lets it in as before. A
+ * paired device that is not the administrator may let it in for a few hours,
+ * when the host allows it (`short` in the request), its answer signed with its
+ * pairing key; anyone else is told so, in one sentence whatever the reason.
  *
  * It looks like PairApproveDialog and shares its styles, but answers on the
  * plain-HTTP routes (/api/lan-http/approve/<id>, /api/lan-http/refuse/<id>).
@@ -51,6 +53,12 @@ export function tvPairRequestFromPath(pathname) {
 function problemText(err) {
     const status = err?.statusCode || 0;
     const error = err?.responseBody?.error || '';
+    // One answer for every reason a paired device that is not the
+    // administrator cannot let this TV in: it never says which.
+    if (error === 'not_allowed_short') return t('tvPairing.notAllowedShort');
+    // The one exception: a device that could let it in, but was paired before
+    // the host kept how each device was paired (v0.4.4). The TV keeps waiting.
+    if (error === 'reappair_needed') return t('tvPairing.reappairNeeded');
     if (status === 404 || error === 'gone') return t('tvPairing.gone');
     if (error === 'not_allowed' || status === 403) return t('tvPairing.notAllowed');
     if (error === 'admin_locked') return t('devicePairing.locked');
@@ -77,6 +85,8 @@ export function openTvPairApprove(id) {
         const body = /** @type {HTMLElement} */ (el.querySelector('.pair-approve-body'));
         const actions = /** @type {HTMLElement} */ (el.querySelector('.share-popin-actions'));
         let outcome = /** @type {'approved'|'refused'|'closed'} */ ('closed');
+        /** What lanHttpRequest said, which a short approval signs for. */
+        let request = /** @type {{short?: boolean, host_id?: string}|null} */ (null);
         let closed = false;
         // While the question is asked, only its own buttons answer it.
         let dismissable = true;
@@ -115,8 +125,8 @@ export function openTvPairApprove(id) {
             const code = yes ? normalizeCode(field().value) : '';
             setButtons(false);
             try {
-                if (yes) await lanHttpApprove(id, code);
-                else await lanHttpRefuse(id);
+                if (yes) await lanHttpApprove(id, code, request || undefined);
+                else await lanHttpRefuse(id, request || undefined);
                 outcome = yes ? 'approved' : 'refused';
                 closeWith(yes ? t('tvPairing.approved') : t('devicePairing.refused'));
             } catch (err) {
@@ -134,9 +144,27 @@ export function openTvPairApprove(id) {
             }
         };
 
-        const ask = (request) => {
+        const ask = (shown) => {
             dismissable = false;
-            const who = t('tvPairing.browserAt', { address: request.address || '' });
+            request = shown;
+            const who = t('tvPairing.browserAt', { address: shown.address || '' });
+            // A paired device that is not the administrator lets the TV in for
+            // a few hours only (the host's setting), never past its own session.
+            let hint = `<p class="pair-approve-hint">${escapeHtml(t('tvPairing.hint'))}</p>`;
+            let yes = t('devicePairing.approve');
+            if (shown.short) {
+                const secs = Math.max(0, Number(shown.ends_in) || 0);
+                const hours = Math.max(1, Math.round(secs / 3600));
+                const until = new Date(Date.now() + secs * 1000).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                });
+                hint = `
+                    <p class="pair-approve-hint">${escapeHtml(t('tvPairing.shortHint', { hours, until }))}</p>
+                    <p class="pair-approve-hint">${escapeHtml(t('tvPairing.shortHintEarlier'))}</p>
+                `;
+                yes = t('tvPairing.shortApprove', { hours });
+            }
             body.innerHTML = `
                 <p class="pair-approve-lead">${escapeHtml(t('devicePairing.asks', { name: who }))}</p>
                 <p class="tv-pair-plain-http">${escapeHtml(t('tvPairing.plainHttp'))}</p>
@@ -144,11 +172,11 @@ export function openTvPairApprove(id) {
                 <input id="tv-pair-approve-code" class="share-pin pair-approve-code" type="text" maxlength="10"
                     autocomplete="off" autocapitalize="characters" spellcheck="false" data-code data-nav-initial>
                 <p class="pair-approve-error" data-error hidden></p>
-                <p class="pair-approve-hint">${escapeHtml(t('tvPairing.hint'))}</p>
+                ${hint}
             `;
             actions.innerHTML = `
                 <button type="button" class="btn btn-secondary" data-refuse>${escapeHtml(t('devicePairing.refuse'))}</button>
-                <button type="button" class="btn" data-approve disabled>${escapeHtml(t('devicePairing.approve'))}</button>
+                <button type="button" class="btn" data-approve disabled>${escapeHtml(yes)}</button>
             `;
             const approve = /** @type {HTMLButtonElement} */ (
                 actions.querySelector('[data-approve]')

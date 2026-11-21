@@ -19,6 +19,10 @@
 
 #include "common/Types.h"
 
+#include <QByteArray>
+#include <QHostAddress>
+#include <QList>
+#include <QPair>
 #include <QString>
 
 #include <functional>
@@ -45,6 +49,14 @@ struct LanHttpDeps
     /// The HTTPS port, for the approval page's address on this LAN when there
     /// is no public link. 0: none.
     std::function<quint16()> httpsPort;
+    /// This host's MW-BIND-v1 public key, SPKI DER (AppSettings::hostSigningPublicKey):
+    /// its key id is in what a paired device signs. Empty: no device may.
+    std::function<QByteArray()> hostKey;
+    /// This host's own links and own addresses, as for MW-PAIR-v1
+    /// (HouseLink::Links): where a paired device must stand to let a TV in for
+    /// a short while. Empty: nowhere.
+    std::function<QList<QPair<QHostAddress, int>>()> localSubnets;
+    std::function<bool(const QString& address)> thisMachine;
 };
 
 /// Register the routes of a TV on plain HTTP (issue #42) and of the
@@ -62,6 +74,9 @@ struct LanHttpDeps
 ///   POST /api/lan-http/refuse/:id      the administrator refuses
 /// The TV's three answer only on that path (HttpRequest::lanHttp); the
 /// administrator's three never on it, and only with the right that mints a PIN
-/// (HttpRequest::isLocal). Nothing a TV is told names the administrator.
+/// (HttpRequest::isLocal), for remember_me_days. Or, from the house
+/// (HouseLink), a paired device of the house (AuthManager::mayLetInShortly)
+/// that signs its answer with its pairing key: for a short while then, the TV
+/// going with that device's session. Nothing a TV is told names who let it in.
 void registerLanHttpRoutes(RestRouter& router, AuthManager& authManager, LanHttpPairing& book,
                            LanHttpDeps deps);

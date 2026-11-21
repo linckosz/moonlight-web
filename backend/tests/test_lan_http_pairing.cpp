@@ -34,8 +34,11 @@ void run_lan_http_pairing_tests()
         CHECK(r.outcome == LanHttpPairing::Open::Opened);
         // An id of the shape the approval page reads, a code of six symbols of
         // Crockford's alphabet, a claim of 32 bytes.
-        CHECK(PhonePairing::isRequestId(r.request.id));
+        // 128 bits, 22 characters of base64url (R2).
+        CHECK_EQ(r.request.id.size(), qsizetype(22));
+        CHECK(LanHttpPairing::isRequestId(r.request.id));
         CHECK_EQ(r.request.code.size(), qsizetype(LanHttpPairing::CODE_LENGTH));
+        CHECK(LanHttpPairing::isCodeShape(r.request.code));
         for (const QChar c : r.request.code)
             CHECK(QStringLiteral("0123456789ABCDEFGHJKMNPQRSTVWXYZ").contains(c));
         CHECK_EQ(QByteArray::fromBase64(r.request.claim.toLatin1(), QByteArray::Base64UrlEncoding)
@@ -139,8 +142,10 @@ void run_lan_http_pairing_tests()
         wrong[0] = wrong[0] == QLatin1Char('A') ? QLatin1Char('B') : QLatin1Char('A');
         CHECK(book.approve(r.id, wrong, QString(), t0 + 1) == LanHttpPairing::Answer::WrongCode);
         CHECK(book.approve(r.id, wrong, QString(), t0 + 2) == LanHttpPairing::Answer::WrongCode);
-        // The third wrong code drops the request: the right one is too late.
-        CHECK(book.approve(r.id, wrong, QString(), t0 + 3) == LanHttpPairing::Answer::Gone);
+        // The third wrong code drops the request, and says so (R3): the right
+        // one is too late.
+        CHECK(book.approve(r.id, wrong, QString(), t0 + 3) == LanHttpPairing::Answer::TooManyTries);
+        CHECK_EQ(book.pending(t0 + 3), 0);
         CHECK(book.approve(r.id, r.code, QString(), t0 + 4) == LanHttpPairing::Answer::Gone);
         CHECK(book.poll(r.id, r.claim, tv, t0 + 5).state == LanHttpPairing::Poll::Gone);
         // A code of another length is a wrong code, not a match on its prefix.
@@ -187,5 +192,63 @@ void run_lan_http_pairing_tests()
               PhonePairing::Answer::Unknown);
         CHECK_EQ(tvBook.pending(t0 + 1), 1);
         CHECK(tvBook.poll(r.id, r.claim, tv, t0 + 1).state == LanHttpPairing::Poll::Pending);
+    }
+
+    SECTION("LanHttpPairing — a short approval, and what a paired device signs (TVNONADM)");
+
+    {
+        LanHttpPairing book;
+        const auto r = book.open(tv, t0).request;
+        CHECK(book.approve(r.id, r.code, QStringLiteral("phone-id"), t0 + 1, true) ==
+              LanHttpPairing::Answer::Approved);
+        const auto polled = book.poll(r.id, r.claim, tv, t0 + 2);
+        CHECK(polled.state == LanHttpPairing::Poll::Approved);
+        CHECK(polled.shortApproval);
+        CHECK_EQ(polled.approverId, QStringLiteral("phone-id"));
+        // The administrator's, as before: not short.
+        const auto s = book.open(tv, t0 + 3).request;
+        CHECK(book.approve(s.id, s.code, QString(), t0 + 4) == LanHttpPairing::Answer::Approved);
+        CHECK(!book.poll(s.id, s.claim, tv, t0 + 5).shortApproval);
+    }
+    {
+        // The shapes a device's answer is held to before anything is looked up.
+        CHECK(LanHttpPairing::isRequestId(QStringLiteral("AAAAAAAAAAAAAAAAAAAAA_")));
+        CHECK(LanHttpPairing::isRequestId(QStringLiteral("abcdefghijklmnopqrst-9")));
+        CHECK(!LanHttpPairing::isRequestId(QStringLiteral("AAAAAAAAAAAAAAAA")));        // 16
+        CHECK(!LanHttpPairing::isRequestId(QStringLiteral("AAAAAAAAAAAAAAAAAAAAAAA"))); // 23
+        CHECK(!LanHttpPairing::isRequestId(QStringLiteral("AAAAAAAAAAAAAAAAAAAAA=")));
+        CHECK(!LanHttpPairing::isRequestId(QString()));
+        CHECK(LanHttpPairing::isCodeShape(QStringLiteral("0123AB")));
+        CHECK(!LanHttpPairing::isCodeShape(QStringLiteral("!!!!!!")));
+        CHECK(!LanHttpPairing::isCodeShape(QStringLiteral("0123A")));
+        // Each field with its length first: a field cannot run into the next,
+        // and a yes is never a no.
+        const QString host = QStringLiteral("host-key-id");
+        const QString id = QStringLiteral("AAAAAAAAAAAAAAAAAAAAAA");
+        CHECK(LanHttpPairing::approveMessage(host, id, QStringLiteral("0123AB")) !=
+              LanHttpPairing::approveMessage(host + QLatin1Char('A'), id.left(21),
+                                             QStringLiteral("0123AB")));
+        CHECK(LanHttpPairing::approveMessage(host, id, QString()) !=
+              LanHttpPairing::refuseMessage(host, id));
+        CHECK(LanHttpPairing::approveMessage(host, id, QStringLiteral("0123AB"))
+                  .contains(QByteArrayLiteral("MW-LANTV-v1|approve")));
+        CHECK(LanHttpPairing::refuseMessage(host, id).contains(
+            QByteArrayLiteral("MW-LANTV-v1|refuse")));
+    }
+    {
+        // The vector the page shares (frontend/test/tvApprovalMessage.test.js):
+        // the same bytes on both sides.
+        const QString id = QStringLiteral("AbCdEfGhIjKlMnOpQrStUv");
+        CHECK_EQ(LanHttpPairing::approveMessage(QStringLiteral("host-key-id"), id,
+                                                QStringLiteral("HJDS4X"))
+                     .toHex(),
+                 QByteArrayLiteral("000000134d572d4c414e54562d76317c617070726f7665"
+                                   "0000000b686f73742d6b65792d6964"
+                                   "000000164162436445664768496a4b6c4d6e4f70517253745576"
+                                   "00000006484a44533458"));
+        CHECK_EQ(LanHttpPairing::refuseMessage(QStringLiteral("host-key-id"), id).toHex(),
+                 QByteArrayLiteral("000000124d572d4c414e54562d76317c726566757365"
+                                   "0000000b686f73742d6b65792d6964"
+                                   "000000164162436445664768496a4b6c4d6e4f70517253745576"));
     }
 }

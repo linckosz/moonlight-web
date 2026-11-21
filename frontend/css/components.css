@@ -1249,6 +1249,13 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     white-space: nowrap;
 }
 
+/* A TV let in for a short while by a paired device (issue #42): by whom, until when. */
+.session-short-tv {
+    margin-top: var(--space-1);
+    font-size: var(--fs-xs);
+    color: var(--text-2);
+}
+
 /* The connection history's link under Active Sessions: discreet (issue #42). */
 .admin-connection-history {
     display: flex;

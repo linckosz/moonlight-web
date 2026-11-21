@@ -469,10 +469,10 @@ void testAnApproverTakesWhatItApprovedAlong()
     settings.m_FilePath = tmp.path() + "/settings.json";
     AuthManager auth(&settings);
 
-    const QString phone = auth.createSession("192.168.1.20", "Phone");
-    const QString tv = auth.createSession("192.168.1.174", "TV");
-    const QString stick = auth.createSession("192.168.1.175", "Stick");
-    const QString laptop = auth.createSession("192.168.1.30", "Laptop");
+    const QString phone = auth.createSession(SessionOrigin::Unknown, "192.168.1.20", "Phone");
+    const QString tv = auth.createSession(SessionOrigin::Unknown, "192.168.1.174", "TV");
+    const QString stick = auth.createSession(SessionOrigin::Unknown, "192.168.1.175", "Stick");
+    const QString laptop = auth.createSession(SessionOrigin::Unknown, "192.168.1.30", "Laptop");
     const QString phoneId = auth.sessionIdForToken(phone);
     CHECK(auth.setSessionApprover(tv, phoneId));
     CHECK(auth.setSessionApprover(stick, auth.sessionIdForToken(tv)));
@@ -490,8 +490,8 @@ void testAnApproverTakesWhatItApprovedAlong()
 
     // Logging out is not a revocation: what the session approved stays, now
     // the administrator's.
-    const QString owner = auth.createSession("192.168.1.21", "Owner");
-    const QString box = auth.createSession("192.168.1.176", "Box");
+    const QString owner = auth.createSession(SessionOrigin::Unknown, "192.168.1.21", "Owner");
+    const QString box = auth.createSession(SessionOrigin::Unknown, "192.168.1.176", "Box");
     CHECK(auth.setSessionApprover(box, auth.sessionIdForToken(owner)));
     CHECK(auth.logoutSession(owner));
     CHECK(!auth.validateSession(owner));

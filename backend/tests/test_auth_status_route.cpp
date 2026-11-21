@@ -187,8 +187,8 @@ void testASessionIsReadAsBefore()
 {
     SECTION("auth status: a session read and slid as before, the name by the same rule");
     Server s;
-    const QString token =
-        s.auth->createSession(QStringLiteral("192.168.1.174"), QStringLiteral("Laptop"));
+    const QString token = s.auth->createSession(
+        SessionOrigin::Unknown, QStringLiteral("192.168.1.174"), QStringLiteral("Laptop"));
     const QString cookie = QStringLiteral("mw_session=") + token;
 
     // At home: signed in, the cookie slid, the name said.

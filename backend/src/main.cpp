@@ -3244,6 +3244,10 @@ int main(int argc, char* argv[])
                          session.lanHttp ? session.boundIp : session.ip, session.lanHttp});
         }
         activity.viewers = StreamActivity::viewersOf(live, kOwnerSlots, streamInstanceSalt);
+        // The TVs let in for a short while by a paired device, for the tray to
+        // tell once each (issue #42).
+        for (const AuthManager::ShortNotice& n : authManager.shortNotices())
+            activity.letIn.append({n.at, n.seq, n.tvAddress, n.approverName, n.endsAt});
         return activity;
     };
 
@@ -8541,6 +8545,21 @@ int main(int argc, char* argv[])
     // (server/PhonePairing.h). Here, after the rendezvous client: the QR code
     // opens this machine's public link while its line is up, which is where the
     // administrator's phone holds its session.
+    // This host's own links, where a paired device of the house answers from
+    // (server/HouseLink.h): read on every answer, so that a cable plugged in or
+    // a Wi-Fi joined since the start counts at once.
+    const auto thisHostsLinks = []() {
+        QList<QPair<QHostAddress, int>> subnets;
+        for (const QNetworkInterface& i : QNetworkInterface::allInterfaces()) {
+            const auto flags = i.flags();
+            if (!flags.testFlag(QNetworkInterface::IsUp) ||
+                flags.testFlag(QNetworkInterface::IsLoopBack))
+                continue;
+            for (const QNetworkAddressEntry& e : i.addressEntries())
+                if (e.prefixLength() > 0) subnets.append({e.ip(), e.prefixLength()});
+        }
+        return subnets;
+    };
     registerPairRequestRoutes(
         *server.router(), authManager,
         {[&appSettings]() { return appSettings.hostSigningPublicKey(); },
@@ -8564,21 +8583,7 @@ int main(int argc, char* argv[])
                  geoIpService.lookupIp(address, [](const QString&, const QString&) {});
              return city;
          },
-         []() {
-             // Read on every answer: a cable plugged in or a Wi-Fi joined since
-             // the start counts at once.
-             QList<QPair<QHostAddress, int>> subnets;
-             for (const QNetworkInterface& i : QNetworkInterface::allInterfaces()) {
-                 const auto flags = i.flags();
-                 if (!flags.testFlag(QNetworkInterface::IsUp) ||
-                     flags.testFlag(QNetworkInterface::IsLoopBack))
-                     continue;
-                 for (const QNetworkAddressEntry& e : i.addressEntries())
-                     if (e.prefixLength() > 0) subnets.append({e.ip(), e.prefixLength()});
-             }
-             return subnets;
-         },
-         &HttpServer::isLocalRequest});
+         thisHostsLinks, &HttpServer::isLocalRequest});
 
     // A TV on plain HTTP (issue #42, server/LanHttp.h): one of the devices the
     // owner listed in lan_http_clients, let in by the code it shows. Its book
@@ -8591,7 +8596,9 @@ int main(int argc, char* argv[])
          [&server](const QString& address) { server.reportAuthFailure(address); },
          &HttpServer::sessionTokenFromRequest,
          [&rendezvous]() { return rendezvous.isOnline() ? rendezvous.entryUrl() : QString(); },
-         [&server]() { return server.activeHttpsPort(); }});
+         [&server]() { return server.activeHttpsPort(); },
+         [&appSettings]() { return appSettings.hostSigningPublicKey(); }, thisHostsLinks,
+         &HttpServer::isLocalRequest});
     server.setLanHttpClientsProvider([&appSettings]() { return appSettings.lanHttpClients(); });
     // And the one host it reaches, by every route that names one: this
     // machine's own, on Windows (LanHttp::hostAllowed, security review 13/11).

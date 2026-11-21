@@ -87,8 +87,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         if (!certificate.isEmpty() && authManager.certAuthEnabled()) {
             if (authManager.validateCertificate(certificate)) {
                 // Certificate valid — create session (same flow as PIN success)
-                QString token =
-                    authManager.createSession(req.clientAddress, machineName, false, !remember);
+                QString token = authManager.createSession(
+                    SessionOrigin::Certificate, req.clientAddress, machineName, false, !remember);
                 geoIpService.lookupIp(
                     req.clientAddress,
                     [&authManager, token](const QString& city, const QString& country) {
@@ -124,8 +124,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
         QJsonObject obj;
         switch (result.result) {
         case AuthManager::Valid: {
-            QString token =
-                authManager.createSession(req.clientAddress, machineName, false, !remember);
+            QString token = authManager.createSession(SessionOrigin::Pin, req.clientAddress,
+                                                      machineName, false, !remember);
 
             // Look up the IP geolocation asynchronously and store in the session
             geoIpService.lookupIp(req.clientAddress, [&authManager, token](const QString& city,
@@ -191,7 +191,8 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
 
         QString machineName = body.value(QStringLiteral("machine_name")).toString().trimmed();
         if (machineName.isEmpty()) machineName = handoff->machineName;
-        const QString token = authManager.createSession(req.clientAddress, machineName);
+        const QString token =
+            authManager.createSession(SessionOrigin::HomeScreen, req.clientAddress, machineName);
         geoIpService.lookupIp(req.clientAddress,
                               [&authManager, token](const QString& city, const QString& country) {
                                   authManager.setSessionGeo(token, city, country);
@@ -509,6 +510,16 @@ void registerAuthRoutes(HttpServer& server, AuthManager& authManager, GeoIpServi
                 // "Local" for private IPs, else city/country from stored geo data
                 entry["location"] = AuthManager::isPrivateIP(s.ip);
                 entry["current"] = !currentId.isEmpty() && s.token == currentId;
+                // A TV let in for a short while: by which device, by its name
+                // as this list shows it (S7: here and in the tray only).
+                if (s.approverBound) {
+                    for (const auto& by : sessions) {
+                        if (by.token == s.approvedBy) {
+                            entry["approved_by_name"] = by.machineName;
+                            break;
+                        }
+                    }
+                }
                 arr.append(entry);
             }
             QJsonObject obj;

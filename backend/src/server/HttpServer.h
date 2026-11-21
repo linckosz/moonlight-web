@@ -259,8 +259,14 @@ public:
         m_HomeScreenIdentity = std::move(fn);
     }
 
-    /// Set the AuthManager for PIN-based authentication of remote requests.
-    void setAuthManager(AuthManager* am) { m_AuthManager = am; }
+    /// Set the AuthManager for PIN-based authentication of remote requests. A
+    /// TV's session that goes takes its WebSocket along (closeLanHttpSocket).
+    void setAuthManager(AuthManager* am);
+    /// Closes the WebSocket of the TV whose session @p sessionId went: what it
+    /// sends there (ICE, input on the WebSocket fallback) is never checked
+    /// again once the socket is open (security review, O2). No-op for any other
+    /// session, which has no such socket.
+    void closeLanHttpSocket(const QString& sessionId);
 
     /// Whether an address can be the host machine itself, as /api/auth/host-key
     /// judges it (plausiblyHostAddress). Asked for a host session that has yet

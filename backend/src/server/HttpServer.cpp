@@ -1944,11 +1944,38 @@ QString shownForLog(const QString& value)
 
 } // namespace
 
+void HttpServer::setAuthManager(AuthManager* am)
+{
+    if (m_AuthManager) disconnect(m_AuthManager, nullptr, this, nullptr);
+    m_AuthManager = am;
+    // Revoked, expired on a fixed bound, replaced, or gone with the device that
+    // let it in: announced once its row is out of the file. A row the hourly
+    // purge drops on a sliding bound is not announced (O3): its socket stays
+    // open then, as its stream runs on, and that is meant.
+    if (am) connect(am, &AuthManager::sessionDestroyed, this, &HttpServer::closeLanHttpSocket);
+}
+
+void HttpServer::closeLanHttpSocket(const QString& sessionId)
+{
+    const QPointer<QTcpSocket> socket = m_LanHttpSockets.take(sessionId);
+    if (!socket || socket->state() != QAbstractSocket::ConnectedState) return;
+    socket->disconnectFromHost();
+    Logger::info(QString("[LanHttp] %1's connection closed with its session")
+                     .arg(LanHttp::normalizePeer(socket->peerAddress().toString())));
+}
+
 void HttpServer::refreshLanHttpView()
 {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_LanHttpReadAt != 0 && now - m_LanHttpReadAt < 2000) return;
     m_LanHttpReadAt = now;
+
+    // The administrator's setting, also when written by hand in settings.json:
+    // turned off, the TVs let in for a short while go (S6). The admin page's
+    // switch does it at once (SystemRoutes); this, and the hourly purge, catch
+    // the file.
+    if (m_AuthManager && !m_AuthManager->shortApprovalAllowed())
+        m_AuthManager->endShortLanHttpSessions();
 
     // This machine's own addresses: never "a TV", and the only names a TV may
     // ask under.

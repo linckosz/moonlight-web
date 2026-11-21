@@ -1079,6 +1079,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["pair_request_internet"] = appSettings.pairRequestInternet();
         // Whether the desktop is told when someone streams this screen.
         obj["stream_notifications"] = appSettings.streamNotifications();
+        // Whether a paired device may let a TV on plain HTTP in for a short
+        // while, and for how many hours (issue #42, AuthManager::mayLetInShortly).
+        obj["lan_http_short_approval"] = appSettings.lanHttpShortApproval();
+        obj["lan_http_short_hours"] = appSettings.lanHttpShortHours();
         // Whether the stream's packets ask the Wi-Fi for its video queue.
         obj["packet_marking"] = appSettings.packetMarking();
         // Whether the other displays go off while a stream runs on the virtual
@@ -1194,6 +1198,27 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             bool enabled = body["stream_notifications"].toBool();
             appSettings.setStreamNotifications(enabled);
             obj["stream_notifications"] = enabled;
+            hadChange = true;
+        }
+
+        // ── A TV let in for a short while (issue #42) ────────────────────
+        // The administrator's alone, like every setting here (isLocal above).
+        // Turned off, the TVs let in this way go at once, their streams with
+        // them (S6); the hours apply to the next approvals.
+        // The hours first: refused, nothing of the two is applied.
+        if (body.contains("lan_http_short_hours")) {
+            const QJsonValue v = body["lan_http_short_hours"];
+            if (!v.isDouble() || v.toDouble() != v.toInt() ||
+                !appSettings.setLanHttpShortHours(v.toInt()))
+                return HttpResponse::error(400, "lan_http_short_hours must be 2, 4, 8 or 12");
+            obj["lan_http_short_hours"] = appSettings.lanHttpShortHours();
+            hadChange = true;
+        }
+        if (body.contains("lan_http_short_approval")) {
+            const bool enabled = body["lan_http_short_approval"].toBool();
+            appSettings.setLanHttpShortApproval(enabled);
+            obj["lan_http_short_approval"] = enabled;
+            if (!enabled) authManager.endShortLanHttpSessions();
             hadChange = true;
         }
 

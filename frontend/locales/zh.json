@@ -453,7 +453,12 @@
         "approved": "已批准。该设备会自行登录。",
         "wrongCode": "这不是该设备显示的代码。",
         "gone": "此请求已过期或已被处理。该设备会自动显示新代码：请重新扫描。",
-        "notAllowed": "只有管理员才能让此设备加入。"
+        "notAllowed": "只有管理员才能让此设备加入。",
+        "notAllowedShort": "此浏览器无法让该设备加入。请联系此服务器的管理员。",
+        "reappairNeeded": "此设备是在 0.4.4 版本之前配对的。请重新配对，才能让电视加入。",
+        "shortHint": "您不是管理员：这台电视将获准加入 {{hours}} 小时，直到 {{until}}。",
+        "shortHintEarlier": "如果此设备退出登录，电视也会提前退出。管理员会收到通知，并可撤销其访问。",
+        "shortApprove": "允许加入 {{hours}} 小时"
     },
     "settings": {
         "title": "串流设置",
@@ -671,6 +676,13 @@
         "pairRequestInternetDesc": "适用于 MoonlightWeb TV 应用：不在您本地网络中的电视可以通过二维码请求加入。只有在您于此处输入电视上显示的代码后，它才能加入。",
         "pairRequestInternetOn": "已启用来自互联网的二维码请求",
         "pairRequestInternetOff": "已禁用来自互联网的二维码请求",
+        "shortTv": "允许已配对的设备让电视短时间加入",
+        "shortTvDesc": "仅限地址已获准使用 HTTP 的电视。时间到期后它即退出，或在让它加入的设备会话结束时提前退出。关闭此项后，以这种方式加入的电视将全部退出。",
+        "shortTvHours": "时长",
+        "shortTvHoursValue": "{{hours}} 小时",
+        "shortTvHoursDesc": "最多 12 小时，且绝不会超过让它加入的设备的会话时长。",
+        "shortTvSaved": "设置已保存",
+        "shortTvLine": "由 {{name}} 允许加入，有效至 {{until}} · 随 {{name}} 的会话一起退出",
         "activeSessions": "活动会话",
         "activeSessionsDesc": "当前连接到此服务器的远程用户。",
         "connectionHistory": "下载连接历史",

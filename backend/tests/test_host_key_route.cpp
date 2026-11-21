@@ -352,8 +352,8 @@ void testAddressThatCanBeThisMachine()
 /// was opened through a rendezvous line: made, and bound to no browser key.
 QString olderLineSession(Server& s)
 {
-    return s.auth->createSession(kThisMachine, QStringLiteral("Host machine (remote link)"), true,
-                                 false, true);
+    return s.auth->createSession(SessionOrigin::Unknown, kThisMachine,
+                                 QStringLiteral("Host machine (remote link)"), true, false, true);
 }
 
 void testOlderLineSessionTakesTheKeyOfItsLine()
@@ -435,10 +435,12 @@ void testOlderLineSessionTakesTheKeyOfItsLine()
         // A host session made on a socket, a session a PIN opened, on a socket
         // and on a line, no session at all, and a session that was ended.
         const QString onSocket =
-            s.auth->createSession("127.0.0.1", QStringLiteral("Host machine"), true, false, false);
-        const QString byPin = s.auth->createSession("198.51.100.4", QStringLiteral("Phone"));
-        const QString lineGuest =
-            s.auth->createSession("198.51.100.4", QStringLiteral("Phone"), false, false, true);
+            s.auth->createSession(SessionOrigin::Unknown, "127.0.0.1",
+                                  QStringLiteral("Host machine"), true, false, false);
+        const QString byPin =
+            s.auth->createSession(SessionOrigin::Unknown, "198.51.100.4", QStringLiteral("Phone"));
+        const QString lineGuest = s.auth->createSession(
+            SessionOrigin::Unknown, "198.51.100.4", QStringLiteral("Phone"), false, false, true);
         CHECK(s.auth->adoptLineKey(onSocket, lineKey, counted) == Adoption::NotConcerned);
         CHECK(s.auth->adoptLineKey(byPin, lineKey, counted) == Adoption::NotConcerned);
         CHECK(s.auth->adoptLineKey(lineGuest, lineKey, counted) == Adoption::NotConcerned);
@@ -494,7 +496,8 @@ void testTunnelHostSessionKeepsTheDefaultLifetime()
     SECTION("host key: a session unlocked with the admin password, 90 days as well");
     {
         Server s(3650);
-        const QString admin = s.auth->createSession(QStringLiteral("192.168.1.35"), "Admin PC");
+        const QString admin = s.auth->createSession(SessionOrigin::Unknown,
+                                                    QStringLiteral("192.168.1.35"), "Admin PC");
         CHECK_EQ(s.auth->cookieMaxAgeFor(admin), 3650LL * 24 * 3600);
         CHECK(s.auth->promoteSessionToAdmin(admin));
         CHECK_EQ(s.auth->cookieMaxAgeFor(admin), 7776000LL);

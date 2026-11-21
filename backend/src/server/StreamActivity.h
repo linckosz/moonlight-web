@@ -158,6 +158,21 @@ struct StreamActivity
     }
 
     QList<StreamViewer> viewers;
+
+    /// A TV on plain HTTP let in for a short while by a paired device (issue
+    /// #42, AuthManager::shortNotices): the latest few, which the tray tells
+    /// once each, for information. The device's name is here for the tray
+    /// alone (S7); this snapshot goes to it over loopback only.
+    struct LetIn
+    {
+        qint64 at = 0;   ///< when, in seconds since the epoch
+        int seq = 0;     ///< tells two of the same second apart
+        QString address; ///< the TV's
+        QString by;      ///< the device's name
+        qint64 endsAt = 0;
+    };
+    QList<LetIn> letIn;
+
     /// The owner's answer to "tell me when this happens" (AppSettings
     /// stream_notifications). Travels with the snapshot so the tray client,
     /// which has no settings of its own, obeys the same switch.
@@ -183,8 +198,16 @@ struct StreamActivity
                                    {QStringLiteral("address"), v.address},
                                    {QStringLiteral("lan_http"), v.lanHttp},
                                    {QStringLiteral("slot"), v.slot}});
+        QJsonArray lets;
+        for (const LetIn& l : letIn)
+            lets.append(QJsonObject{{QStringLiteral("at"), l.at},
+                                    {QStringLiteral("seq"), l.seq},
+                                    {QStringLiteral("address"), l.address},
+                                    {QStringLiteral("by"), l.by},
+                                    {QStringLiteral("ends_at"), l.endsAt}});
         return QJsonObject{{QStringLiteral("count"), viewers.size()},
                            {QStringLiteral("viewers"), arr},
+                           {QStringLiteral("let_in"), lets},
                            {QStringLiteral("notify"), notify}};
     }
 
@@ -192,6 +215,14 @@ struct StreamActivity
     {
         StreamActivity a;
         a.notify = obj.value(QStringLiteral("notify")).toBool(true);
+        for (const QJsonValue& v : obj.value(QStringLiteral("let_in")).toArray()) {
+            const QJsonObject o = v.toObject();
+            a.letIn.append({static_cast<qint64>(o.value(QStringLiteral("at")).toDouble()),
+                            o.value(QStringLiteral("seq")).toInt(),
+                            o.value(QStringLiteral("address")).toString(),
+                            o.value(QStringLiteral("by")).toString(),
+                            static_cast<qint64>(o.value(QStringLiteral("ends_at")).toDouble())});
+        }
         for (const QJsonValue& v : obj.value(QStringLiteral("viewers")).toArray()) {
             const QJsonObject o = v.toObject();
             a.viewers.append({o.value(QStringLiteral("id")).toString(),

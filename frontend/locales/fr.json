@@ -453,7 +453,12 @@
         "approved": "Accordé. L'appareil se connecte de lui-même.",
         "wrongCode": "Ce n'est pas le code affiché par cet appareil.",
         "gone": "Cette demande a expiré ou a déjà reçu une réponse. L'appareil affiche de lui-même un nouveau code : scannez-le à nouveau.",
-        "notAllowed": "Seul l'administrateur peut laisser entrer cet appareil."
+        "notAllowed": "Seul l'administrateur peut laisser entrer cet appareil.",
+        "notAllowedShort": "Ce navigateur ne peut pas faire entrer cet appareil. Demandez à l'administrateur de ce serveur.",
+        "reappairNeeded": "Cet appareil a été appairé avant la version 0.4.4. Appairez-le à nouveau pour pouvoir laisser entrer une TV.",
+        "shortHint": "Vous n'êtes pas administrateur : cette TV entrera pour {{hours}} h, jusqu'à {{until}}.",
+        "shortHintEarlier": "Elle sera déconnectée plus tôt si cet appareil se déconnecte. L'administrateur en est informé et peut la révoquer.",
+        "shortApprove": "Laisser entrer pour {{hours}} h"
     },
     "settings": {
         "title": "Paramètres de streaming",
@@ -671,6 +676,13 @@
         "pairRequestInternetDesc": "Pour l'appli MoonlightWeb TV : une TV hors de votre réseau local peut demander à être ajoutée par QR code. Elle n'entre que si vous tapez ici le code qu'elle affiche.",
         "pairRequestInternetOn": "Demandes par QR code depuis Internet activées",
         "pairRequestInternetOff": "Demandes par QR code depuis Internet désactivées",
+        "shortTv": "Laisser les appareils appairés faire entrer une TV pour une courte durée",
+        "shortTvDesc": "Seulement une TV dont l'adresse est déjà autorisée en HTTP. Elle part au bout de la durée, ou plus tôt avec la session de l'appareil qui l'a laissée entrer. Désactiver fait partir les TV entrées ainsi.",
+        "shortTvHours": "Durée",
+        "shortTvHoursValue": "{{hours}} h",
+        "shortTvHoursDesc": "12 h au plus. Jamais plus que la session de l'appareil qui la laisse entrer.",
+        "shortTvSaved": "Réglage enregistré",
+        "shortTvLine": "Laissé entrer par {{name}}, jusqu'à {{until}} · part avec la session de {{name}}",
         "activeSessions": "Sessions actives",
         "activeSessionsDesc": "Utilisateurs distants actuellement connectés à ce serveur.",
         "connectionHistory": "Télécharger l'historique des connexions",

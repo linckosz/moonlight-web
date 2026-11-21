@@ -415,6 +415,21 @@ void TrayManager::pollActivity()
         for (const StreamViewer& v : changes.left)
             qInfo() << "[TrayManager] Notifying: departure of" << ViewerNotices::nameOf(v);
     }
+    // A TV let in for a short while by a paired device: told once, for
+    // information (issue #42, Q3). Its address in the log, never the name.
+    for (const StreamActivity::LetIn& l : activity.letIn) {
+        if (l.at < m_LetInAt || (l.at == m_LetInAt && l.seq <= m_LetInSeq)) continue;
+        m_LetInAt = l.at;
+        m_LetInSeq = l.seq;
+        const QString by = l.by.isEmpty() ? tr("a paired device") : l.by;
+        const QString until = QLocale().toString(QDateTime::fromSecsSinceEpoch(l.endsAt).time(),
+                                                 QLocale::ShortFormat);
+        m_Notices.queueLetIn(QString::number(l.at) + QLatin1Char('|') + QString::number(l.seq),
+                             tr("Browser at %1 let in by %2 until %3, over unencrypted HTTP. You "
+                                "can revoke it in Active sessions.")
+                                 .arg(l.address, by, until));
+        qInfo() << "[TrayManager] Notifying: a TV let in for a short while at" << l.address;
+    }
     releaseNotice();
 
     // The count says "someone is watching" on its own, whatever became of the
