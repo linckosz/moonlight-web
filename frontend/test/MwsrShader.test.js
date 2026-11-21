@@ -5,6 +5,7 @@ import {
     MWSR_DOWN_TAPS,
     MWSR_DOWN_TAPS_SRGB,
     MWSR_LAW,
+    MWSR_MODES,
     MWSR_OVERRIDES,
     MWSR_OVERRIDE_SPEC,
     MWSR_UNIFORM_FLOATS,
@@ -18,6 +19,7 @@ import {
     mwsrRegime,
     mwsrRegimeKey,
     mwsrRegimes,
+    mwsrSharpen,
     mwsrUniforms,
     mwsrWgsl,
 } from '../js/stream/renderers/MwsrShader.js';
@@ -786,5 +788,68 @@ describe('the mwsr shader text', () => {
         }
         // the kernel ramps from 1:1 to the law's first scale
         expect(MWSR_CONSTANTS.S_FULL).toBeLessThanOrEqual(MWSR_LAW.scale[0]);
+    });
+
+    it('has two modes for the setting: the kernel pushed alone, or the law and a pass after it', () => {
+        const at = (s, mode) => mwsrLaw(1000, 1000, 1000 * s, 1000 * s, { mode });
+        const { force } = MWSR_LAW;
+        const perf = MWSR_MODES.performance.force;
+        expect(perf).toBe(1.15);
+        // without a mode, and in quality, the law as it was
+        for (const s of [1.07, 1.2, 4 / 3, 1.5, 2, 3]) {
+            expect(at(s, 'quality')).toEqual(at(s));
+            expect(at(s, null)).toEqual(at(s));
+            expect(at(s, 'nonsense')).toEqual(at(s));
+        }
+        // performance: the force from 1.15, on kg and kl only, up to ×4/3
+        for (const s of [1.07, 1.2, 4 / 3]) {
+            expect(at(s, 'performance').kg).toBeCloseTo(at(s).kg * perf, 12);
+            expect(at(s, 'performance').kl).toBeCloseTo(at(s).kl * perf, 12);
+            expect(at(s, 'performance').kc).toBe(at(s).kc);
+            expect(at(s, 'performance').kr).toBe(at(s).kr);
+            expect(at(s, 'performance').ft).toBe(at(s).ft);
+            expect(at(s, 'performance').kwc).toBe(at(s).kwc);
+        }
+        // then a straight line in ln(s) to the law's own force at ×2, and the same picture from there
+        const mid = Math.sqrt(force.from * force.to);
+        const lawMid = 1 + (force.top - 1) / 2;
+        expect(at(mid, 'performance').kg / at(mid).kg).toBeCloseTo(
+            (perf + (force.top - perf) / 2) / lawMid,
+            10,
+        );
+        for (const s of [2, 2.5, 4]) expect(at(s, 'performance')).toEqual(at(s));
+        // the uniform block takes the mode: kg at its place (10), kl at its place (20)
+        const block = (mode) => mwsrUniforms(1920, 1080, 2560, 1440, { mode });
+        expect(block('performance')[10]).toBeCloseTo(block()[10] * perf, 6);
+        expect(block('performance')[20]).toBeCloseTo(block()[20] * perf, 6);
+        expect(Array.from(block('quality'))).toEqual(Array.from(block()));
+
+        // the pass after the kernel: quality only, by the scale
+        const sh = (s, opts) => mwsrSharpen(1000, 1000, 1000 * s, 1000 * s, opts);
+        const q = { mode: 'quality' };
+        expect(sh(4 / 3, q)).toBeCloseTo(0.5, 12);
+        expect(sh(1.2, q)).toBeCloseTo(0.5, 12);
+        expect(sh(1.5, q)).toBeCloseTo(0.25, 12);
+        expect(sh(2, q)).toBe(0);
+        expect(sh(3, q)).toBe(0);
+        // straight lines in ln(s) between its points
+        expect(sh(Math.sqrt((4 / 3) * 1.5), q)).toBeCloseTo(0.375, 10);
+        expect(sh(Math.sqrt(1.5 * 2), q)).toBeCloseTo(0.125, 10);
+        // it never grows with the scale
+        const scales = [1.07, 1.1, 1.2, 4 / 3, 1.4, 1.5, 1.6, 1.8, 2, 2.5];
+        for (let i = 1; i < scales.length; i++)
+            expect(sh(scales[i], q), `${scales[i]}`).toBeLessThanOrEqual(sh(scales[i - 1], q));
+        // none at 1:1, whole from S_FULL on, like the kernel's sharpening
+        expect(sh(1, q)).toBe(0);
+        expect(sh(1 + (MWSR_CONSTANTS.S_FULL - 1) / 2, q)).toBeCloseTo(0.25, 10);
+        expect(sh(MWSR_CONSTANTS.S_FULL, q)).toBeCloseTo(0.5, 12);
+        // a reduction, an HDR feed and every other mode: no pass
+        expect(sh(0.75, q)).toBe(0);
+        expect(sh(4 / 3, { mode: 'quality', hdr: true })).toBe(0);
+        expect(sh(4 / 3, { mode: 'performance' })).toBe(0);
+        expect(sh(4 / 3)).toBe(0);
+        expect(sh(4 / 3, { mode: 'nonsense' })).toBe(0);
+        // the smaller axis decides, as for the law
+        expect(mwsrSharpen(1280, 720, 2560, 1000, q)).toBeCloseTo(sh(1000 / 720, q), 12);
     });
 });

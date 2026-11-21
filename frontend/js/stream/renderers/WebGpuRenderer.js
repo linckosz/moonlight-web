@@ -51,6 +51,15 @@
  *   whose reports time it on the visitors' GPUs: it takes 11-15 % less on the
  *   9900X's Radeon and 7-9 % more on a 780M at a held clock (journal, 04/11).
  *
+ * mwsr's two modes (opts.mwsrMode, the setting's; MwsrShader's MWSR_MODES):
+ *   'performance' is the kernel alone, its force set by the mode; 'quality'
+ *   draws the kernel into intermTex (rgba8unorm, output size) and a sharpening
+ *   pass from there to the canvas (MWSR_SHARPEN_WGSL below, the strength by
+ *   the scale: mwsrSharpen), on an SDR stream that is scaled up by less than
+ *   ×2; any other frame takes the kernel's one pass. Its pipelines are built
+ *   with the kernel's. Without opts.mwsrMode (the laboratory) nothing of it is
+ *   built, and the kernel draws by the law alone.
+ *
  * mwsr 2 and 3 (opts.deblock 'fixed' or 'qp': the debug menu's « MoonlightWeb
  *   2 » and « 3 », never 'auto'): the same kernel after a deblocking of the
  *   frame (DeblockShader.js) — a compute pass over inputTex into a fixed-point
@@ -112,6 +121,7 @@ import {
     mwsrRegime,
     mwsrRegimeKey,
     mwsrRegimes,
+    mwsrSharpen,
     mwsrUniforms,
     mwsrWgsl,
 } from './MwsrShader.js';
@@ -1101,6 +1111,77 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32>{
 }
 `;
 
+// mwsr's `quality` mode: the pass after the kernel. RCAS's math (AMD FidelityFX
+// FSR1, MIT, as above), written on vectors, with three differences: the
+// strength is a uniform (mwsrSharpen: it changes with the scale), the five
+// texels are loaded, not sampled (intermTex and the canvas are the same size),
+// and a flat or saturated neighbourhood divides by nothing — the range's
+// division gives 0 on a flat cross, the lower bound 0 under four black
+// neighbours, and four white neighbours leave the lower bound alone to decide.
+// Those guards are the ones of the measure Bruno chose this mode on (21/11/2026).
+// Uniform: (1/outW, 1/outH, strength, _); the texel size is not read.
+const MWSR_SHARPEN_WGSL = /* wgsl */ `
+struct Sharpen { texel : vec2f, strength : f32, pad : f32, }
+@group(0) @binding(0) var input : texture_2d<f32>;
+@group(0) @binding(1) var sam : sampler;
+@group(0) @binding(2) var<uniform> u : Sharpen;
+
+@vertex
+fn vs(@builtin(vertex_index) vid : u32) -> @builtin(position) vec4f {
+    let uv = vec2f(f32((vid << 1u) & 2u), f32(vid & 2u));
+    return vec4f(uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);
+}
+
+fn at(p : vec2i, last : vec2i) -> vec3f {
+    return textureLoad(input, clamp(p, vec2i(0), last), 0).rgb;
+}
+
+@fragment
+fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
+    let last = vec2i(textureDimensions(input)) - vec2i(1);
+    let p = vec2i(pos.xy);
+    let b = at(p + vec2i(0, -1), last);
+    let d = at(p + vec2i(-1, 0), last);
+    let e = at(p, last);
+    let f = at(p + vec2i(1, 0), last);
+    let h = at(p + vec2i(0, 1), last);
+
+    // how far the centre stands from its cross, as a share of their range:
+    // a lone texel is noise, and takes half the lobe
+    let w = vec3f(0.5, 1.0, 0.5);
+    let bL = dot(b, w);
+    let dL = dot(d, w);
+    let eL = dot(e, w);
+    let fL = dot(f, w);
+    let hL = dot(h, w);
+    let range = max(max(max(bL, dL), max(fL, hL)), eL) - min(min(min(bL, dL), min(fL, hL)), eL);
+    var nz = abs(0.25 * (bL + dL + fL + hL) - eL);
+    if (range > 0.0) {
+        nz = min(nz / range, 1.0);
+    } else {
+        nz = 0.0;
+    }
+    nz = 1.0 - 0.5 * nz;
+
+    // the strongest negative lobe that keeps every channel within 0..1
+    let mn4 = min(min(b, d), min(f, h));
+    let mx4 = max(max(b, d), max(f, h));
+    // (the floors below are never reached by 8-bit values that pass the tests
+    // beside them: they keep a division by zero out of the branch not taken)
+    let hitMin = min(mn4, e) / max(4.0 * mx4, vec3f(1e-6));
+    let hitMax = select(
+        vec3f(-1.0),
+        (vec3f(1.0) - max(mx4, e)) / min(4.0 * mn4 - vec3f(4.0), vec3f(-1e-6)),
+        mn4 < vec3f(1.0),
+    );
+    let lobe3 = max(-hitMin, hitMax);
+    let limit = 0.25 - (1.0 / 16.0);
+    let lobe = max(-limit, min(max(lobe3.r, max(lobe3.g, lobe3.b)), 0.0)) * u.strength * nz;
+
+    return vec4f((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), 1.0);
+}
+`;
+
 export class WebGpuRenderer extends VideoRenderer {
     constructor() {
         super();
@@ -1114,6 +1195,13 @@ export class WebGpuRenderer extends VideoRenderer {
         this._passthrough = false;
         /** 4:4:4 stream: mwsr votes and sharpens per channel (CHROMA444). */
         this._yuv444 = false;
+        /** mwsr's mode (opts.mwsrMode: 'performance' | 'quality'), null: the law alone. */
+        this._mwsrMode = null;
+        /** `quality`: the pass after the kernel, built with it; null where it cannot run. */
+        this._mwsrSharpenPipeline = null;
+        /** What its uniform block holds, and whether the last draw ran it. */
+        this._mwsrSharpenKey = '';
+        this._mwsrSharpened = false;
         /** SDR: inputTex and the canvas carry `-srgb` view formats (mwsr's reduction). */
         this._srgbViews = false;
         /** HDR `linear`: mwsr's reduction takes the linear light pass 0 writes for it
@@ -1193,6 +1281,9 @@ export class WebGpuRenderer extends VideoRenderer {
                 ? opts.algo
                 : 'sgsr';
         r._yuv444 = opts.yuv444 === true;
+        // mwsr's mode, the setting's; anything else, the law alone (the lab).
+        r._mwsrMode =
+            opts.mwsrMode === 'quality' || opts.mwsrMode === 'performance' ? opts.mwsrMode : null;
         // mwsr 2 / 3: the deblocking before the kernel (the debug menu's).
         r._deblock = opts.deblock === 'fixed' || opts.deblock === 'qp' ? opts.deblock : null;
         // The gaze zone the caller wants (BrowserDetect.mwsrGazeWanted): the
@@ -1711,8 +1802,19 @@ export class WebGpuRenderer extends VideoRenderer {
         });
         this._mwsrMapGroups = new WeakMap();
         this._mwsrPipelines = new Map();
-        for (const reg of mwsrRegimes({ srgb: this._srgbViews, linear: this._hdrLinear }))
-            this._mwsrPipeline(reg);
+        const regimes = mwsrRegimes({ srgb: this._srgbViews, linear: this._hdrLinear });
+        for (const reg of regimes) this._mwsrPipeline(reg);
+        // `quality`: the kernel's pipeline into intermTex and the pass after it,
+        // on an SDR stream only (the pass was measured on 8-bit pictures).
+        this._mwsrSharpenPipeline = null;
+        if (this._mwsrMode === 'quality' && this._mwsrSharpenFits()) {
+            this._buildMwsrSharpenResources();
+            this._mwsrPipeline(
+                regimes.find((r) => r.mode === 'up'),
+                false,
+                true,
+            );
+        }
         // The zones: the same bindings and the zones' texture, the `up` kernel's
         // second text, built now too, so that a frame's zones compile nothing.
         if (this._zoneMap) {
@@ -1745,12 +1847,16 @@ export class WebGpuRenderer extends VideoRenderer {
      * span and its light, drawing into the canvas' `-srgb` view where there
      * is one. Built once per device, kept in a map by regime. `map`: the
      * kernel's second text, which reads the zones (binding 3).
+     * `interm`: the kernel drawing into intermTex, for the `quality` mode's
+     * pass to read (the same pipeline where the canvas has intermTex's format).
      * @param {{mode: 'up'|'down', taps: number, rDown: number, linearLight: number}} reg
      * @param {boolean} [map]
+     * @param {boolean} [interm]
      * @returns {GPURenderPipeline}
      */
-    _mwsrPipeline(reg, map = false) {
-        const key = mwsrRegimeKey(reg) + (map ? 'map' : '');
+    _mwsrPipeline(reg, map = false, interm = false) {
+        if (this._format === this._interFormat) interm = false;
+        const key = mwsrRegimeKey(reg) + (map ? 'map' : '') + (interm ? '>interm' : '');
         let pipeline = this._mwsrPipelines.get(key);
         if (pipeline) return pipeline;
         const srgb = reg.mode === 'down' && this._srgbViews;
@@ -1777,12 +1883,64 @@ export class WebGpuRenderer extends VideoRenderer {
                               ...(this._mwsrOverrides || {}),
                           }
                         : mwsrDownConstants(reg),
-                targets: [{ format: srgb ? this._format + '-srgb' : this._format }],
+                targets: [
+                    {
+                        format: interm
+                            ? this._interFormat
+                            : srgb
+                              ? this._format + '-srgb'
+                              : this._format,
+                    },
+                ],
             },
             primitive: { topology: 'triangle-list' },
         });
         this._mwsrPipelines.set(key, pipeline);
         return pipeline;
+    }
+
+    /**
+     * Whether the `quality` mode's pass can run on this stream: 8-bit SDR
+     * intermediates, and no HDR pass 0 (a tone-mapped HDR stream is an SDR
+     * picture, but the pass has not been checked on one yet).
+     */
+    _mwsrSharpenFits() {
+        return (
+            this._interFormat === 'rgba8unorm' &&
+            !this._hdr &&
+            !this._hdrYuv &&
+            !this._hdrExtTonemap
+        );
+    }
+
+    // mwsr's `quality` mode: the pass after the kernel. It takes FSR1's names
+    // for its layout and its uniform block (texture 0, sampler 1, uniforms 2),
+    // which _ensureIntermTex binds intermTex with; a renderer has one pass.
+    _buildMwsrSharpenResources() {
+        const device = this._device;
+        this._rcasUniform = device.createBuffer({
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+        this._mwsrSharpenKey = '';
+        this._fsrLayout = device.createBindGroupLayout({
+            entries: [
+                {
+                    binding: 0,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    texture: { sampleType: 'float' },
+                },
+                { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+                { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+            ],
+        });
+        const module = device.createShaderModule({ code: MWSR_SHARPEN_WGSL });
+        this._mwsrSharpenPipeline = this._renderPipeline({
+            layout: device.createPipelineLayout({ bindGroupLayouts: [this._fsrLayout] }),
+            vertex: { module, entryPoint: 'vs' },
+            fragment: { module, entryPoint: 'fs', targets: [{ format: this._format }] },
+            primitive: { topology: 'triangle-list' },
+        });
     }
 
     // The plain copy to the canvas (external → canvas, no upscaler): the 'off'
@@ -2290,7 +2448,8 @@ export class WebGpuRenderer extends VideoRenderer {
         }
     }
 
-    // intermTex = output resolution (FSR1 only: EASU target / RCAS source).
+    // intermTex = output resolution (FSR1: EASU target / RCAS source; mwsr's
+    // `quality` mode: the kernel's target, its pass's source).
     _ensureIntermTex(w, h) {
         if (this._intermTex && this._intermW === w && this._intermH === h) return;
         if (this._intermTex) {
@@ -3298,7 +3457,25 @@ export class WebGpuRenderer extends VideoRenderer {
                         reg.mode === 'up' ? Math.min(cw / inW, ch / inH) : 0,
                     );
                 const uniKey =
-                    inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze + (zoned ? 'z' : '');
+                    inW +
+                    'x' +
+                    inH +
+                    '>' +
+                    cw +
+                    'x' +
+                    ch +
+                    '@' +
+                    gaze +
+                    (zoned ? 'z' : '') +
+                    (this._mwsrMode || '');
+                // `quality`: the strength of the pass after the kernel at this
+                // scale, 0 where the kernel's one pass is the whole picture (a
+                // reduction, ×2 and beyond, a frame read with the host's zones).
+                const sharpen =
+                    this._mwsrSharpenPipeline && reg.mode === 'up' && !zoned
+                        ? mwsrSharpen(inW, inH, cw, ch, { mode: this._mwsrMode })
+                        : 0;
+                this._mwsrSharpened = sharpen > 0;
                 if (this._mwsrUniKey !== uniKey) {
                     this._mwsrUniKey = uniKey;
                     this._device.queue.writeBuffer(
@@ -3310,8 +3487,21 @@ export class WebGpuRenderer extends VideoRenderer {
                             gaze,
                             zone: this._mwsrZone || undefined,
                             hdr: this._hdrLinear,
+                            mode: this._mwsrMode,
                         }),
                     );
+                }
+                if (sharpen > 0) {
+                    this._ensureIntermTex(cw, ch);
+                    const sharpenKey = cw + 'x' + ch + ':' + sharpen;
+                    if (this._mwsrSharpenKey !== sharpenKey) {
+                        this._mwsrSharpenKey = sharpenKey;
+                        this._device.queue.writeBuffer(
+                            this._rcasUniform,
+                            0,
+                            new Float32Array([1 / cw, 1 / ch, sharpen, 0]),
+                        );
+                    }
                 }
                 // mwsr 2 / 3: the frame deblocked into dbTex, which the kernel
                 // then reads; a frame mwsr 3 finds fine enough skips both passes.
@@ -3361,20 +3551,24 @@ export class WebGpuRenderer extends VideoRenderer {
                     );
                     this.mwsrZoneFrames++;
                 } else {
-                    // Pass 1: mwsr inputTex (or dbTex) → canvas.
+                    // Pass 1: mwsr inputTex (or dbTex) → canvas, or → intermTex
+                    // when the `quality` mode's pass follows.
                     const p1 = encoder.beginRenderPass({
                         colorAttachments: [
                             {
-                                view: srgb
-                                    ? canvasTex.createView({ format: this._format + '-srgb' })
-                                    : canvasTex.createView(),
+                                view:
+                                    sharpen > 0
+                                        ? this._intermTexView
+                                        : srgb
+                                          ? canvasTex.createView({ format: this._format + '-srgb' })
+                                          : canvasTex.createView(),
                                 loadOp: 'clear',
                                 storeOp: 'store',
                                 clearValue: { r: 0, g: 0, b: 0, a: 1 },
                             },
                         ],
                     });
-                    this._setPipeline(p1, this._mwsrPipeline(reg, zoned));
+                    this._setPipeline(p1, this._mwsrPipeline(reg, zoned, sharpen > 0));
                     if (zoned) {
                         p1.setBindGroup(
                             0,
@@ -3391,6 +3585,23 @@ export class WebGpuRenderer extends VideoRenderer {
                     }
                     p1.draw(3);
                     p1.end();
+                    if (sharpen > 0) {
+                        // Pass 2: the `quality` mode's sharpening, intermTex → canvas.
+                        const p2 = encoder.beginRenderPass({
+                            colorAttachments: [
+                                {
+                                    view: canvasTex.createView(),
+                                    loadOp: 'clear',
+                                    storeOp: 'store',
+                                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                                },
+                            ],
+                        });
+                        this._setPipeline(p2, this._mwsrSharpenPipeline);
+                        p2.setBindGroup(0, this._rcasBindGroup);
+                        p2.draw(3);
+                        p2.end();
+                    }
                 }
             } else {
                 // SGSR: viewport = (1/inW, 1/inH, inW, inH).
@@ -3450,7 +3661,10 @@ export class WebGpuRenderer extends VideoRenderer {
         this._noteDraw(
             drawStart,
             uploadMs + (performance.now() - gpuStart),
-            this._algo + (useYuv ? '+yuv' : '') + (copied ? '+' + copied : ''),
+            this._algo +
+                (this._algo === 'mwsr' && this._mwsrSharpened ? '+sharp' : '') +
+                (useYuv ? '+yuv' : '') +
+                (copied ? '+' + copied : ''),
         );
     }
 

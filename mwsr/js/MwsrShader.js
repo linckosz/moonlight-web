@@ -185,21 +185,54 @@ export const MWSR_LAW = Object.freeze({
 });
 
 /**
+ * The two modes of the product's setting (Bruno, 21/11/2026), each measured on
+ * nine pictures at four scales against the native picture, LPIPS first, then
+ * PSNR and VMAF NEG.
+ *
+ * `performance`: the kernel alone, the least work. Its force is 1.15 where the
+ * law's is 1, up to ×4/3, and joins the law's 1.35 at ×2 by the same straight
+ * line in ln(s); between those two scales that line was not measured.
+ *
+ * `quality`: the law as it is, then a sharpening pass of the renderer over the
+ * scaled picture (mwsrSharpen gives its strength): 0.5 up to ×4/3, 0.25 at
+ * ×1.5, none from ×2, straight lines in ln(s) between them. That pass is the
+ * renderer's, not this file's.
+ *
+ * From ×2 on, both draw the same picture. Without a mode the law is the
+ * kernel's alone, as the laboratory, the comparison page and mwsr/ read it.
+ */
+export const MWSR_MODES = Object.freeze({
+    performance: Object.freeze({ force: 1.15, sharpen: null }),
+    quality: Object.freeze({
+        force: 1,
+        /** The pass's strength at a scale: [scale, strength], held before the first. */
+        sharpen: Object.freeze([
+            Object.freeze([4 / 3, 0.5]),
+            Object.freeze([1.5, 0.25]),
+            Object.freeze([2, 0]),
+        ]),
+    }),
+});
+
+/**
  * The law's values for an input of inW×inH drawn at outW×outH.
  * @param {number} inW
  * @param {number} inH
  * @param {number} outW
  * @param {number} outH
+ * @param {{mode?: 'performance'|'quality'|null}} [opts] the setting's mode
+ *   (MWSR_MODES): where the force starts from; none, the law's own 1
  * @returns {{kc: number, ft: number, kg: number, kr: number, kwc: number, kl: number}}
  */
-export function mwsrLaw(inW, inH, outW, outH) {
+export function mwsrLaw(inW, inH, outW, outH, { mode = null } = {}) {
     const [lo, hi] = MWSR_LAW.scale;
     const s = Math.min(Math.max(Math.min(outW / inW, outH / inH), lo), hi);
     const x = Math.log(s);
     const value = ([c0, c1, c2]) => c0 + x * (c1 + x * c2);
     const { from, to, top } = MWSR_LAW.force;
+    const base = (mode && MWSR_MODES[mode]?.force) || 1;
     const force =
-        1 + (top - 1) * Math.min(Math.max(Math.log(s / from) / Math.log(to / from), 0), 1);
+        base + (top - base) * Math.min(Math.max(Math.log(s / from) / Math.log(to / from), 0), 1);
     const { kc, kg, kr, kl } = MWSR_LAW.curves;
     return {
         kc: value(kc),
@@ -209,6 +242,38 @@ export function mwsrLaw(inW, inH, outW, outH) {
         kwc: MWSR_LAW.kwc,
         kl: value(kl) * force,
     };
+}
+
+/**
+ * The strength of the sharpening pass a renderer draws after the kernel in the
+ * `quality` mode (MWSR_MODES), for an input of inW×inH drawn at outW×outH: 0,
+ * no pass, which is every other mode, a reduction, 1:1, ×2 and beyond, and an
+ * HDR feed (the pass was measured on SDR pictures only). Like the kernel's
+ * sharpening it falls to none at 1:1, whole from S_FULL on.
+ * @param {number} inW
+ * @param {number} inH
+ * @param {number} outW
+ * @param {number} outH
+ * @param {{mode?: 'performance'|'quality'|null, hdr?: boolean}} [opts]
+ * @returns {number} 0 to 0.5
+ */
+export function mwsrSharpen(inW, inH, outW, outH, { mode = null, hdr = false } = {}) {
+    const points = (mode && MWSR_MODES[mode]?.sharpen) || null;
+    const s = Math.min(outW / inW, outH / inH);
+    if (!points || hdr || !(s > 1)) return 0;
+    const strength = Math.min(Math.max((s - 1) / (MWSR_CONSTANTS.S_FULL - 1), 0), 1);
+    let v = points[0][1];
+    for (let i = 1; i < points.length; i++) {
+        const [s0, v0] = points[i - 1];
+        const [s1, v1] = points[i];
+        if (s >= s1) {
+            v = v1;
+            continue;
+        }
+        if (s > s0) v = v0 + ((v1 - v0) * Math.log(s / s0)) / Math.log(s1 / s0);
+        break;
+    }
+    return v * strength;
 }
 
 /**
@@ -416,7 +481,8 @@ function zoneRef(sx, sy) {
  * @param {number} outH
  * @param {{kc?: number, ft?: number, kg?: number, kr?: number, kwc?: number, kl?: number,
  *           sfull?: number, gaze?: number, zone?: Object, zones?: boolean,
- *           hdr?: boolean}} [u]
+ *           hdr?: boolean, mode?: 'performance'|'quality'|null}} [u]
+ *   `mode`: the setting's mode, which mwsrLaw takes;
  *   a value not named comes from mwsrLaw at these sizes, from mwsrDownLaw for
  *   a reduction, whose values take the same places; `sfull`: over
  *   MWSR_CONSTANTS.S_FULL; `gaze`: the gaze zone's weight, 0 (none, the default)
@@ -427,7 +493,7 @@ function zoneRef(sx, sy) {
  * @returns {Float32Array}
  */
 export function mwsrUniforms(inW, inH, outW, outH, u = {}) {
-    const law = mwsrLaw(inW, inH, outW, outH);
+    const law = mwsrLaw(inW, inH, outW, outH, { mode: u.mode });
     const gaze = Math.min(Math.max(u.gaze ?? 0, 0), 1);
     const z = { ...MWSR_ZONE, ...(u.zone || {}) };
     // a ring of no width would put the smoothstep's two edges together

@@ -44,7 +44,12 @@
  *               regime, the one to run picked per frame by the frame and
  *               canvas sizes. Bilinear taps and screen derivatives only, no
  *               gather to emulate. The reduction averages in software light:
- *               a WebGL2 drawing buffer has no sRGB view.
+ *               a WebGL2 drawing buffer has no sRGB view. Its two modes
+ *               (opts.mwsrMode, MwsrShader's MWSR_MODES): 'performance', the
+ *               kernel alone; 'quality', the kernel into gl-fsr1's intermediate
+ *               framebuffer and a sharpening pass from there to the canvas
+ *               (MWSR_SHARPEN_FS, the twin of WebGpuRenderer's text), where
+ *               the stream is scaled up by less than ×2.
  *
  * GLSL ES 3.00 (WebGL2) has no textureGather: every gather is four texelFetch
  * on the 2×2 footprint a bilinear tap would cover, in the same component
@@ -70,6 +75,7 @@ import {
     mwsrRegime,
     mwsrRegimeKey,
     mwsrRegimes,
+    mwsrSharpen,
     mwsrUniforms,
 } from './MwsrShader.js';
 import { GazeZone } from '../GazeZone.js';
@@ -295,6 +301,60 @@ void main() {
     float rcpL = 1.0 / (4.0 * lobe + 1.0);
     vec3 c = (lobe * b + lobe * d + lobe * h + lobe * f + e) * rcpL;
     oColor = vec4(c, 1.0);
+}
+`;
+
+// gl-mwsr's `quality` mode: the pass after the kernel, the GLSL twin of
+// WebGpuRenderer's MWSR_SHARPEN_WGSL (RCAS's math, AMD FidelityFX FSR1, MIT;
+// the strength a uniform, the same guards on a flat or saturated
+// neighbourhood). The five texels are fetched by the fragment's own
+// coordinates: the kernel drew this framebuffer texture pixel for pixel, so no
+// flip is needed, and the cross is symmetric.
+const MWSR_SHARPEN_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uStrength;
+out vec4 oColor;
+vec3 at(ivec2 p, ivec2 last) {
+    return texelFetch(uTex, clamp(p, ivec2(0), last), 0).rgb;
+}
+void main() {
+    ivec2 last = textureSize(uTex, 0) - 1;
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec3 b = at(p + ivec2(0, -1), last);
+    vec3 d = at(p + ivec2(-1, 0), last);
+    vec3 e = at(p, last);
+    vec3 f = at(p + ivec2(1, 0), last);
+    vec3 h = at(p + ivec2(0, 1), last);
+
+    // how far the centre stands from its cross, as a share of their range:
+    // a lone texel is noise, and takes half the lobe
+    const vec3 w = vec3(0.5, 1.0, 0.5);
+    float bL = dot(b, w);
+    float dL = dot(d, w);
+    float eL = dot(e, w);
+    float fL = dot(f, w);
+    float hL = dot(h, w);
+    float range = max(max(max(bL, dL), max(fL, hL)), eL) - min(min(min(bL, dL), min(fL, hL)), eL);
+    float nz = abs(0.25 * (bL + dL + fL + hL) - eL);
+    nz = range > 0.0 ? min(nz / range, 1.0) : 0.0;
+    nz = 1.0 - 0.5 * nz;
+
+    // the strongest negative lobe that keeps every channel within 0..1
+    // (the floors are never reached by 8-bit values that pass the tests beside
+    // them: they keep a division by zero out of the branch not taken)
+    vec3 mn4 = min(min(b, d), min(f, h));
+    vec3 mx4 = max(max(b, d), max(f, h));
+    vec3 hitMin = min(mn4, e) / max(4.0 * mx4, vec3(1e-6));
+    vec3 hitMax = mix(
+        vec3(-1.0),
+        (vec3(1.0) - max(mx4, e)) / min(4.0 * mn4 - vec3(4.0), vec3(-1e-6)),
+        lessThan(mn4, vec3(1.0)));
+    vec3 lobe3 = max(-hitMin, hitMax);
+    const float limit = 0.25 - (1.0 / 16.0);
+    float lobe = max(-limit, min(max(lobe3.r, max(lobe3.g, lobe3.b)), 0.0)) * uStrength * nz;
+
+    oColor = vec4((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), 1.0);
 }
 `;
 
@@ -707,6 +767,12 @@ export class WebGlRenderer extends VideoRenderer {
         this._mwsr = null;
         this._mwsrUni = null;
         this._mwsrUniKey = '';
+        /** gl-mwsr's mode (opts.mwsrMode: 'performance' | 'quality'), null: the law alone. */
+        this._mwsrMode = null;
+        /** @type {{prog: WebGLProgram, u: Object}|null} `quality`: the pass after the kernel. */
+        this._mwsrSharpen = null;
+        /** The last draw ran it. */
+        this._mwsrSharpened = false;
         /** gl-mwsr's gaze zone (setMwsrZone): null, none; else its values over MWSR_ZONE's. */
         this._mwsrZone = null;
         /** Its weight pinned by setMwsrGaze (the lab), or null: the stream's motion decides. */
@@ -838,6 +904,9 @@ export class WebGlRenderer extends VideoRenderer {
         r.videoCodec = opts.videoCodec;
         r._algo = WEBGL_ALGOS.includes(opts.algo) || opts.algo === 'off' ? opts.algo : 'gl-fsr1';
         r._yuv444 = opts.yuv444 === true;
+        // gl-mwsr's mode, the setting's; anything else, the law alone (the lab).
+        r._mwsrMode =
+            opts.mwsrMode === 'quality' || opts.mwsrMode === 'performance' ? opts.mwsrMode : null;
         // The gaze zone the caller wants (BrowserDetect.mwsrGazeWanted): the
         // kernel's programs take it, its weight follows the stream's motion.
         if (opts.gazeZone) r.setMwsrZone({});
@@ -1090,6 +1159,7 @@ export class WebGlRenderer extends VideoRenderer {
         // Whatever a lost context held is gone with it.
         this._easu = this._rcas = this._sgsr = this._nis = this._blit = null;
         this._mwsr = null;
+        this._mwsrSharpen = null;
         this._intermTex = this._fbo = this._coefTex = null;
         this._buildAlgo(this._algo);
         this._buildAlgo('off');
@@ -1106,13 +1176,15 @@ export class WebGlRenderer extends VideoRenderer {
             if (this._easu) return;
             this._easu = this._program(EASU_FS, ['uTex', 'uRes']);
             this._rcas = this._program(RCAS_FS, ['uTex', 'uRes']);
-            this._intermTex = this._texture(gl.LINEAR);
-            this._intermW = 0;
-            this._intermH = 0;
-            this._fbo = gl.createFramebuffer();
+            this._buildInterm();
         } else if (algo === 'gl-sgsr') {
             if (!this._sgsr) this._sgsr = this._program(SGSR_FS, ['uTex', 'uView']);
         } else if (algo === 'gl-mwsr') {
+            // `quality`: the pass after the kernel, and the framebuffer between them.
+            if (this._mwsrMode === 'quality' && !this._mwsrSharpen) {
+                this._mwsrSharpen = this._program(MWSR_SHARPEN_FS, ['uTex', 'uStrength']);
+                this._buildInterm();
+            }
             if (this._mwsr) return;
             // One program per regime, all built here so that nothing compiles
             // while the stream runs; the overrides baked into each text.
@@ -1184,6 +1256,18 @@ export class WebGlRenderer extends VideoRenderer {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, inW, inH, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         this._inW = inW;
         this._inH = inH;
+    }
+
+    // The intermediate picture at the output size and its framebuffer: gl-fsr1's
+    // (EASU's target, RCAS's source) and gl-mwsr's `quality` mode's (the
+    // kernel's target, its pass's source). One for both, sized by the draw.
+    _buildInterm() {
+        if (this._intermTex) return;
+        const gl = this.gl;
+        this._intermTex = this._texture(gl.LINEAR);
+        this._intermW = 0;
+        this._intermH = 0;
+        this._fbo = gl.createFramebuffer();
     }
 
     _ensureInterm(w, h) {
@@ -1317,16 +1401,27 @@ export class WebGlRenderer extends VideoRenderer {
                 // The gaze zone's weight for this draw, 0 without a zone: it
                 // moves in steps of 1/64, so the block is remade rarely.
                 const gaze = this._mwsrGazeFor(inW * inH);
-                const uniKey = inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze;
+                const uniKey =
+                    inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze + (this._mwsrMode || '');
                 if (this._mwsrUniKey !== uniKey) {
                     this._mwsrUniKey = uniKey;
                     this._mwsrUni = mwsrUniforms(inW, inH, cw, ch, {
                         ...(this._mwsrTuning || {}),
                         gaze,
                         zone: this._mwsrZone || undefined,
+                        mode: this._mwsrMode,
                     });
                 }
-                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                // `quality`: the strength of the pass after the kernel at this
+                // scale; 0 (a reduction, ×2 and beyond), the kernel's one pass
+                // is the whole picture and goes straight to the canvas.
+                const sharpen =
+                    this._mwsrSharpen && reg.mode === 'up'
+                        ? mwsrSharpen(inW, inH, cw, ch, { mode: this._mwsrMode })
+                        : 0;
+                this._mwsrSharpened = sharpen > 0;
+                if (sharpen > 0) this._ensureInterm(cw, ch);
+                gl.bindFramebuffer(gl.FRAMEBUFFER, sharpen > 0 ? this._fbo : null);
                 gl.viewport(0, 0, cw, ch);
                 gl.useProgram(p.prog);
                 gl.activeTexture(gl.TEXTURE0);
@@ -1341,6 +1436,16 @@ export class WebGlRenderer extends VideoRenderer {
                 gl.uniform4fv(p.u.uZoneBonus, this._mwsrUni.subarray(16, 20));
                 gl.uniform4fv(p.u.uBound, this._mwsrUni.subarray(20, 24));
                 gl.drawArrays(gl.TRIANGLES, 0, 3);
+                if (sharpen > 0) {
+                    // Pass 2: the `quality` mode's sharpening, interm → canvas.
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                    gl.viewport(0, 0, cw, ch);
+                    gl.useProgram(this._mwsrSharpen.prog);
+                    gl.bindTexture(gl.TEXTURE_2D, this._intermTex);
+                    gl.uniform1i(this._mwsrSharpen.u.uTex, 0);
+                    gl.uniform1f(this._mwsrSharpen.u.uStrength, sharpen);
+                    gl.drawArrays(gl.TRIANGLES, 0, 3);
+                }
             } else if (pass === 'off') {
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
                 gl.viewport(0, 0, cw, ch);
@@ -1393,7 +1498,15 @@ export class WebGlRenderer extends VideoRenderer {
         }
 
         this._rendered++;
-        this._noteDraw(drawStart, waitMs, (this._passthrough ? '1:1' : this._algo) + ':' + path);
+        this._noteDraw(
+            drawStart,
+            waitMs,
+            (this._passthrough
+                ? '1:1'
+                : this._algo + (pass === 'gl-mwsr' && this._mwsrSharpened ? '+sharp' : '')) +
+                ':' +
+                path,
+        );
     }
 
     /** Record the draw split for PipelineDiag (see VideoRenderer.lastDraw). */
@@ -1414,7 +1527,14 @@ export class WebGlRenderer extends VideoRenderer {
                 if (this._vao) gl.deleteVertexArray(this._vao);
                 for (const f of this._fences) gl.deleteSync(f.sync);
                 this._fences = [];
-                for (const p of [this._easu, this._rcas, this._sgsr, this._nis, this._blit])
+                for (const p of [
+                    this._easu,
+                    this._rcas,
+                    this._sgsr,
+                    this._nis,
+                    this._blit,
+                    this._mwsrSharpen,
+                ])
                     if (p) gl.deleteProgram(p.prog);
                 if (this._mwsr) for (const p of this._mwsr.values()) gl.deleteProgram(p.prog);
                 const ext = gl.getExtension('WEBGL_lose_context');
