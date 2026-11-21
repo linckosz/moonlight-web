@@ -210,6 +210,29 @@ describe('launchAppKeepingLine and the launch challenges', () => {
         expect(second.body).toMatchObject({ appId: 1, video_codec: 'hevc' });
     });
 
+    it('gives up after the second launch the line did not carry: two tries, two signatures', async () => {
+        let lostAgain = null;
+        host({
+            'launch-proof': [challenge('N1'), challenge('N2')],
+            start: [
+                () => {
+                    throw notCarried('/api/hosts/host/start');
+                },
+                () => {
+                    lostAgain = notCarried('/api/hosts/host/start');
+                    throw lostAgain;
+                },
+            ],
+        });
+
+        const failed = await BackendClient.launchAppKeepingLine('host', 1).catch((e) => e);
+        expect(failed).toBe(lostAgain);
+        expect(failed).toMatchObject({ statusCode: 502 });
+        expect(routes()).toEqual(['launch-proof', 'start', 'launch-proof', 'start']);
+        expect(pairing.signLaunchProof.mock.calls.map((c) => c[2])).toEqual(['N1', 'N2']);
+        expect(line.ready).toHaveBeenCalledTimes(1);
+    });
+
     it.each(['key_refused', 'launch_proof_required'])(
         'never asks again over a %s the host answered',
         async (code) => {
