@@ -747,6 +747,8 @@ lan_access_note() {
             say ""
             say "  ${dim}For browsers on networks that block UDP, add 48550-48573/tcp and the${reset}"
             say "  ${dim}tunnel's 3478-3481/tcp, 5349-5352/tcp and 46000-46031/tcp the same way.${reset}"
+            say "  ${dim}With Internet Access, also 3478-3481/udp and 5349-5352/udp: the${reset}"
+            say "  ${dim}tunnel's, and the port every stream shares when ice_udp_mux is on.${reset}"
         fi
         say ""
         return 0
@@ -766,6 +768,8 @@ lan_access_note() {
             say ""
             say "  ${dim}For browsers on networks that block UDP, also allow 48550:48573/tcp and${reset}"
             say "  ${dim}the tunnel's 3478:3481/tcp, 5349:5352/tcp and 46000:46031/tcp.${reset}"
+            say "  ${dim}With Internet Access, also allow 3478:3481/udp and 5349:5352/udp: the${reset}"
+            say "  ${dim}tunnel's, and the port every stream shares when ice_udp_mux is on.${reset}"
         fi
         say ""
         return 0

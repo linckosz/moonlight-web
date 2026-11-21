@@ -152,14 +152,12 @@ that rules it out.
 ## Why `--network host`
 
 MoonlightWeb is not a plain web server; it is one end of a WebRTC connection
-and an mDNS client. Three things break behind a bridge, and publishing more
-ports fixes none of them:
+and an mDNS client. Three things stand in the way behind a bridge, and
+publishing ports can help with the first one only:
 
-- **WebRTC media.** libdatachannel binds an **ephemeral** UDP port for the
-  media and input transport, unless UPnP handed it a fixed one. An ephemeral
-  port cannot be published in advance. When the browser cannot reach it, the
-  stream falls back to its TCP/WebSocket transport — it works, but you pay for
-  it in latency.
+- **WebRTC media.** Every stream binds a port of the media block
+  (48550–48573, see [Ports](#ports)) whether or not UPnP is on, so on a bridge
+  that block has to be published, in UDP and in TCP.
 - **Host discovery.** Sunshine machines announce themselves over mDNS
   (multicast UDP 5353), which does not cross the default bridge. On a bridge,
   add your hosts by IP address instead — a one-time step, then everything else
@@ -222,8 +220,8 @@ outside the LAN.
 |---|---|---|---|
 | **443** | TCP | **Always** | The web UI, the REST API, and the `wss://…/ws` upgrade that carries WebRTC signalling. The one port a browser cannot do without. |
 | **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. |
-| **48550–48573** | UDP | **Always** (host firewall) | WebRTC media, audio and input. Each stream slot binds `48550 + slot`, with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the slot's own first). |
-| **48550–48573** | TCP | Networks that block UDP (host firewall) | The same ports in TCP: passive ICE-TCP listens on the port the slot's UDP socket holds. It is how a browser on a network that lets no UDP out reaches the stream. A stateful firewall lets UDP answers back in, but never a TCP connection from outside. |
+| **48550–48573** | UDP | **Always** (host firewall) | WebRTC media, audio and input. With `ice_udp_mux` off, each stream slot binds `48550 + slot`. With it on, every stream shares one port of 48550–48561 (48550 unless it is taken), and a stream that cannot share binds its own port further up the block (`48562 + slot` for the first twelve slots). Either way the port is bound with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the shared one, or the slot's own). |
+| **48550–48573** | TCP | Networks that block UDP (host firewall) | The same ports in TCP: passive ICE-TCP listens on the port the stream's UDP socket holds. It is how a browser on a network that lets no UDP out reaches the stream. A stateful firewall lets UDP answers back in, but never a TCP connection from outside. |
 | **3478–3481**, **5349–5352** | UDP | With Internet Access (host firewall) | The conferencing ports. With `"ice_udp_mux": true` every stream shares one of them (the first that is free on the machine and on the router) and one port of the media block, so a browser on a network that lets only such ports out still streams over UDP. The rendezvous tunnel takes its own among the same eight. On the port the streams share, a datagram that belongs to no stream is dropped. |
 | **3478–3481**, **5349–5352**, **46000–46031** | TCP | Networks that block UDP, with Internet Access | The rendezvous tunnel's ports, taken in that order as browsers connect, and forwarded by UPnP. Passive ICE-TCP listens on them as on the media block. Nothing listens there between connections, and during one only a check signed for that connection is admitted. |
 | **47999** | UDP | Legacy Internet Access | Mapped alongside 80/443 only by an install that still holds a legacy `moonlightweb.top` sub-domain. |
