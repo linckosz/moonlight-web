@@ -3,7 +3,8 @@
 A Windows, Mac, iPhone or Android client has no netem, so the link is shaped
 here, on the host, with WinDivert (a signed packet-diversion driver, loaded
 while this runs): every UDP packet to or from the host's media ports
-(48550-48573, one per stream slot) passes through this process.
+(48550-48573, one per stream slot, and a DEV edition's 48574-48597) passes
+through this process.
 
   cut <ms>                       drop everything, both ways, for <ms> (self-expiring)
   rate <kbit> <ms> [n]           the downlink (host -> client) through a <kbit>
@@ -61,7 +62,7 @@ from collections import deque
 from ctypes import wintypes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PORT_LO, PORT_HI = 48550, 48573
+PORT_LO, PORT_HI = 48550, 48597  # release slots, then a DEV edition's
 FILTER = ("udp and not loopback and ((outbound and udp.SrcPort >= %d and udp.SrcPort <= %d) or "
           "(inbound and udp.DstPort >= %d and udp.DstPort <= %d))" % (PORT_LO, PORT_HI, PORT_LO, PORT_HI))
 ADDR_LEN = 80  # sizeof(WINDIVERT_ADDRESS) in 2.x

@@ -13,7 +13,7 @@ them.
 
 | tool | where | what it does | what SCTP sees |
 |---|---|---|---|
-| `netem.py` | a Linux **client** (the UM790Pro) | delay, random or bursty losses, rate — on the UDP of the host's media ports only (48550-48573, IPv4 and IPv6) | everything: a real lossy link |
+| `netem.py` | a Linux **client** (the UM790Pro) | delay, random or bursty losses, rate — on the UDP of the host's media ports only (48550-48573, and a DEV edition's 48574-48597; IPv4 and IPv6) | everything: a real lossy link |
 | `mwshaper.py` + `shapectl.py` | the Windows **host** (DualRTX), elevated | the same gestures with WinDivert, for any client — a phone included | everything |
 | `loss=<‰>[,burst=<n>]` | the host's relay | video messages thrown away before SCTP is handed them, on a fixed seed | **nothing**: the receiver's half alone, its congestion window untouched |
 
