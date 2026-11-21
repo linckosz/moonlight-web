@@ -11,7 +11,6 @@
   "get.3": "<strong>Gamecontroller.</strong> Per Bluetooth gekoppelte Xbox- und PlayStation-Controller funktionieren im Browser. Kein Controller zur Hand? Ein Bildschirm-Controller ist eingebaut.",
   "get.4": "<strong>Niedrige Latenz.</strong> In deinem WLAN zu Hause bleibt die Verzögerung unter 20 ms — schnell genug für Actionspiele, nicht nur für rundenbasierte.",
   "get.5": "<strong>Jeder Browser.</strong> Safari reicht; Chrome oder Edge unter iOS funktionieren genauso.",
-  "get.6": "<strong>Ein Symbol pro Spiel.</strong> Über das Menü des PCs legst du ein Spiel oder den Desktop auf den Home-Bildschirm: Ein Tippen öffnet es direkt.",
   "steps.h": "In drei Schritten eingerichtet",
   "step1.h": "Installiere MoonlightWeb auf dem Gaming-PC",
   "step1.p": "Windows, macOS (Apple Silicon) oder Linux — folge der <a href=\"/guides/\">Installationsanleitung</a> für dein System. Dieser PC ist der einzige Rechner, auf dem etwas zu installieren ist.",
