@@ -137,7 +137,10 @@ describe('the ICE counters', () => {
 
     it('keeps the earlier reads when the last one does not answer in time', async () => {
         const tally = new Map();
-        tunnelModule.tallyChecks(tally, stats({ type: 'candidate-pair', id: 'CPa', requestsSent: 4 }));
+        tunnelModule.tallyChecks(
+            tally,
+            stats({ type: 'candidate-pair', id: 'CPa', requestsSent: 4 }),
+        );
         const pc = { getStats: () => new Promise(() => {}) };
         expect(await tunnelModule.checkCounts(pc, tally)).toEqual({
             sent: 4,

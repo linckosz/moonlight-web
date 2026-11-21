@@ -120,10 +120,9 @@ void run_tunnel_diag_tests()
 
         // Not numbers: dropped, as an earlier page's report reads.
         const QJsonObject odd{
-            {QStringLiteral("checks"),
-             QJsonObject{{QStringLiteral("sent"), 2},
-                         {QStringLiteral("seen"), QStringLiteral("6")},
-                         {QStringLiteral("left"), 4}}},
+            {QStringLiteral("checks"), QJsonObject{{QStringLiteral("sent"), 2},
+                                                   {QStringLiteral("seen"), QStringLiteral("6")},
+                                                   {QStringLiteral("left"), 4}}},
         };
         CHECK(describe(odd).endsWith(QStringLiteral("; checks sent 2, answered 0, received 0")));
     }
