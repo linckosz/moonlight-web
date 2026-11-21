@@ -204,6 +204,8 @@ std::unique_ptr<Session> NativeHost::createSession(const SessionConfig& config,
     // the display had before.
     resolved.requestedWidth = asked.width;
     resolved.requestedHeight = asked.height;
+    // The rate for that frame, not for the one asked (bitrateForFrame).
+    resolved.bitrateKbps = selection.bitrateKbps;
     resolved.fps = selection.fps;
     resolved.hdr = selection.hdr;
     resolved.yuv444 = selection.yuv444;

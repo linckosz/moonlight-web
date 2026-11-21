@@ -354,6 +354,22 @@ bool select(const Capabilities& caps, const SessionConfig& config, Selection& ou
     out.width = shaped.width;
     out.height = shaped.height;
 
+    // The rate follows the frame where the frame shrank, when it was worked
+    // out for the size asked (SessionConfig::bitrateFollowsFrame): a rate set
+    // by hand stays the one set. Nor under "Match my screen": that session
+    // puts its display in the client's mode and then streams the size asked
+    // (applyClientMode), at the rate set for it.
+    out.bitrateKbps = config.bitrateFollowsFrame && !config.matchClientDisplay
+                          ? bitrateForFrame(config.bitrateKbps, asked, shaped)
+                          : config.bitrateKbps;
+    if (out.bitrateKbps != config.bitrateKbps) {
+        log::info("[native] " + std::to_string(config.bitrateKbps) + " kbps set for " +
+                  std::to_string(asked.width) + "x" + std::to_string(asked.height) +
+                  " — streaming " + std::to_string(out.bitrateKbps) + " kbps for " +
+                  std::to_string(shaped.width) + "x" + std::to_string(shaped.height) +
+                  ", the same rate per pixel");
+    }
+
     if (config.fps > 0) {
         out.fps = config.fps;
     } else {
@@ -488,6 +504,18 @@ FrameSize frameForDisplay(FrameSize display, FrameSize frame, FramePolicy policy
         out.height = display.height & ~1;
     }
     return out;
+}
+
+int bitrateForFrame(int kbps, FrameSize asked, FrameSize shaped)
+{
+    if (kbps <= 0 || asked.width <= 0 || asked.height <= 0 || shaped.width <= 0 ||
+        shaped.height <= 0)
+        return kbps;
+    const double askedPixels = static_cast<double>(asked.width) * asked.height;
+    const double shapedPixels = static_cast<double>(shaped.width) * shaped.height;
+    if (shapedPixels >= askedPixels) return kbps;
+    const int cut = static_cast<int>(std::lround(kbps * (shapedPixels / askedPixels)));
+    return std::max(cut, std::min(kbps, 1000));
 }
 
 } // namespace mw::native

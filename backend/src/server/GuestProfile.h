@@ -85,6 +85,15 @@ int autoBitrateKbps(int height, double aspectRatio, bool lan);
 /// least. Unchanged when the host's screen is unknown (0 or less).
 int capToHost(int height, int hostScreenHeight);
 
+/// The host's screen capToHost holds Auto to: the height of the display the
+/// stream captures, @p capturedHeight, where the host says which it is (this
+/// machine's native host, from its probe); else the tallest of the host's
+/// modes, @p modeHeights (a GameStream host's serverinfo); 0 when neither is
+/// known. The native host lists no modes at all, and its tallest display is
+/// not the one shown: a 1080p screen captured beside a 1440p virtual display
+/// streams 1080 lines, never 1440 (GUESTD1, 21/11/2026).
+int shownScreenHeight(int capturedHeight, const QList<int>& modeHeights);
+
 // ── The guest's congestion ladder (issue #67, step 2) ──────────────────────
 //
 // A guest of a GameStream host (Sunshine, Wolf, Apollo) has the owner's ladder

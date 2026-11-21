@@ -132,6 +132,22 @@ void run_guest_profile_tests()
     CHECK_EQ(capToHost(1440, 0), 1440);
     CHECK_EQ(capToHost(1440, -1), 1440);
 
+    SECTION("GuestProfile — the host's screen is the display captured (GUESTD1)");
+    // The N95 of 21/11/2026: its 1080p screen captured, a 1440p virtual
+    // display beside it, a guest on a 1440p screen. Auto is 1080, not 1440.
+    CHECK_EQ(shownScreenHeight(1080, {1440, 1080}), 1080);
+    CHECK_EQ(
+        capToHost(autoHeight(parseScreen(QJsonObject{{"screen", "2560x1440"}}), 16.0 / 9.0, false),
+                  shownScreenHeight(1080, {1440, 1080})),
+        1080);
+    // The native host lists no modes: the display captured alone holds it.
+    CHECK_EQ(shownScreenHeight(1080, {}), 1080);
+    // No display known (a GameStream host): its tallest mode, whatever their order.
+    CHECK_EQ(shownScreenHeight(0, {1080, 2160, 1440}), 2160);
+    CHECK_EQ(shownScreenHeight(-1, {1080}), 1080);
+    // Neither: unknown, and capToHost leaves Auto as it is.
+    CHECK_EQ(shownScreenHeight(0, {}), 0);
+
     SECTION("GuestProfile — the ladder's steps, from the shared table");
     CHECK(cases.value(QStringLiteral("degrade")).toArray().size() >= 10);
     for (const QJsonValue& v : cases.value(QStringLiteral("degrade")).toArray()) {

@@ -305,6 +305,11 @@ public:
     /// engines ignore it.
     void setCodecAuto(bool on) { m_CodecAuto = on; }
 
+    /// The rate was worked out for the size asked (the viewer's Auto, a
+    /// guest's), not set by hand — see
+    /// mw::native::SessionConfig::bitrateFollowsFrame. Other engines ignore it.
+    void setBitrateFollowsFrame(bool on) { m_BitrateFollowsFrame = on; }
+
     /// The requested size is a box to fit (the display's shape inside it),
     /// and whether a native stream may then be larger than the display — the
     /// browser's "Same as your device" / "Custom" resolutions. See
@@ -677,6 +682,8 @@ private:
     bool m_FollowDisplayShape = false;
     /// See setCodecAuto.
     bool m_CodecAuto = false;
+    /// See setBitrateFollowsFrame.
+    bool m_BitrateFollowsFrame = false;
 
     /// See setFrameFit.
     bool m_FitRequestedBox = false;

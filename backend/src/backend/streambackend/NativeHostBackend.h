@@ -145,6 +145,10 @@ public:
     /// which shows the owner's display: the worker, SYSTEM's maybe, does not
     /// read the settings file the display cards are numbered in.
     static QString displayKeyForApp(int appId, QString* error);
+    /// The height of the display @p appId streams (the one displayKeyForApp
+    /// names), on this machine now, in pixels — or 0 when there is none. What
+    /// a guest's Auto is held to (mw::guestprofile::shownScreenHeight).
+    static int displayHeightForApp(int appId);
     /// The display id of the display @p key names (displayKeyForApp), in the
     /// worker's own probe, or -1 with @p error.
     static int displayForKey(const QString& key, QString* error);

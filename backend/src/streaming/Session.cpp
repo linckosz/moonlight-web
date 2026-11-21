@@ -700,6 +700,7 @@ void StreamSession::onLaunchResult(bool ok, const BackendError& err, const Media
         // hand, and the browser resolves Auto to a codec before asking: only
         // its own word tells an offer from a wish. See setCodecAuto.
         nativeParams.codecAuto = m_CodecAuto;
+        nativeParams.bitrateFollowsFrame = m_BitrateFollowsFrame;
         nativeParams.hdr = media.nativeHost.hdrRequested;
         nativeParams.yuv444 = m_Config.chroma == ChromaSampling::C444;
         // Intra-refresh is only worth its cost when the client will decode

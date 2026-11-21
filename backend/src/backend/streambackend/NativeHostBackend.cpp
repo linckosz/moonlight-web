@@ -500,6 +500,17 @@ QString NativeHostBackend::displayKeyForApp(int appId, QString* error)
     return QString();
 }
 
+int NativeHostBackend::displayHeightForApp(int appId)
+{
+    const mw::native::Capabilities caps = probeEngine();
+    if (!caps.available) return 0;
+    const int displayId = displayOf(caps, appId, nullptr);
+    if (displayId < 0) return 0;
+    for (const mw::native::DisplayInfo& display : caps.displays)
+        if (display.id == displayId) return std::max(display.height, 0);
+    return 0;
+}
+
 int NativeHostBackend::displayForKey(const QString& key, QString* error)
 {
     const mw::native::Capabilities caps = probeEngine();

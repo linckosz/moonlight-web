@@ -38,6 +38,11 @@ struct Selection
     int height = 0;
     int fps = 0;
 
+    /// The encoder's rate: the client's, cut in the ratio of the pixels where
+    /// the frame came out smaller than the size it was set for (see
+    /// bitrateForFrame).
+    int bitrateKbps = 0;
+
     /// 10-bit, and therefore actually HDR. False when HDR was asked for but the
     /// display is in SDR or the encoder has no 10-bit path — the session then
     /// runs SDR rather than failing.
@@ -128,6 +133,17 @@ struct FramePolicy
 /// Pure, shared by select() at the start of a session and by every platform
 /// session when the display changes mode under it.
 FrameSize frameForDisplay(FrameSize display, FrameSize frame, FramePolicy policy = {});
+
+/// The rate for the frame select() settled on, from the client's @p kbps set
+/// for the frame it @p asked: cut in the ratio of their pixels when @p shaped
+/// is smaller, untouched otherwise. A 1440p rate asked of a 1080p display
+/// would spend 1.8× the bits on each of its pixels: the picture is the same,
+/// the link and the encoder carry more (the shared feed on the N95,
+/// 21/11/2026). Never raised for a larger frame, never cut below 1000 kbps
+/// (nor a rate already below it), and untouched when either size is unknown.
+///
+/// Pure.
+int bitrateForFrame(int kbps, FrameSize asked, FrameSize shaped);
 
 /// The largest frame of whole @p block × @p block blocks that fits inside
 /// @p frame AND keeps its shape — what an encoder that cannot express a

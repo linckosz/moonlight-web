@@ -1059,4 +1059,82 @@ void run_selector_tests()
         CHECK(!select(caps, cfg, sel, err));
         CHECK(err.find("fallback encoder") != std::string::npos);
     }
+
+    SECTION("Selector — the rate follows the frame streamed");
+
+    // ── 1440p asked of a 1080p display: the 1080p rate (GUESTD2, 21/11/2026) ─
+    // The rung rates of the shared feed (SharedFeed::setOwnerHeight: the
+    // estimate for the height, halved) go with the square of the height, so a
+    // 1440p rung's rate cut in the ratio of the pixels is the 1080p rung's.
+    {
+        const Capabilities caps = hybridMachine();
+        SessionConfig cfg;
+        cfg.displayId = 0; // the 1080p panel
+        cfg.width = 2560;
+        cfg.height = 1440;
+        cfg.bitrateKbps = 17778; // the 1440p rung
+        cfg.clientCodecs = {Codec::Hevc, Codec::H264};
+
+        // A rate set by hand never goes down (GUESTD2SCOPE B): the default.
+        Selection sel;
+        std::string err;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.width, 1920);
+        CHECK_EQ(sel.height, 1080);
+        CHECK_EQ(sel.bitrateKbps, 17778);
+
+        // A rate worked out for the size asked (Auto, a guest, the feed) does.
+        cfg.bitrateFollowsFrame = true;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.height, 1080);
+        CHECK_EQ(sel.bitrateKbps, 10000); // the 1080p rung
+
+        // A frame streamed as asked keeps its rate.
+        cfg.width = 1280;
+        cfg.height = 720;
+        cfg.bitrateKbps = 5000;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.height, 720);
+        CHECK_EQ(sel.bitrateKbps, 5000);
+
+        // The 4K display streams 1440p as asked: nothing to cut.
+        cfg.displayId = 1;
+        cfg.width = 2560;
+        cfg.height = 1440;
+        cfg.bitrateKbps = 17778;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.height, 1440);
+        CHECK_EQ(sel.bitrateKbps, 17778);
+
+        // The client's own screen size, upscaled on purpose: never raised.
+        cfg.displayId = 0;
+        cfg.fitRequestedBox = true;
+        cfg.allowUpscale = true;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.height, 1440);
+        CHECK_EQ(sel.bitrateKbps, 17778);
+
+        // "Match my screen": the session puts the display in the size asked
+        // and streams it, at the rate set for it.
+        cfg.allowUpscale = false;
+        cfg.matchClientDisplay = true;
+        CHECK(select(caps, cfg, sel, err));
+        CHECK_EQ(sel.height, 1080); // before the mode change
+        CHECK_EQ(sel.bitrateKbps, 17778);
+    }
+
+    // ── The rule itself ──────────────────────────────────────────────────────
+    {
+        // The pixels' ratio, rounded: 35 Mbps set for 1440p is 19.7 for 1080p.
+        CHECK_EQ(bitrateForFrame(35000, {2560, 1440}, {1920, 1080}), 19688);
+        // Never below 1000 kbps, nor a rate already below it lowered.
+        CHECK_EQ(bitrateForFrame(1500, {3840, 2160}, {1280, 720}), 1000);
+        CHECK_EQ(bitrateForFrame(800, {3840, 2160}, {1280, 720}), 800);
+        // A larger frame, the same one, or a size unknown: untouched.
+        CHECK_EQ(bitrateForFrame(10000, {1920, 1080}, {2560, 1440}), 10000);
+        CHECK_EQ(bitrateForFrame(10000, {1920, 1080}, {1920, 1080}), 10000);
+        CHECK_EQ(bitrateForFrame(10000, {0, 0}, {1920, 1080}), 10000);
+        CHECK_EQ(bitrateForFrame(10000, {1920, 1080}, {0, 1080}), 10000);
+        CHECK_EQ(bitrateForFrame(0, {2560, 1440}, {1920, 1080}), 0);
+    }
 }

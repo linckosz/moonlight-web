@@ -113,6 +113,15 @@ int autoBitrateKbps(int height, double aspectRatio, bool lan)
     return static_cast<int>(rounded * 1000.0 + 0.5);
 }
 
+int shownScreenHeight(int capturedHeight, const QList<int>& modeHeights)
+{
+    if (capturedHeight > 0) return capturedHeight;
+    int tallest = 0;
+    for (const int height : modeHeights)
+        tallest = std::max(tallest, height);
+    return tallest;
+}
+
 int capToHost(int height, int hostScreenHeight)
 {
     if (hostScreenHeight <= 0) return height;

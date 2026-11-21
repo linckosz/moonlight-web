@@ -81,6 +81,13 @@ struct SessionConfig
 
     int bitrateKbps = 20000;
 
+    /// The rate was worked out for the size asked, not set by the viewer: the
+    /// browser's Auto, a guest's, the shared feed's. It then follows the
+    /// frame where the frame streamed is smaller (Selector's bitrateForFrame).
+    /// A rate the viewer set by hand stays the rate, like a codec chosen by
+    /// hand (codecAuto). False by default: nothing lowers it unasked.
+    bool bitrateFollowsFrame = false;
+
     /// Codecs the BROWSER accepts, best first. The engine intersects this with
     /// what the display's GPU can encode and picks the first survivor — which
     /// is why no codec question is ever asked (§27).

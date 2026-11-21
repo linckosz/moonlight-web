@@ -101,6 +101,9 @@ public:
         int fpsLimit = 0;
         int bitrateLimitKbps = 0;
         int bitrateKbps = 20000;
+        /// The rate was worked out, not set by hand — see
+        /// SessionConfig::bitrateFollowsFrame.
+        bool bitrateFollowsFrame = false;
         /// VIDEO_FORMAT_* bitmask of what the browser can decode.
         int clientVideoFormats = 0;
         bool hdr = false;

@@ -419,6 +419,8 @@ int runFeedWorker(const QJsonObject& cfg)
     p.fps = cfg["fps"].toInt(60);
     p.maxFps = p.fps;
     p.bitrateKbps = cfg["bitrateKbps"].toInt(10000);
+    // The feed's rate is the server's estimate for its height, never a hand's.
+    p.bitrateFollowsFrame = true;
     // HEVC with H.264 behind it, or H.264 alone once a guest has said it
     // decodes nothing else (VIDEO_FORMAT_* masks, as the owner's /start).
     p.clientVideoFormats = cfg["h264"].toBool() ? 0x000F : (0x0F00 | 0x000F);
@@ -801,6 +803,8 @@ int runStreamWorker(QCoreApplication& app)
     session->setFollowDisplayShape(cfg["followDisplayShape"].toBool(false));
     // Absent (an older parent) → the codec named is the codec kept.
     session->setCodecAuto(cfg["codecAuto"].toBool(false));
+    // Absent (an older parent) → the rate set is the rate kept.
+    session->setBitrateFollowsFrame(cfg["bitrateFollowsFrame"].toBool(false));
     // Absent (an older parent) → the height is kept, today's behaviour.
     session->setFrameFit(cfg["fitRequestedBox"].toBool(false), cfg["allowUpscale"].toBool(false),
                          cfg["matchClientDisplay"].toBool(false), cfg["fallbackWidth"].toInt(0),

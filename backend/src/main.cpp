@@ -5349,6 +5349,9 @@ int main(int argc, char* argv[])
             s->setFollowDisplayShape(body["follow_display_shape"].toBool(false));
             // The viewer's codec is "Auto", whatever codec the browser named.
             s->setCodecAuto(body["codec_auto"].toBool(false));
+            // The viewer's bitrate is "Auto": it follows a frame streamed
+            // smaller than asked. One set by hand stays the one set.
+            s->setBitrateFollowsFrame(reqBitrateAuto);
             s->setFrameFit(reqFitBox, reqAllowUpscale, reqMatchDisplay, reqFallbackW, reqFallbackH);
             s->setClientKind(clientKind);
             s->setClientSameNetwork(clientSameNetwork);
@@ -5518,6 +5521,7 @@ int main(int argc, char* argv[])
             cfg["clientTearingReal"] = body["client_tearing_real"].toBool(false);
             cfg["followDisplayShape"] = body["follow_display_shape"].toBool(false);
             cfg["codecAuto"] = body["codec_auto"].toBool(false);
+            cfg["bitrateFollowsFrame"] = reqBitrateAuto;
             cfg["fitRequestedBox"] = reqFitBox;
             cfg["allowUpscale"] = reqAllowUpscale;
             cfg["matchClientDisplay"] = reqMatchDisplay;
@@ -7433,15 +7437,21 @@ int main(int argc, char* argv[])
             if (aw > 0 && ah > 0) aspectRatio = static_cast<double>(aw) / ah;
         }
         // Auto's height for this guest, never taller than the host's own
-        // screen where the host says which it is (its tallest mode): a
-        // picture scaled up there is only more of the same pixels to carry
-        // (issue #67, G3). Worked out on a rung too: a shared feed the owner
-        // later leaves to Auto weighs it (SharedFeed::Spec::wantHeight).
+        // screen where the host says which it is: a picture scaled up there
+        // is only more of the same pixels to carry (issue #67, G3). This
+        // machine's native host names the very display the app streams (its
+        // probe; it lists no modes); another host, its tallest mode. Worked
+        // out on a rung too: a shared feed the owner later leaves to Auto
+        // weighs it (SharedFeed::Spec::wantHeight).
         const QJsonObject joinBody = QJsonDocument::fromJson(req.body).object();
-        // The tallest mode it names, whatever their order.
-        int hostScreenHeight = 0;
+        QList<int> modeHeights;
         for (const NvDisplayMode& mode : host->displayModes)
-            hostScreenHeight = qMax(hostScreenHeight, mode.height);
+            modeHeights.append(mode.height);
+        const int hostScreenHeight =
+            mw::guestprofile::shownScreenHeight(host->backendType == NativeHostBackend::typeName()
+                                                    ? NativeHostBackend::displayHeightForApp(appId)
+                                                    : 0,
+                                                modeHeights);
         const int guestAutoHeight = mw::guestprofile::capToHost(
             mw::guestprofile::autoHeight(mw::guestprofile::parseScreen(joinBody), aspectRatio,
                                          mw::guestprofile::requestFromTv(joinBody)),
@@ -7620,6 +7630,8 @@ int main(int argc, char* argv[])
         cfg["width"] = width;
         cfg["fps"] = 60;
         cfg["bitrateKbps"] = bitrateKbps;
+        // A guest's rate is the server's estimate for its height, never a hand's.
+        cfg["bitrateFollowsFrame"] = true;
         cfg["yuv444"] = false;
         cfg["hdr"] = false;
         cfg["iceTcp"] = mode.endsWith(QStringLiteral("-tcp"));
