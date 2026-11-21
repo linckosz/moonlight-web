@@ -321,6 +321,38 @@ function Wait-Tile {
     return $false
 }
 
+# ── What each step of the launch saw (D1BANC4bis, 21/11) ────────────────────
+# On 21/11 a pass ended on "the stream never started" with the tile on the page
+# and no /start at the host, and nothing said what the page showed. Each launch
+# step now keeps cdp.py's own answer and the first 300 visible characters of the
+# page, into the pass's row and this output. Never an address nor a code (SR,
+# 21/11): a key (k=) is counted first, then any URL becomes <url>, a key left
+# <k>, an IPv4 or IPv6 <ip>, a run of 24+ token characters <masked> and a run
+# of 4+ digits <n> (a PIN of the share board or of a pairing). Cut to length
+# only after all that, so a token cut at the edge is never kept half in clear.
+# $script:launchK counts the keys seen: above 0, the pass fails (privacy).
+$script:launchK = 0
+function Get-Seen([string] $text, [int] $max) {
+    $script:launchK += [regex]::Matches($text, '[#&?]k=').Count
+    $t = $text -replace 'https?://\S+', '<url>' -replace '[#&?]k=\S*', '<k>'
+    # Zero-width edges: two addresses one character apart are both masked.
+    $t = $t -replace '(?<![0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])', '<ip>'
+    # F5's IPv6 pattern, its groups allowed empty: with {1,4} an address with a "::"
+    # inside kept its groups after the "::" in clear. Matches all F5 matched, and more.
+    $t = $t -replace '([0-9a-fA-F]{0,4}:){2,}[0-9a-fA-F]{0,4}', '<ip>'
+    $t = $t -replace '[A-Za-z0-9_-]{24,}', '<masked>' -replace '[0-9]{4,}', '<n>'
+    $t = ($t -replace '\s+', ' ').Trim()
+    return $t.Substring(0, [math]::Min($max, $t.Length))
+}
+function Launch-Step([string] $what) {
+    $said = Get-Seen ((Cdp launch $what) | Out-String) 200
+    Start-Sleep -Milliseconds 1500
+    $page = Get-Seen ((Cdp eval "JSON.stringify((document.body ? document.body.innerText : '').slice(0, 2000))") | Out-String) 300
+    $step = [ordered]@{ step = (Get-Seen $what 80); cdp = $said; page = $page }
+    Write-Host "  launch '$($step.step)': $($step.cdp) | page: $page"
+    $script:launchTrace += [pscustomobject]$step
+}
+
 $out = @()
 $ownerWarnings = @()
 $first = $true
@@ -411,22 +443,36 @@ try {
             }
 
             # Twice if the first only hovered, then the self-stream confirmation.
-            Cdp launch $Tile | Out-Null
-            Start-Sleep -Seconds 3
+            # Each step through Launch-Step, which keeps what it saw (above).
+            $script:launchTrace = @()
+            $kBeforeLaunch = $script:launchK
+            Launch-Step $Tile
+            Start-Sleep -Milliseconds 1500
             $state = Cdp eval "JSON.stringify({selfGo:!!document.querySelector('.self-stream-go'),canvas:!!document.querySelector('canvas')})"
             if ($state -match '"selfGo":true') {
-                Cdp launch 'Stream anyway 🚀' | Out-Null
-                Start-Sleep -Seconds 8
+                Launch-Step 'Stream anyway 🚀'
+                Start-Sleep -Milliseconds 6500
             } elseif ($state -notmatch '"canvas":true') {
-                Cdp launch $Tile | Out-Null
-                Start-Sleep -Seconds 6
+                Launch-Step $Tile
+                Start-Sleep -Milliseconds 4500
                 if ((Cdp eval "!!document.querySelector('.self-stream-go')") -match 'True|true') {
-                    Cdp launch 'Stream anyway 🚀' | Out-Null
-                    Start-Sleep -Seconds 8
+                    Launch-Step 'Stream anyway 🚀'
+                    Start-Sleep -Milliseconds 6500
                 }
             }
 
             $row = [ordered]@{ id = $pass.id; factor = $pass.factor }
+            $row.launchTrace = @($script:launchTrace)
+            if ($script:launchK -gt $kBeforeLaunch) {
+                # Cut before it was kept, but a key reached what the steps read: the
+                # pass stops here, failed for privacy, and says so.
+                Write-Warning "  PRIVACY: a key (k=) was seen by the launch steps of this pass (cut before kept)"
+                $row.error = 'privacy: k= seen by the launch steps'
+                $row.privacyFailed = $true
+                $out += [pscustomobject]$row
+                ($row | ConvertTo-Json -Compress) | Add-Content -Path $jsonl -Encoding UTF8
+                continue
+            }
             if ($flagOnClient) { $row.flagOnClient = $clientDevice }
             if ((Cdp eval "!!document.querySelector('canvas')") -notmatch 'True|true') {
                 Write-Warning "  the stream never started"
@@ -550,6 +596,8 @@ finally {
                 $kHits += [regex]::Matches($text, '[#&?]k=').Count
             }
         Write-Host "owner link: k= in the results: $kHits"
+        if ($script:launchK -gt 0) { Write-Warning "owner link: k= seen by the launch steps (cut before kept): $script:launchK - PRIVACY FAILURE" }
+        else { Write-Host "owner link: k= seen by the launch steps: 0" }
     } elseif ($KeepKiosks) {
         Write-Host ''
         Write-Host 'kiosks left open (-KeepKiosks): Ctrl+Alt+Shift+M to minimise, Ctrl+Alt+Shift+Q to close.'
