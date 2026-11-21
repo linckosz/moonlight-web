@@ -169,6 +169,11 @@ public:
     /// The way the running child was started (Plain until one was).
     Launch launch() const { return m_Launch; }
 
+    /// How long a worker has to exit once told to stop (quit or a notice),
+    /// before it is killed. Its own wait for its relay graph is bounded at
+    /// 3 s from the start of its teardown (RelayGraphWatch).
+    static constexpr int kStopKillMs = 5000;
+
     /// Graceful local teardown ({"cmd":"quit"}), hard-kill after 5s.
     void requestQuit();
     /// Notify the browser it was taken over, then teardown (worker side).
@@ -305,6 +310,9 @@ private:
     void sendJson(const QJsonObject& msg);
     void writeLine(const QByteArray& line);
     void killChild();
+    /// Kills the worker if it still runs @p kStopKillMs after @p what (quit, a
+    /// notice) was sent, as killed after a stop rather than crashed.
+    void killIfStillRunningAfter(const char* what);
     qint64 childPid() const;
     /// Puts back the Mouse Keys a worker died holding, from this process when
     /// it sits in the console session — see m_MouseKeysHeld.
@@ -319,6 +327,8 @@ private:
     bool m_ViewerConnectedEmitted = false;
     /// A quit or one of the notices was sent: whatever follows is no crash.
     bool m_StopAsked = false;
+    /// This process killed it, after a stop it did not finish in time.
+    bool m_KilledAfterStop = false;
     bool m_Crashed = false;
     QString m_StreamId;
     const qint64 m_CreatedMs = QDateTime::currentMSecsSinceEpoch();

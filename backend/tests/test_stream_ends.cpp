@@ -35,6 +35,18 @@ void run_stream_ends_tests()
         CHECK(StreamEnds::stateAfterExit(true, true) == State::Ended);
     }
 
+    SECTION("StreamEnds — a worker killed after a stop is said so, not crashed (A125)");
+    {
+        // Killed by the server once it outlived a quit or a notice: SIGKILL
+        // reads as a crash exit, the log says what it was.
+        CHECK_EQ(StreamEnds::exitNote(true, true), QStringLiteral("killed after quit timeout"));
+        CHECK_EQ(StreamEnds::exitNote(true, false), QStringLiteral("killed after quit timeout"));
+        // Any other crash exit is one.
+        CHECK_EQ(StreamEnds::exitNote(false, true), QStringLiteral("crashed"));
+        // Exited by itself: nothing to add.
+        CHECK(StreamEnds::exitNote(false, false).isEmpty());
+    }
+
     SECTION("StreamEnds — the names the page reads");
     {
         CHECK_EQ(StreamEnds::name(State::Live), QStringLiteral("live"));

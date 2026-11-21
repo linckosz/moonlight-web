@@ -94,6 +94,19 @@ public:
         return endedEvent || stopAsked ? State::Ended : State::Crashed;
     }
 
+    /// What the log says of a worker's exit beyond its code and status. One
+    /// this server killed itself (@p killedAfterStop), because it was still
+    /// there well after a stop (a quit, a take-over, a revocation, a shared
+    /// session ended), is said to be that, not a crash, though its status
+    /// reads like one (SIGKILL: 9, CrashExit). Any other @p crashExit is a
+    /// crash of the process, whatever its session had said. Nothing for a
+    /// worker that exited by itself.
+    static QString exitNote(bool killedAfterStop, bool crashExit)
+    {
+        if (killedAfterStop) return QStringLiteral("killed after quit timeout");
+        return crashExit ? QStringLiteral("crashed") : QString();
+    }
+
     static QString name(State s)
     {
         switch (s) {

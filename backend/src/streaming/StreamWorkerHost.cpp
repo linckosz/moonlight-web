@@ -25,6 +25,7 @@
 #include "StreamEnds.h"
 #include "TakeoverNotice.h"
 #include "WorkerService.h"
+#include "worker/RelayGraphWatch.h"
 #include "common/Edition.h"
 #include "common/LaunchLock.h"
 #include "common/LinuxCapabilities.h"
@@ -122,6 +123,8 @@ void StreamWorkerHost::prepare(const QJsonObject& config, QStringList& args,
 bool StreamWorkerHost::startAs(const QJsonObject& config, Launch how)
 {
     Q_ASSERT(!m_Proc && !m_Console);
+    // A child of its own: nothing a previous one went through says how it ends.
+    m_KilledAfterStop = false;
     m_MuxCounted = config.value(QStringLiteral("iceMuxShared")).toBool(false);
     m_OwnPortAsked = false;
     QStringList args;
@@ -162,6 +165,8 @@ bool StreamWorkerHost::getsSharedPorts(const QJsonObject& config)
 bool StreamWorkerHost::start(const QJsonObject& config)
 {
     Q_ASSERT(!m_Proc && !m_Console);
+    // A child of its own: nothing a previous one went through says how it ends.
+    m_KilledAfterStop = false;
     // Counted on the shared ports by the server (main.cpp, streamSharesPorts):
     // if it ends up on a socket of its own, it asks for its slot's hole.
     m_MuxCounted = config.value(QStringLiteral("iceMuxShared")).toBool(false);
@@ -633,13 +638,25 @@ void StreamWorkerHost::requestQuit()
     if (!isRunning()) return;
     m_StopAsked = true;
     sendCommand("quit");
-    // The worker gives its relay thread ~3s to unwind; kill shortly after in
-    // case it wedged (moonlight teardown can hang on a dead host).
-    QTimer::singleShot(5000, this, [this]() {
-        if (isRunning()) {
-            qWarning() << "[StreamWorkerHost] Worker did not exit after quit — killing";
-            killChild();
-        }
+    killIfStillRunningAfter("quit");
+}
+
+// A worker's own wait for its graph ends well before this process kills it.
+static_assert(RelayGraphWatch::kBoundMs + 1000 <= StreamWorkerHost::kStopKillMs,
+              "a stopped worker must have time to exit by itself before it is killed");
+
+void StreamWorkerHost::killIfStillRunningAfter(const char* what)
+{
+    // The worker exits once its relay graph is down, 3 s after its teardown
+    // began at the latest (RelayGraphWatch); kill it if it is still here after
+    // that, in case it wedged (moonlight teardown can hang on a dead host).
+    // Said as what it is: a stop that took too long, not a crash, though the
+    // exit status reads like one (SIGKILL: 9, CrashExit).
+    QTimer::singleShot(kStopKillMs, this, [this, what]() {
+        if (!isRunning()) return;
+        qWarning() << "[StreamWorkerHost] Worker did not exit after" << what << "— killing";
+        m_KilledAfterStop = true;
+        killChild();
     });
 }
 
@@ -649,27 +666,21 @@ void StreamWorkerHost::notifyTakenOver(const QJsonObject& detail)
     QJsonObject command = TakeoverNotice::clean(detail);
     command.insert(QStringLiteral("cmd"), QStringLiteral("takenOver"));
     sendJson(command);
-    QTimer::singleShot(5000, this, [this]() {
-        if (isRunning()) killChild();
-    });
+    killIfStillRunningAfter("takenOver");
 }
 
 void StreamWorkerHost::notifyRevoked()
 {
     m_StopAsked = true;
     sendCommand("revoked");
-    QTimer::singleShot(5000, this, [this]() {
-        if (isRunning()) killChild();
-    });
+    killIfStillRunningAfter("revoked");
 }
 
 void StreamWorkerHost::notifySessionEnded()
 {
     m_StopAsked = true;
     sendCommand("sessionEnded");
-    QTimer::singleShot(5000, this, [this]() {
-        if (isRunning()) killChild();
-    });
+    killIfStillRunningAfter("sessionEnded");
 }
 
 void StreamWorkerHost::onStderrData(const QByteArray& data)
@@ -960,7 +971,13 @@ void StreamWorkerHost::onMuxEvent(const QJsonObject& event)
 
 void StreamWorkerHost::onFinished(int exitCode, QProcess::ExitStatus status)
 {
-    qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode << "status=" << status;
+    const QString note = StreamEnds::exitNote(m_KilledAfterStop, status == QProcess::CrashExit);
+    if (note.isEmpty())
+        qInfo() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode
+                << "status=" << status;
+    else
+        qInfo().noquote() << "[StreamWorkerHost] Worker finished, exitCode=" << exitCode
+                          << "status=" << status << "—" << note;
     // Its agent goes, and with its process its copies of the shared sockets:
     // the mux need not keep a replaced port for it any longer.
     releaseMuxSockets();

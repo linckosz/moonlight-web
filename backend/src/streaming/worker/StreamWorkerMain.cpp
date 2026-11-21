@@ -28,6 +28,7 @@
 #include "mw/native/FeedArbiter.h"
 #include "mw/native/NativeHost.h"
 #include "CoopSessionResolver.h"
+#include "RelayGraphWatch.h"
 #include "../../backend/streambackend/StreamBackendRegistry.h"
 #include "../../backend/streambackend/StreamBackendSetup.h"
 #include "../DataChannelRelay.h"
@@ -54,11 +55,15 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QNetworkAccessManager>
+#include <QElapsedTimer>
 #include <QPointer>
 #include <QTimer>
 #include <QDebug>
 
+#include <rtc/global.hpp>
+
 #include <chrono>
+#include <future>
 #include <cstdio>
 #include <iostream>
 #include <memory>
@@ -203,15 +208,19 @@ void relayMouseKeys(IMediaEngine* engine)
 
 /// Mirror of the /quit teardown in main.cpp: stop the shim FIRST (so moonlight
 /// stops calling back into a relay about to be destroyed), then stop + delete
-/// the relay. Exits the process once done (short grace for the relay thread).
+/// the relay. Exits the process once the relay graphs are gone, 3 s after this
+/// began at the latest (RelayGraphWatch).
 /// @p takeoverDetail: what a take-over notice says beyond itself (TakeoverNotice).
 void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded*/,
                      const QJsonObject& takeoverDetail = QJsonObject())
 {
     if (!g_State || g_State->exiting) return;
     g_State->exiting = true;
+    QElapsedTimer since;
+    since.start();
 
     QJsonObject hold;
+    RelayGraphWatch graph;
 
     if (g_State->relay) {
         DataChannelRelay* r = g_State->relay;
@@ -220,6 +229,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &DataChannelRelay::sessionEnded, nullptr, nullptr);
+        graph.watch(r, r->mediaEngine());
         if (r->mediaEngine()) {
             r->mediaEngine()->stopConnection();
             hold = r->mediaEngine()->captureHoldReport();
@@ -234,6 +244,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &MediaTrackRelay::sessionEnded, nullptr, nullptr);
+        graph.watch(r, r->mediaEngine());
         if (r->mediaEngine()) {
             r->mediaEngine()->stopConnection();
             hold = r->mediaEngine()->captureHoldReport();
@@ -248,6 +259,7 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
         if (notify == 2) r->notifyClientRevoked();
         if (notify == 3) r->notifyClientSessionEnded();
         QObject::disconnect(r, &StreamRelay::sessionEnded, nullptr, nullptr);
+        graph.watch(r, r->mediaEngine());
         if (r->mediaEngine()) {
             r->mediaEngine()->stopConnection();
             hold = r->mediaEngine()->captureHoldReport();
@@ -287,13 +299,35 @@ void teardownAndExit(int notify /*0=none, 1=takenOver, 2=revoked, 3=sessionEnded
         emitEvent({{QStringLiteral("event"), QStringLiteral("ended")}});
     }
 
-    // The relay graph tears down asynchronously on its own thread; give it a
-    // moment before the process exits (LiStopConnection can take a while).
-    // Whatever an engine parked on its way down meanwhile goes too.
-    QTimer::singleShot(3000, qApp, [shipKept]() {
-        shipKept();
-        QCoreApplication::quit();
-    });
+    // The relay graph tears down asynchronously on its own thread
+    // (LiStopConnection can take a while): the process exits once all of it is
+    // gone, engines included, and 3 s after this began at the latest, inside
+    // the server's 5 s. Whatever an engine parked on its way down meanwhile
+    // goes too.
+    const bool watched = !graph.empty();
+    if (watched) {
+        // And libdatachannel's end of it: a PeerConnection the relay let go of
+        // finishes closing on libdatachannel's threads (the SCTP shutdown that
+        // carries an exit notice's last retransmission, DTLS). Cleanup() drops
+        // the library's own hold: its future is ready once the last connection
+        // and transport are gone and its threads joined.
+        auto rtcDown = std::make_shared<std::shared_future<void>>(rtc::Cleanup());
+        graph.until("libdatachannel", [rtcDown]() {
+            return rtcDown->wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        });
+    }
+    graph.whenGone(qApp, since, RelayGraphWatch::kBoundMs,
+                   [shipKept, watched](bool inTime, qint64 elapsedMs, const QString& left) {
+                       if (!inTime)
+                           qWarning().noquote()
+                               << "[StreamWorker] Relay graph still not down after" << elapsedMs
+                               << "ms (left:" << left << ") — exiting anyway";
+                       else if (watched)
+                           qInfo() << "[StreamWorker] Relay graph down in" << elapsedMs
+                                   << "ms — exiting";
+                       shipKept();
+                       QCoreApplication::quit();
+                   });
 }
 
 /// The guests' shared feed (plan « flux commun des invités »): a worker with no
