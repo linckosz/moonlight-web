@@ -151,6 +151,15 @@ const DIAG_STATS_WAIT_MS = 500;
 /** Where a count in the failure report stops: past it, the number says nothing more. */
 const DIAG_COUNT_CAP = 999;
 
+/**
+ * How often the ICE counters are read while the checks run, from the answer
+ * until the channel opens or the attempt is reported (tallyChecks).
+ */
+const DIAG_SAMPLE_MS = 2000;
+
+/** How many candidate pairs the tally keeps: far more than any attempt makes. */
+const DIAG_MAX_PAIRS = 512;
+
 const DIAG_TYPES = new Set(['host', 'srflx', 'prflx', 'relay']);
 const DIAG_PROTOCOLS = new Set(['udp', 'tcp']);
 
@@ -176,13 +185,47 @@ export function candidateKind(candidate) {
 }
 
 /**
- * The browser's ICE counters, added up over every candidate pair: checks it
- * sent, answers it had to them, checks it received. Only these numbers are
- * read — never a pair's addresses, ports or URLs. Null when the browser does not
- * answer within DIAG_STATS_WAIT_MS: the report goes without them rather than
- * after the line has closed.
+ * Fold one getStats() report into `tally`: for each candidate pair, the highest
+ * value of each ICE counter seen so far (checks sent, answers had to them,
+ * checks received). Returns how many pairs this report lists.
+ *
+ * Why keep them across reads: a browser drops a pair that never had an answer
+ * (Chrome after some fifteen seconds) and its counters go with it, so a single
+ * read at the deadline found "checks sent 0" for checks that did go out. A pair
+ * is keyed by the report's own id, an opaque name the browser gives it, which
+ * stays in this page. Only the three numbers are read, never a pair's
+ * addresses, ports or URLs.
  */
-export async function checkCounts(pc) {
+export function tallyChecks(tally, stats) {
+    const positive = (value) => (Number.isFinite(value) && value > 0 ? value : 0);
+    let listed = 0;
+    let index = 0;
+    stats.forEach((report) => {
+        if (report.type !== 'candidate-pair') return;
+        listed++;
+        const key = report.id ? String(report.id) : `#${index}`;
+        index++;
+        const prev = tally.get(key);
+        if (!prev && tally.size >= DIAG_MAX_PAIRS) return;
+        tally.set(key, {
+            sent: Math.max(prev?.sent || 0, positive(report.requestsSent)),
+            answered: Math.max(prev?.answered || 0, positive(report.responsesReceived)),
+            received: Math.max(prev?.received || 0, positive(report.requestsReceived)),
+        });
+    });
+    return listed;
+}
+
+/**
+ * The browser's ICE counters for the failure report, added up over every
+ * candidate pair `tally` has seen (tallyChecks), this last read included:
+ * `sent`, `answered`, `received`, `seen` (the pairs counted), and `left` (the
+ * pairs the browser still lists now). Without an answer from the browser within
+ * DIAG_STATS_WAIT_MS, the earlier reads stand alone and `left` is left out: the
+ * report goes without it rather than after the line has closed. Null when no
+ * read ever answered.
+ */
+export async function checkCounts(pc, tally = new Map()) {
     let timer;
     const stats = await Promise.race([
         Promise.resolve()
@@ -193,18 +236,14 @@ export async function checkCounts(pc) {
         }),
     ]);
     clearTimeout(timer);
-    if (!stats) return null;
+    if (!stats && tally.size === 0) return null;
+    const left = stats ? tallyChecks(tally, stats) : null;
     const sum = { sent: 0, answered: 0, received: 0 };
-    const add = (key, value) => {
-        if (Number.isFinite(value) && value > 0)
-            sum[key] = Math.min(sum[key] + value, DIAG_COUNT_CAP);
-    };
-    stats.forEach((report) => {
-        if (report.type !== 'candidate-pair') return;
-        add('sent', report.requestsSent);
-        add('answered', report.responsesReceived);
-        add('received', report.requestsReceived);
-    });
+    for (const pair of tally.values())
+        for (const key of ['sent', 'answered', 'received'])
+            sum[key] = Math.min(sum[key] + pair[key], DIAG_COUNT_CAP);
+    sum.seen = Math.min(tally.size, DIAG_COUNT_CAP);
+    if (left !== null) sum.left = Math.min(left, DIAG_COUNT_CAP);
     return sum;
 }
 
@@ -543,6 +582,10 @@ export class Tunnel {
         this._remoteCount = 0;
         this._answeredAt = null;
         this._diagSent = false;
+        // The ICE counters of every pair seen while the checks ran
+        // (tallyChecks), and the timer that reads them.
+        this._checkTally = new Map();
+        this._checkSampler = null;
 
         this._nextId = 1;
         this._pending = new Map(); // request id → { resolve, reject, head, chunks }
@@ -711,8 +754,9 @@ export class Tunnel {
     async _reportNoRoute(why) {
         if (this._diagSent || this._answeredAt === null || !this._pc) return;
         this._diagSent = true;
+        this._stopCheckSampler();
         const pc = this._pc;
-        const checks = await checkCounts(pc);
+        const checks = await checkCounts(pc, this._checkTally);
         // Opened while the counters were read: there is nothing to report.
         if (this.connected) return;
         this._sendSignal(
@@ -845,9 +889,43 @@ export class Tunnel {
             return;
         }
         await this._pc.setLocalDescription(answer);
-        if (this._sendSignal({ type: 'sdp', sdp: answer.sdp, sig }))
+        if (this._sendSignal({ type: 'sdp', sdp: answer.sdp, sig })) {
             this._answeredAt = performance.now();
+            this._startCheckSampler();
+        }
         this._status('connecting');
+    }
+
+    /**
+     * Read the ICE counters every DIAG_SAMPLE_MS while the checks run, so the
+     * failure report still counts the pairs the browser has dropped by then
+     * (tallyChecks). Stops when the channel opens, when the report goes, and
+     * at teardown. A read still pending when the next one is due is not doubled.
+     */
+    _startCheckSampler() {
+        if (this._checkSampler) return;
+        const pc = this._pc;
+        let reading = false;
+        this._checkSampler = setInterval(async () => {
+            if (this.connected || this._diagSent || this._pc !== pc) {
+                this._stopCheckSampler();
+                return;
+            }
+            if (reading) return;
+            reading = true;
+            try {
+                tallyChecks(this._checkTally, await pc.getStats());
+            } catch {
+                /* closed meanwhile: the report reads what it has */
+            } finally {
+                reading = false;
+            }
+        }, DIAG_SAMPLE_MS);
+    }
+
+    _stopCheckSampler() {
+        if (this._checkSampler) clearInterval(this._checkSampler);
+        this._checkSampler = null;
     }
 
     /**
@@ -952,6 +1030,7 @@ export class Tunnel {
     }
 
     _teardown(why) {
+        this._stopCheckSampler();
         for (const [, socket] of this._sockets) socket._closed(why);
         this._sockets.clear();
         for (const [, waiter] of this._pending) waiter.reject(new Error(why));

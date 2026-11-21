@@ -98,6 +98,36 @@ void run_tunnel_diag_tests()
         CHECK(line.contains(QStringLiteral("checks sent 999, answered 0, received 0")));
     }
 
+    SECTION("TunnelDiag — the pairs the counters come from, and those still listed");
+    {
+        const QJsonObject msg{
+            {QStringLiteral("checks"), QJsonObject{{QStringLiteral("sent"), 40},
+                                                   {QStringLiteral("answered"), 0},
+                                                   {QStringLiteral("received"), 0},
+                                                   {QStringLiteral("seen"), 6},
+                                                   {QStringLiteral("left"), 0}}},
+        };
+        CHECK(describe(msg).endsWith(QStringLiteral("; checks sent 40, answered 0, received 0, "
+                                                    "over 6 pairs (0 still listed)")));
+
+        // The last read did not answer in time: the pairs, without the count left.
+        const QJsonObject noLeft{
+            {QStringLiteral("checks"),
+             QJsonObject{{QStringLiteral("sent"), 3}, {QStringLiteral("seen"), 1e9}}},
+        };
+        CHECK(describe(noLeft).endsWith(
+            QStringLiteral("; checks sent 3, answered 0, received 0, over 999 pairs")));
+
+        // Not numbers: dropped, as an earlier page's report reads.
+        const QJsonObject odd{
+            {QStringLiteral("checks"),
+             QJsonObject{{QStringLiteral("sent"), 2},
+                         {QStringLiteral("seen"), QStringLiteral("6")},
+                         {QStringLiteral("left"), 4}}},
+        };
+        CHECK(describe(odd).endsWith(QStringLiteral("; checks sent 2, answered 0, received 0")));
+    }
+
     SECTION("TunnelDiag — an empty report still makes a line that says so");
     {
         const QString line = describe(QJsonObject{});

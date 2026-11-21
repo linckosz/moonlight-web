@@ -102,7 +102,60 @@ describe('the ICE counters', () => {
                     { type: 'remote-candidate', address: '203.0.113.9', port: 3478, url: 'x' },
                 ),
         };
-        expect(await tunnelModule.checkCounts(pc)).toEqual({ sent: 14, answered: 0, received: 1 });
+        expect(await tunnelModule.checkCounts(pc)).toEqual({
+            sent: 14,
+            answered: 0,
+            received: 1,
+            seen: 2,
+            left: 2,
+        });
+    });
+
+    it('still counts the pairs the browser dropped before the last read', async () => {
+        const tally = new Map();
+        // Read while the checks ran: two pairs.
+        tunnelModule.tallyChecks(
+            tally,
+            stats(
+                { type: 'candidate-pair', id: 'CPa', requestsSent: 7 },
+                { type: 'candidate-pair', id: 'CPb', requestsSent: 3, requestsReceived: 1 },
+            ),
+        );
+        // At the deadline the browser lists only one, its counters gone on.
+        const pc = {
+            getStats: async () =>
+                stats({ type: 'candidate-pair', id: 'CPb', requestsSent: 5, requestsReceived: 1 }),
+        };
+        expect(await tunnelModule.checkCounts(pc, tally)).toEqual({
+            sent: 12,
+            answered: 0,
+            received: 1,
+            seen: 2,
+            left: 1,
+        });
+    });
+
+    it('keeps the earlier reads when the last one does not answer in time', async () => {
+        const tally = new Map();
+        tunnelModule.tallyChecks(tally, stats({ type: 'candidate-pair', id: 'CPa', requestsSent: 4 }));
+        const pc = { getStats: () => new Promise(() => {}) };
+        expect(await tunnelModule.checkCounts(pc, tally)).toEqual({
+            sent: 4,
+            answered: 0,
+            received: 0,
+            seen: 1,
+        });
+    });
+
+    it('keeps a bounded number of pairs', () => {
+        const tally = new Map();
+        const many = Array.from({ length: 600 }, (_, i) => ({
+            type: 'candidate-pair',
+            id: `CP${i}`,
+            requestsSent: 1,
+        }));
+        expect(tunnelModule.tallyChecks(tally, stats(...many))).toBe(600);
+        expect(tally.size).toBe(512);
     });
 
     it('goes without them when the browser does not answer in time', async () => {
@@ -151,6 +204,48 @@ describe('the report', () => {
         });
         expect(d.ms).toBeGreaterThanOrEqual(9800);
         expect(JSON.stringify(d)).not.toMatch(/\d+\.\d+\.\d+\.\d+|::/);
+    });
+
+    it('adds what was read while the checks ran', async () => {
+        const { t, diags } = tunnelOnLine({ getStats: async () => stats() });
+        t._answeredAt = performance.now();
+        tunnelModule.tallyChecks(
+            t._checkTally,
+            stats({ type: 'candidate-pair', id: 'CPa', requestsSent: 9 }),
+        );
+
+        await t._reportNoRoute('deadline');
+
+        expect(diags()[0].checks).toEqual({
+            sent: 9,
+            answered: 0,
+            received: 0,
+            seen: 1,
+            left: 0,
+        });
+    });
+
+    it('reads the counters every two seconds from the answer, and stops at teardown', async () => {
+        vi.useFakeTimers();
+        try {
+            let reads = 0;
+            const { t } = tunnelOnLine({
+                getStats: async () => {
+                    reads++;
+                    return stats({ type: 'candidate-pair', id: 'CPa', requestsSent: reads });
+                },
+            });
+            t._startCheckSampler();
+            await vi.advanceTimersByTimeAsync(6000);
+            expect(reads).toBe(3);
+            expect(t._checkTally.get('CPa').sent).toBe(3);
+
+            t._teardown('closed');
+            await vi.advanceTimersByTimeAsync(6000);
+            expect(reads).toBe(3);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('is not sent before this page’s answer went out', async () => {

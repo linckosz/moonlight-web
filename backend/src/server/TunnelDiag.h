@@ -127,6 +127,18 @@ inline QString describe(const QJsonObject& msg)
                     .arg(count(c.value(QStringLiteral("sent")), kCountCap))
                     .arg(count(c.value(QStringLiteral("answered")), kCountCap))
                     .arg(count(c.value(QStringLiteral("received")), kCountCap));
+        // Pages from 0.4.4 on read the counters all along the checks, the
+        // pairs the browser dropped included (tallyChecks): `seen` is how many
+        // pairs they come from, `left` how many the browser still listed at
+        // the end. An earlier page sends neither, and its counters are only
+        // those of the pairs still listed.
+        if (c.value(QStringLiteral("seen")).isDouble()) {
+            line += QStringLiteral(", over %1 pairs")
+                        .arg(count(c.value(QStringLiteral("seen")), kCountCap));
+            if (c.value(QStringLiteral("left")).isDouble())
+                line += QStringLiteral(" (%1 still listed)")
+                            .arg(count(c.value(QStringLiteral("left")), kCountCap));
+        }
     } else {
         line += QStringLiteral("; no check counters");
     }
