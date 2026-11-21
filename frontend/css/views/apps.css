@@ -499,10 +499,10 @@
 
 /* ── A display a stream turned off (issue #39) ───────────────────────────── */
 /* While a stream on the virtual display has the PC's other screens off, their
-   cards stay where they were, drawn dark: the machine in grey, and behind it
-   a ghost of its glow, cyan one way and magenta the other, drifting a few
-   pixels over seconds. Slow on purpose, never a blink: the card is asleep,
-   not in alarm. It opens nothing (HostListView), and lifts on no hover. */
+   cards stay where they were, drawn dark: the machine in grey, still, with
+   the faint cyan glow every card has. No colour fringe: a magenta ghost read
+   as a rendering fault (VDBENCH2, 21/11/2026). The card is asleep, not in
+   alarm. It opens nothing (HostListView), and lifts on no hover. */
 .app-card--off {
     cursor: default;
 }
@@ -513,7 +513,7 @@
     transform: none;
 }
 .app-card--off .app-icon-sprite {
-    animation: app-card-ghost 7s ease-in-out infinite alternate;
+    filter: grayscale(1) brightness(0.42) drop-shadow(0 0 2px rgba(0, 229, 255, 0.22));
 }
 .app-card--off .app-card-name {
     color: var(--text-3);
@@ -524,16 +524,6 @@
 .app-card--off:hover .app-icon-label,
 .app-card--off:focus-visible .app-icon-label {
     animation: none;
-}
-@keyframes app-card-ghost {
-    from {
-        filter: grayscale(1) brightness(0.42) drop-shadow(-3px 0 1px rgba(0, 229, 255, 0.28))
-            drop-shadow(3px 0 1px rgba(255, 42, 109, 0.18));
-    }
-    to {
-        filter: grayscale(1) brightness(0.42) drop-shadow(3px 1px 2px rgba(0, 229, 255, 0.16))
-            drop-shadow(-3px -1px 2px rgba(255, 42, 109, 0.26));
-    }
 }
 .app-card-off-note {
     position: absolute;
@@ -555,11 +545,6 @@
 @media (prefers-reduced-motion: reduce) {
     .app-card--launching .app-card-name {
         animation: none;
-    }
-    /* The ghost holds still, half-way between its two drifts. */
-    .app-card--off .app-icon-sprite {
-        animation: none;
-        filter: grayscale(1) brightness(0.42) drop-shadow(0 0 2px rgba(0, 229, 255, 0.22));
     }
     .app-card--launching::before {
         animation: none;
