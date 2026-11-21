@@ -812,7 +812,7 @@
         "consentRequired": "The Internet link is paused: the permission you gave earlier described the former mechanism (public DNS record and certificate), which no longer applies to this installation. Read the description above, then tick the box again to re-enable the link under the current terms.",
         "upnpAvailableNote": "Authorizes UPnP port mapping on your router (available on this network). You can also forward ports manually.",
         "upnpUnavailableNote": "Authorizes UPnP port mapping on your router (not available on this network). You can also forward ports manually.",
-        "behindAnotherNat": "Your provider or another router sits in front of your router (CGNAT or double NAT): ports opened by UPnP cannot be reached from the internet. Your Internet Access address does not need them.",
+        "behindAnotherNat": "Your provider or another router sits in front of your router (CGNAT or double NAT): ports opened by UPnP cannot be reached from the internet.",
         "upnpDisabledNote": "UPnP is turned off in this server's settings: your router is never asked to open a port.",
         "publicIp": "Public IP:",
         "upnpLabel": "UPnP:",
