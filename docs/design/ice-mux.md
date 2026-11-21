@@ -503,6 +503,28 @@ hole, as for any stream, and a guest's goes as a guest's does. The bench key
 `debug_ice_mux_refuse` (file only, never written, said at WARNING when the
 server starts) makes every worker refuse, and nothing else.
 
+## Changing one of the mux patches
+
+A tree that has been configured holds our patches in its submodules' files, and
+CMake takes a patch as applied when it reverses cleanly. Once
+`libjuice-ice-mux.patch` or `libdatachannel-ice-mux.patch` changes, the version
+such a tree holds no longer reverses, so the passive ICE-TCP patch it builds on
+is taken as missing and applied again: the next configure stops with "does not
+apply". The commit that changes either patch says so in its message, and
+each tree configured before it takes the earlier version out once, from the
+tree's root, before configuring again. With `<change>` the commit that changed
+the patch, for the patch that changed:
+
+```
+git show <change>^:backend/third_party/patches/libjuice-ice-mux.patch | git -C backend/third_party/libdatachannel/deps/libjuice apply --reverse --check
+git show <change>^:backend/third_party/patches/libdatachannel-ice-mux.patch | git -C backend/third_party/libdatachannel apply --reverse --check
+```
+
+then the same without `--check`. Every other change in those folders stays.
+`git checkout -- .` in the submodule also works but drops them, and leaves
+behind a file one of our patches added (the CMake message says so). A fresh
+clone, as in the CI, is not concerned.
+
 ## Not there yet
 
 - Without a hole, the public address of the block port: an agent asks the STUN
