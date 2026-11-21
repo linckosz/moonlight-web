@@ -2740,6 +2740,9 @@ int main(int argc, char* argv[])
     Logger::info("[Auth] Access the admin page at https://localhost/");
     Logger::info("[Auth] Remote access requires a generated PIN");
     server.setAuthManager(&authManager);
+    // A host's pairing is its session's; a session gone leaves it to others.
+    computerManager.setSessionAlivePredicate(
+        [&authManager](const QString& id) { return authManager.hasLiveSession(id); });
     const bool adminLocked = parser.isSet(noAdminOption);
     server.setAdminLocked(adminLocked);
     if (adminLocked)

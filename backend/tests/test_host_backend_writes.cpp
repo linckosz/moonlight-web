@@ -204,7 +204,11 @@ void run_host_backend_writes_tests()
 
     RestRouter addRouter;
     FakeHosts hosts;
-    registerHostManualAdd(addRouter, hosts);
+    // Far enough apart that no add here is paced (test_host_writes covers that).
+    qint64 addClock = 0;
+    HostWritePacing addPacing([&addClock]() { return addClock += 11000; });
+    registerHostManualAdd(addRouter, hosts, addPacing,
+                          [](const HttpRequest&) { return QStringLiteral("session-1"); });
 
     const QString home = QStringLiteral("192.0.2.10:47989");
     const QString homeLan = QStringLiteral("192.0.2.11:47989");
@@ -263,11 +267,13 @@ void run_host_backend_writes_tests()
     CHECK_EQ(beside->manualAddress.toString(), neighbour);
 
     // A known host does not move, not even by a port, and nothing of the answer
-    // is kept.
+    // is kept — nor said: this refusal reads like any other failure.
     const int savesBefore = hosts.saves;
     for (const QString& away : {elsewhere, homeOtherPort}) {
         const HttpResponse refused = addHost(addRouter, away, false);
-        CHECK_EQ(refused.statusCode, 409);
+        CHECK_EQ(refused.statusCode, 400);
+        CHECK_EQ(QJsonDocument::fromJson(refused.body).object()["code"].toString(),
+                 QStringLiteral("host_add_failed"));
         CHECK(!QJsonDocument::fromJson(refused.body).object().contains("hosts"));
         CHECK_EQ(tower->activeAddress.toString(), homeLan);
         CHECK_EQ(tower->manualAddress.toString(), home);

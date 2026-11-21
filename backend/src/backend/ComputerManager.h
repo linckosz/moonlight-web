@@ -31,6 +31,7 @@
 #include <memory>
 
 #include "NvComputer.h"
+#include "PairingOwners.h"
 #include "NvHTTP.h"
 #include "streambackend/IStreamBackend.h"
 #include "../common/Types.h"
@@ -67,9 +68,18 @@ public:
         m_StreamActivePredicate = std::move(predicate);
     }
 
+    // Whether a session id still names a live session (AuthManager). A pairing
+    // whose session is gone is one nobody drives any more (PairingOwners).
+    void setSessionAlivePredicate(std::function<bool(const QString&)> predicate)
+    {
+        m_SessionAlive = std::move(predicate);
+    }
+
     // REST API methods
     QJsonArray getHostsJson() const;
-    void handleScanRequest();
+    /// @p admin: the administrator's scan may extend a discovery window that is
+    /// already open; anyone else's leaves it as it is.
+    void handleScanRequest(bool admin);
     /// mayMoveHost: whether the answer may take a known host to another address.
     std::pair<int, QJsonObject> handleAddManualHost(const QString& address, bool mayMoveHost);
     std::pair<int, QJsonObject> handleDeleteHost(const QString& uuid);
@@ -93,8 +103,14 @@ public:
     // Pairing — client generates PIN, user enters it in Sunshine.
     // handleSubmitPin is async: it kicks off (or reports on) the background
     // pairing chain and answers the poll immediately — no nested event loop.
-    std::pair<int, QJsonObject> handleStartPairing(const QString& uuid);
-    void handleSubmitPin(const QString& uuid, ResponseCallback respond);
+    //
+    // A pairing belongs to @p sessionId, the session that started it
+    // (PairingOwners): only it is shown the PIN and may submit; another gets 409
+    // pairing_in_progress until it is left alone for PairingOwners::kIdleMs or
+    // its session goes. @p admin may replace someone else's that no chain runs.
+    std::pair<int, QJsonObject> handleStartPairing(const QString& uuid, const QString& sessionId,
+                                                   bool admin);
+    void handleSubmitPin(const QString& uuid, const QString& sessionId, ResponseCallback respond);
 
     // Declare which backend drives a host, then pair it. `type` names a
     // registered backend ("wolf"); `apiUrl` addresses its control API and
@@ -317,6 +333,15 @@ private:
     // NvPairingManager must not be freed (its async callbacks still reference
     // it) and no second chain is started for the same host.
     QSet<QString> m_SubmitInFlight; // uuid of hosts with a pairing chain in flight
+
+    // Whose each pairing is, and since when it was left alone.
+    PairingOwners m_PairingOwners;
+    std::function<bool(const QString&)> m_SessionAlive;
+
+    // Frees a pairing of a host. Never while its chain is in flight.
+    void dropPairing(const QString& uuid);
+    // Frees the pairings nobody drives any more (from the poll tick).
+    void dropIdlePairings();
 
     // Box art cache: uuid -> (appId -> pngData)
     QMap<QString, QMap<int, QByteArray>> m_BoxArtCache;

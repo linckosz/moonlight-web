@@ -582,6 +582,10 @@ NvAddress ComputerManager::pollAddressFor(const NvComputer* host) const
 
 void ComputerManager::onPollTick()
 {
+    // Not a poll of anything: a pairing nobody drives any more is let go even
+    // while a stream runs.
+    dropIdlePairings();
+
     // Suspend polling while a stream session is active: a co-located native
     // client owning the session polls nothing, and our extra connection churn
     // (Connection: close + 2s abort) wedges Sunshine's single-threaded HTTP
@@ -1168,7 +1172,7 @@ QJsonArray ComputerManager::getHostsJson() const
     return arr;
 }
 
-void ComputerManager::handleScanRequest()
+void ComputerManager::handleScanRequest(bool admin)
 {
     // Prevent overlapping scans (3 s cooldown)
     QDateTime now = QDateTime::currentDateTime();
@@ -1178,8 +1182,9 @@ void ComputerManager::handleScanRequest()
     }
     m_LastScanTime = now;
 
-    // Open a fresh mDNS discovery window (extends it if already active).
-    startMdnsDiscovery();
+    // Open a fresh mDNS discovery window. Extending one already open is the
+    // administrator's alone: anyone else's scan never keeps it open longer.
+    if (admin || !m_MdnsActive) startMdnsDiscovery();
 
     // Also trigger a poll tick immediately
     onPollTick();
@@ -1427,7 +1432,20 @@ QString ComputerManager::clientUniqueId()
 // --- Pairing ----------------------------------------------------------------
 // Client generates a random PIN, user enters it in Sunshine (stdin or Web UI).
 
-std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& uuid)
+namespace {
+
+/// Someone else is pairing that host. No PIN, nothing of theirs touched.
+QJsonObject pairingInProgress()
+{
+    return {{"status", "error"},
+            {"code", "pairing_in_progress"},
+            {"message", "Another device is pairing this host. Try again in a few minutes."}};
+}
+
+} // namespace
+
+std::pair<int, QJsonObject>
+ComputerManager::handleStartPairing(const QString& uuid, const QString& sessionId, bool admin)
 {
     NvComputer* host = findHostByUuid(uuid);
     if (!host) {
@@ -1451,20 +1469,26 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
         return {400, err};
     }
 
-    // Clean up any abandoned previous session. If a pairing chain is still in
-    // flight against it, freeing the NvPairingManager would leave its pending
-    // async callbacks dangling (use-after-free) — return the PIN already in use
-    // instead (it is bound to the in-flight stage-1 salt).
-    if (m_ActivePairings.contains(uuid)) {
-        if (m_SubmitInFlight.contains(uuid)) {
-            QJsonObject obj;
-            obj["status"] = "initiated";
-            obj["pin"] = m_PairingPins.value(uuid);
-            obj["message"] = "Enter this PIN in Sunshine (Web UI or stdin)";
-            return {200, obj};
-        }
-        delete m_ActivePairings.take(uuid);
-        m_PairingPins.remove(uuid);
+    // A pairing already held for this host is its owner's (PairingOwners). If a
+    // chain is still in flight against it, freeing the NvPairingManager would
+    // leave its pending async callbacks dangling (use-after-free): its owner gets
+    // the PIN already in use (bound to the in-flight stage-1 salt), anyone else
+    // a 409 without it.
+    const qint64 now = PairingOwners::steadyMs();
+    switch (m_PairingOwners.decideStart(uuid, m_ActivePairings.contains(uuid),
+                                        m_SubmitInFlight.contains(uuid), sessionId, admin, now,
+                                        m_SessionAlive)) {
+    case PairingOwners::Start::Busy: return {409, pairingInProgress()};
+    case PairingOwners::Start::ResumeOwn: {
+        m_PairingOwners.touch(uuid, now);
+        QJsonObject obj;
+        obj["status"] = "initiated";
+        obj["pin"] = m_PairingPins.value(uuid);
+        obj["message"] = "Enter this PIN in Sunshine (Web UI or stdin)";
+        return {200, obj};
+    }
+    case PairingOwners::Start::Replace: dropPairing(uuid); break;
+    case PairingOwners::Start::Fresh: break;
     }
     m_PairingError.remove(uuid);
 
@@ -1488,6 +1512,7 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
         new NvPairingManager(host->appVersion, addr.address(), addr.port(),
                              host->activeHttpsPort > 0 ? host->activeHttpsPort : MW_HTTPS_PORT);
     m_ActivePairings[uuid] = pm;
+    m_PairingOwners.begin(uuid, sessionId, now);
 
     // Not the PIN: it is on the page, and a log gets shared.
     Logger::info(QString("Pairing initiated for %1").arg(uuid));
@@ -1499,15 +1524,24 @@ std::pair<int, QJsonObject> ComputerManager::handleStartPairing(const QString& u
     return {200, obj};
 }
 
-void ComputerManager::handleSubmitPin(const QString& uuid, ResponseCallback respond)
+void ComputerManager::handleSubmitPin(const QString& uuid, const QString& sessionId,
+                                      ResponseCallback respond)
 {
     auto reply = [&respond](const char* status, const QString& message, int code) {
         respond(HttpResponse::json({{"status", status}, {"message", message}}, code));
     };
 
+    // Someone else's pairing: neither driven nor read from here.
+    if (!m_PairingOwners.maySubmit(uuid, sessionId)) {
+        respond(HttpResponse::json(pairingInProgress(), 409));
+        return;
+    }
+    m_PairingOwners.touch(uuid, PairingOwners::steadyMs());
+
     // A background chain finished with a terminal error — deliver it once.
     if (m_PairingError.contains(uuid)) {
         reply("error", m_PairingError.take(uuid), 400);
+        m_PairingOwners.clear(uuid);
         return;
     }
 
@@ -1591,6 +1625,7 @@ void ComputerManager::startPairingChain(const QString& uuid)
                 }
                 m_ActivePairings.erase(it);
                 m_PairingPins.remove(uuid);
+                m_PairingOwners.clear(uuid);
                 delete pm;
                 break;
             }
@@ -1618,7 +1653,28 @@ void ComputerManager::startPairingChain(const QString& uuid)
             }
 
             m_SubmitInFlight.remove(uuid);
+
+            // Left alone while it ran: freed now that nothing holds it.
+            if (m_PairingOwners.expired(uuid, PairingOwners::steadyMs(), m_SessionAlive))
+                dropPairing(uuid);
         });
+}
+
+void ComputerManager::dropPairing(const QString& uuid)
+{
+    if (m_SubmitInFlight.contains(uuid)) return; // its callbacks still hold it
+    delete m_ActivePairings.take(uuid);
+    m_PairingPins.remove(uuid);
+    m_PairingError.remove(uuid);
+    m_PairingOwners.clear(uuid);
+}
+
+void ComputerManager::dropIdlePairings()
+{
+    const QStringList idle =
+        m_PairingOwners.expiredHosts(PairingOwners::steadyMs(), m_SessionAlive);
+    for (const QString& uuid : idle)
+        dropPairing(uuid);
 }
 
 void ComputerManager::handleSetBackend(const QString& uuid, const QString& type,

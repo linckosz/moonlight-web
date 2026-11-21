@@ -71,6 +71,7 @@ add_executable(run_tests
     test_session_pool.cpp
     test_loopback_key.cpp
     test_host_backend_writes.cpp
+    test_host_writes.cpp
     test_host_cert_check.cpp
     test_port_fallback.cpp
     test_host_persistence.cpp

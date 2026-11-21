@@ -175,7 +175,8 @@ bool pairSunshine(ComputerManager& computers, const QString& user, const QString
 
     // Sunshine is up and our credentials work: emitting getservercert now yields
     // exactly one slider, and the scheduled PIN push is guaranteed deliverable.
-    auto [startStatus, startResult] = computers.handleStartPairing(uuid);
+    auto [startStatus, startResult] =
+        computers.handleStartPairing(uuid, QStringLiteral("local:provisioning"), /*admin=*/true);
     if (startResult.value(QStringLiteral("status")).toString() != QLatin1String("initiated")) {
         Logger::warning(QStringLiteral("Provisioning: pairing could not start: %1")
                             .arg(startResult.value(QStringLiteral("message")).toString()));

@@ -19,6 +19,9 @@
 
 #include "server/routes/HostBackendWrites.h"
 #include "server/routes/HostManualAdd.h"
+#include "server/routes/HostWrites.h"
+#include "server/AuthManager.h"
+#include "server/HostWritePacing.h"
 #include "server/ClientUniqueId.h"
 #include "server/HttpServer.h"
 #include "server/LanHttp.h"
@@ -46,14 +49,19 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
         return HttpResponse::json(obj);
     });
 
-    server.router()->post("/api/hosts/scan", [&computerManager](const HttpRequest&) {
-        computerManager.handleScanRequest();
-        QJsonObject obj;
-        obj["status"] = "scanning";
-        return HttpResponse::json(obj);
-    });
+    // One for the server's life, like the router these routes live on.
+    static HostWritePacing pacing;
+    // The session behind the cookie; a caller without one (the provisioning
+    // path never comes through here) is told apart by its address.
+    AuthManager* auth = server.authManager();
+    const HostWriteCaller caller = [auth](const HttpRequest& req) {
+        const QString id =
+            auth ? auth->sessionIdForToken(HttpServer::sessionTokenFromRequest(req)) : QString();
+        return id.isEmpty() ? QStringLiteral("peer:") + req.clientAddress : id;
+    };
 
-    registerHostManualAdd(*server.router(), computerManager);
+    registerHostWrites(*server.router(), computerManager, pacing, caller);
+    registerHostManualAdd(*server.router(), computerManager, pacing, caller);
 
     server.router()->del("/api/hosts/:id", [&computerManager](const HttpRequest& req) {
         QString uuid = req.pathParams.value("id");
@@ -77,52 +85,6 @@ void registerHostRoutes(HttpServer& server, ComputerManager& computerManager)
 
         auto [status, result] = computerManager.handleRenameHost(uuid, body["name"].toString());
         return HttpResponse::json(result, status);
-    });
-
-    // Restart the streaming service a host runs. Answers 501 wherever
-    // MoonlightWeb holds no control path for it, which is what the host list's
-    // `restartSupported` flag mirrors so the menu entry never appears in vain.
-    server.router()->postAsync(
-        "/api/hosts/:id/restart",
-        [&computerManager](const HttpRequest& req, ResponseCallback respond) {
-            QString uuid = req.pathParams.value("id");
-            if (uuid.isEmpty()) {
-                respond(HttpResponse::error(400, "Missing host ID"));
-                return;
-            }
-            computerManager.handleRestartHost(uuid, std::move(respond));
-        });
-
-    server.router()->post("/api/hosts/:id/wol", [&computerManager](const HttpRequest& req) {
-        QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
-
-        auto [status, result] = computerManager.handleWakeHost(uuid);
-        return HttpResponse::json(result, status);
-    });
-
-    // Phase 3: Pairing routes.
-    //
-    // Starting a pairing is a POST even though it reads like a query, because it
-    // changes state on the Sunshine host. A GET is fetched by things that never
-    // meant to act: a link preview bot, a browser prefetch, an antivirus that
-    // follows URLs — none of which a cross-site check can distinguish from the
-    // user, since they arrive as plain navigations. POST is out of their reach.
-    server.router()->post("/api/hosts/:id/pair/start", [&computerManager](const HttpRequest& req) {
-        QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty()) return HttpResponse::error(400, "Missing host ID");
-        auto [status, result] = computerManager.handleStartPairing(uuid);
-        return HttpResponse::json(result, status);
-    });
-
-    server.router()->postAsync("/api/hosts/:id/pair", [&computerManager](const HttpRequest& req,
-                                                                         ResponseCallback respond) {
-        QString uuid = req.pathParams.value("id");
-        if (uuid.isEmpty()) {
-            respond(HttpResponse::error(400, "Missing host ID"));
-            return;
-        }
-        computerManager.handleSubmitPin(uuid, std::move(respond));
     });
 
     // Backend management (integration doc §5.3). Deliberately scoped to the

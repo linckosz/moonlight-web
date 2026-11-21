@@ -112,6 +112,17 @@ export function isLaunchKeyRefusal(err) {
     return err?.statusCode === 409 && (code === 'key_refused' || code === 'launch_proof_required');
 }
 
+/**
+ * Refusals the server names with a `code` the page says in the viewer's
+ * language rather than the server's English `message`.
+ */
+const TRANSLATED_ERROR_CODES = Object.freeze({
+    host_add_failed: 'hosts.addFailed',
+    too_many_attempts: 'hosts.tooManyAttempts',
+    restart_too_soon: 'hosts.restartTooSoon',
+    pairing_in_progress: 'hosts.pairingInProgress',
+});
+
 /** How long the challenge of a launch or a Stop is waited for. */
 const LAUNCH_PROOF_TIMEOUT_MS = 10000;
 
@@ -187,6 +198,9 @@ export class BackendClient {
         try {
             body = await resp.json();
             msg = body.message || body.error || '';
+            // Said in the viewer's own language where the server names it.
+            const key = body && TRANSLATED_ERROR_CODES[body.code];
+            if (key) msg = t(key);
         } catch (_) {
             // Response body is not JSON or empty
         }

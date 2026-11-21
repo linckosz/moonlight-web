@@ -129,6 +129,40 @@ describe('BackendClient', () => {
         });
     });
 
+    it("says a coded host refusal in the viewer's language, not the server's English", async () => {
+        const cases = [
+            ['host_add_failed', 400, 'hosts.addFailed'],
+            ['too_many_attempts', 429, 'hosts.tooManyAttempts'],
+            ['restart_too_soon', 429, 'hosts.restartTooSoon'],
+            ['pairing_in_progress', 409, 'hosts.pairingInProgress'],
+        ];
+        for (const [code, status, key] of cases) {
+            vi.stubGlobal(
+                'fetch',
+                vi
+                    .fn()
+                    .mockResolvedValue(
+                        jsonResponse({ code, message: 'English' }, { ok: false, status }),
+                    ),
+            );
+            await expect(BackendClient.getHosts()).rejects.toMatchObject({
+                message: key,
+                statusCode: status,
+                responseBody: { code },
+            });
+        }
+        // A code the page does not know keeps the server's words.
+        vi.stubGlobal(
+            'fetch',
+            vi
+                .fn()
+                .mockResolvedValue(
+                    jsonResponse({ code: 'other', message: 'English' }, { ok: false, status: 409 }),
+                ),
+        );
+        await expect(BackendClient.getHosts()).rejects.toMatchObject({ message: 'English' });
+    });
+
     it('does not reload on a 401 from an auth endpoint', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'nope' }, { ok: false, status: 401 })));
         await expect(BackendClient.getAuthStatus()).rejects.toMatchObject({ statusCode: 401 });

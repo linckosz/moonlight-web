@@ -27,6 +27,10 @@ import { BackendClient } from '../api/BackendClient.js';
 import { t } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 
+/** Another device is pairing this host: its pairing is its own (409). */
+const isPairingBusy = (err) =>
+    err?.statusCode === 409 && err?.responseBody?.code === 'pairing_in_progress';
+
 export class PairDialog {
     constructor(host) {
         this.host = host;
@@ -76,7 +80,10 @@ export class PairDialog {
                 statusEl.className = 'pairing-status-text pairing-error';
             }
         } catch (err) {
-            statusEl.textContent = t('pairing.contactFailed', { message: err.message });
+            // Another device's pairing is not a failure to reach the host.
+            statusEl.textContent = isPairingBusy(err)
+                ? err.message
+                : t('pairing.contactFailed', { message: err.message });
             statusEl.className = 'pairing-status-text pairing-error';
         }
     }
@@ -135,6 +142,12 @@ export class PairDialog {
                 statusEl.className = 'pairing-status-text pairing-error';
             }
         } catch (err) {
+            // Another device's pairing now: polling on would wait for nothing.
+            if (isPairingBusy(err)) {
+                this.stopPolling();
+                statusEl.textContent = err.message;
+                statusEl.className = 'pairing-status-text pairing-error';
+            }
             // Network error — keep polling
         }
     }
