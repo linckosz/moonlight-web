@@ -89,6 +89,15 @@ public:
     explicit FrameSender(Options options);
     ~FrameSender();
 
+    /// A guest's worker on the guests' shared feed yields to the owner's
+    /// stream, as the feed itself does (StreamPriority's Feed role): its
+    /// senders take no MMCSS, whatever their options ask. Set once by that
+    /// worker, before any sender starts; process-wide.
+    static void setYieldsToOwner(bool yields);
+    /// Whether a sender whose options ask `multimediaPriority` takes MMCSS
+    /// "Games" in this process.
+    static bool takesGamesTask(bool multimediaPriority);
+
     // Enqueue a frame for fragmentation + send on the worker thread.
     // The fragment header carries frameId/backendTs computed by the caller so
     // the worker stays purely mechanical. Keyframes are never dropped by the

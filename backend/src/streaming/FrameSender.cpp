@@ -71,7 +71,19 @@ void leaveGamesTask(void* h)
 #endif
 }
 
+std::atomic<bool> g_YieldsToOwner{false};
+
 } // namespace
+
+void FrameSender::setYieldsToOwner(bool yields)
+{
+    g_YieldsToOwner.store(yields);
+}
+
+bool FrameSender::takesGamesTask(bool multimediaPriority)
+{
+    return multimediaPriority && !g_YieldsToOwner.load();
+}
 
 FrameSender::FrameSender(Options options)
     : m_Options(options)
@@ -262,7 +274,7 @@ int64_t FrameSender::paceBefore(size_t bytes)
 
 void FrameSender::run()
 {
-    void* mmcss = m_Options.multimediaPriority ? enterGamesTask() : nullptr;
+    void* mmcss = takesGamesTask(m_Options.multimediaPriority) ? enterGamesTask() : nullptr;
 #ifdef _WIN32
     m_PaceTimer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
                                          TIMER_ALL_ACCESS);

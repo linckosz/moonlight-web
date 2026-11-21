@@ -33,6 +33,7 @@
 #include "../../backend/streambackend/StreamBackendSetup.h"
 #include "../DataChannelRelay.h"
 #include "../FeedPublisher.h"
+#include "../FrameSender.h"
 #include "../NativeMediaEngine.h"
 #include "../../backend/streambackend/NativeHostBackend.h"
 #include "../MediaTrackRelay.h"
@@ -75,11 +76,46 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h> // SetPriorityClass: a guest's worker yields to the owner
+#endif
+
 namespace {
 
 /// A TV on plain HTTP (issue #42): set from the config, read by the stdin
 /// pump, which refuses a policy change for such a stream.
 std::atomic<bool> g_PlainHttp{false};
+
+/// A guest's worker on the guests' shared feed: it forwards the feed's frames
+/// to one browser, and on a host that cannot carry everything it waits for the
+/// owner's stream, as the feed itself does (StreamPriority's Feed role; 25-35 %
+/// of an N95's CPU with one guest, 21/11/2026): the BELOW_NORMAL CPU class,
+/// and no MMCSS on its senders. MW_FEED_PRIORITY=same keeps the owner's
+/// standing, for a bench's before. Only this worker's process: a guest's
+/// stream always runs in a worker of its own.
+void yieldGuestWorkerToOwner()
+{
+    if (qEnvironmentVariable("MW_FEED_PRIORITY")
+            .compare(QLatin1String("same"), Qt::CaseInsensitive) == 0) {
+        qInfo() << "[StreamWorker] MW_FEED_PRIORITY=same — the guest's worker keeps the owner's "
+                   "standing";
+        return;
+    }
+    FrameSender::setYieldsToOwner(true);
+#ifdef _WIN32
+    if (::SetPriorityClass(::GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS))
+        qInfo() << "[StreamWorker] guest's worker: CPU priority class BELOW_NORMAL, senders "
+                   "without MMCSS (it yields to the owner)";
+    else
+        qInfo() << "[StreamWorker] guest's worker: CPU priority class BELOW_NORMAL refused (error"
+                << ::GetLastError() << ") — senders without MMCSS";
+#else
+    qInfo() << "[StreamWorker] guest's worker: senders without MMCSS (it yields to the owner)";
+#endif
+}
 
 /// Write one protocol event line on stdout (the only stdout writer in worker
 /// mode — all logging goes to the log file / stderr).
@@ -828,6 +864,7 @@ int runStreamWorker(QCoreApplication& app)
     // A guest on the guests' shared feed: absent → this session captures.
     session->setSharedFeed(cfg["feedPipe"].toString(), cfg["feedToken"].toString().toLatin1(),
                            cfg["feedSlot"].toInt(-1));
+    if (!cfg["feedPipe"].toString().isEmpty()) yieldGuestWorkerToOwner();
     session->setClientPresentation(cfg["clientRefreshMilliHz"].toInt(0),
                                    cfg["clientVsync"].toBool(false),
                                    cfg["clientTearingReal"].toBool(false));
