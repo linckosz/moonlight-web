@@ -106,4 +106,32 @@ void run_hid_collections_json_tests()
         CHECK(error.isEmpty() && c.size() == 1 && c[0].type == Application &&
               c[0].inputReports.empty());
     }
+
+    SECTION("HidCollectionsJson — a device's name is kept clean and short");
+    {
+        const auto nameOf = [](const QString& productName) {
+            return deviceNameFromJson(QJsonObject{{"productName", productName}});
+        };
+        CHECK_EQ(nameOf(QStringLiteral("G923 Racing Wheel for PlayStation and PC")),
+                 std::string("G923 Racing Wheel for PlayStation and PC"));
+        // Control, format, line and paragraph characters are dropped, the
+        // rest kept as it is, accents and all.
+        CHECK_EQ(nameOf(QStringLiteral("Pad\nTwo\r\tThree")), std::string("PadTwoThree"));
+        CHECK_EQ(nameOf(QString(QChar(0)) + QStringLiteral("Pad")), std::string("Pad"));
+        CHECK_EQ(nameOf(QStringLiteral("Pad") + QChar(0x2028) + QStringLiteral("Two") +
+                        QChar(0x2029) + QChar(0x200E) + QChar(0x202E) + QChar(0xFEFF)),
+                 std::string("PadTwo"));
+        CHECK_EQ(nameOf(QStringLiteral("Manette sans fil é")),
+                 QStringLiteral("Manette sans fil é").toStdString());
+        // At most kMaxDeviceNameChars characters, counted after the cleaning.
+        const std::string longName = nameOf(QString(200, QChar('x')));
+        CHECK_EQ(static_cast<int>(longName.size()), kMaxDeviceNameChars);
+        CHECK_EQ(
+            static_cast<int>(nameOf(QString(150, QChar('\n')) + QString(130, QChar('y'))).size()),
+            kMaxDeviceNameChars);
+        // None, the wrong type, or nothing left: empty.
+        CHECK(deviceNameFromJson(QJsonObject{}).empty());
+        CHECK(deviceNameFromJson(QJsonObject{{"productName", 42}}).empty());
+        CHECK(nameOf(QStringLiteral("\n\r\t")).empty());
+    }
 }

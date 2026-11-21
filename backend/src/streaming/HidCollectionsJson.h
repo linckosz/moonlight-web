@@ -20,8 +20,10 @@
 #include "mw/native/HidPassthrough.h"
 
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QString>
 
+#include <string>
 #include <vector>
 
 /// WebHID's `collections`, as a page serialises them (field names of
@@ -31,3 +33,11 @@
 /// read at all (not an array, a usage out of range).
 std::vector<mw::native::input::hid::Collection> collectionsFromJson(const QJsonArray& array,
                                                                     QString* error);
+
+/// The device's name, as the page sends it (`productName`, WebHID's), in
+/// UTF-8: no control, format, line or paragraph separator character (the
+/// server's rule for a browser's words, main.cpp's logSafe), at most
+/// kMaxDeviceNameChars characters. Empty when there is none, or none of it
+/// is kept.
+constexpr int kMaxDeviceNameChars = 120;
+std::string deviceNameFromJson(const QJsonObject& message);

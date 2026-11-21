@@ -181,3 +181,14 @@ std::vector<Collection> collectionsFromJson(const QJsonArray& array, QString* er
     if (error) *error = r.error;
     return out;
 }
+
+std::string deviceNameFromJson(const QJsonObject& message)
+{
+    QString name = message.value(QStringLiteral("productName")).toString();
+    name.removeIf([](QChar c) {
+        const QChar::Category cat = c.category();
+        return cat == QChar::Other_Control || cat == QChar::Other_Format ||
+               cat == QChar::Separator_Line || cat == QChar::Separator_Paragraph;
+    });
+    return name.left(kMaxDeviceNameChars).toStdString();
+}

@@ -1496,7 +1496,7 @@ QString NativeMediaEngine::hidAttach(int slot, const QJsonObject& message)
     device.collections =
         collectionsFromJson(message.value(QStringLiteral("collections")).toArray(), &error);
     if (!error.isEmpty()) return QStringLiteral("unreadable collections: ") + error;
-    device.name = message.value(QStringLiteral("productName")).toString().left(120).toStdString();
+    device.name = deviceNameFromJson(message);
     device.vendorId = static_cast<uint16_t>(message.value(QStringLiteral("vendorId")).toInt());
     device.productId = static_cast<uint16_t>(message.value(QStringLiteral("productId")).toInt());
     device.forceFeedback =
