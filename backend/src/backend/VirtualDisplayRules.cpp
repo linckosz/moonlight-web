@@ -294,6 +294,15 @@ QList<int> darkDisplays(const QList<int>& lit, const QList<int>& listed, bool ot
     return dark;
 }
 
+QString cardName(const QList<int>& lit, const QStringList& litNames, int id,
+                 const QString& listedName, bool othersOff)
+{
+    if (!othersOff || lit.size() != litNames.size()) return listedName;
+    const int at = lit.indexOf(id);
+    if (at < 0 || litNames.at(at).isEmpty()) return listedName;
+    return litNames.at(at);
+}
+
 bool screenOthersGoOff(Asker asker, bool optionOn, bool otherStream)
 {
     return asker == Asker::Owner && optionOn && !otherStream;

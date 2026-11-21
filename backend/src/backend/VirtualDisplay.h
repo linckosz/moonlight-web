@@ -566,6 +566,14 @@ bool ownerWantsOthersOff(bool allowed, const QJsonObject& body, bool inherited);
 /// with the displays on.
 QList<int> darkDisplays(const QList<int>& lit, const QList<int>& listed, bool othersOff);
 
+/// The name the card @p id is listed under (@p listedName now). With the other
+/// displays off (@p othersOff), Windows numbers the ones still on again from
+/// 1, so the display a stream kept takes the name of one it turned off: the
+/// card keeps the name it had when last seen lit (@p litNames, in step with
+/// @p lit) instead. @p listedName otherwise, or for a card never seen lit.
+QString cardName(const QList<int>& lit, const QStringList& litNames, int id,
+                 const QString& listedName, bool othersOff);
+
 /// Whether a stream of one of the PC's real displays turns the others off
 /// (VDEXCLALL, 16/11/2026): the owner asking, the option in force
 /// (@p optionOn: ownerWantsOthersOff), and no other stream on this PC,

@@ -707,7 +707,8 @@ void appendDarkDisplays(const QVector<NvApp>& physical, QVector<NvApp>& apps)
 #ifdef Q_OS_WIN
     // While a stream has the other displays off, Windows has detached them:
     // they leave the list. Their cards stay, from the last listing that had
-    // them on, marked "off" so the grid draws them dark and opens nothing.
+    // them on, marked "off" so the grid draws them dark and opens nothing,
+    // and every card keeps that listing's name.
     const bool othersOff = QFile::exists(VirtualDisplay::othersOffPath());
     QMutexLocker lock(&s_LitMutex);
     if (!othersOff) {
@@ -715,8 +716,24 @@ void appendDarkDisplays(const QVector<NvApp>& physical, QVector<NvApp>& apps)
         return;
     }
     QList<int> lit, listed;
-    for (const NvApp& app : std::as_const(s_LitDisplays))
+    QStringList litNames;
+    for (const NvApp& app : std::as_const(s_LitDisplays)) {
         lit.append(app.id());
+        litNames.append(app.name());
+    }
+    // Windows numbers the displays still on again from 1: the one a stream
+    // kept alone is "Display 1" now, the name of a display it turned off
+    // (VDBENCH2, 21/11/2026). Each card keeps the name it had with every
+    // display on, so no two say the same and none takes another's.
+    for (NvApp& app : apps) {
+        const QString name =
+            VirtualDisplay::cardName(lit, litNames, app.id(), app.name(), othersOff);
+        if (name == app.name()) continue;
+        NvApp named(app.id(), name, app.hdrSupported());
+        named.setHasBoxArt(app.hasBoxArt());
+        named.setDevice(app.device());
+        app = named;
+    }
     for (const NvApp& app : std::as_const(apps))
         listed.append(app.id());
     for (int id : VirtualDisplay::darkDisplays(lit, listed, othersOff)) {

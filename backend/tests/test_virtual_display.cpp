@@ -1076,6 +1076,28 @@ void run_virtual_display_tests()
     CHECK(darkDisplays({}, {7}, true).isEmpty());
     CHECK(darkDisplays({2, 2}, {}, true) == QList<int>({2}));
 
+    SECTION("VirtualDisplay — a card keeps its name while the others are off");
+    {
+        const QList<int> lit{1, 2};
+        const QStringList names{QStringLiteral("Display 1"), QStringLiteral("Display 2")};
+        // DISPLAY5 kept alone: Windows calls it "Display 1", its card stays
+        // "Display 2" (VDBENCH2, 21/11/2026).
+        CHECK(cardName(lit, names, 2, QStringLiteral("Display 1"), true) ==
+              QStringLiteral("Display 2"));
+        CHECK(cardName(lit, names, 1, QStringLiteral("Display 1"), true) ==
+              QStringLiteral("Display 1"));
+        // The displays on: Windows' own name.
+        CHECK(cardName(lit, names, 2, QStringLiteral("Display 1"), false) ==
+              QStringLiteral("Display 1"));
+        // A card never seen lit, or lists out of step: the name listed.
+        CHECK(cardName(lit, names, 7, QStringLiteral("Display 3"), true) ==
+              QStringLiteral("Display 3"));
+        CHECK(cardName(lit, {QStringLiteral("Display 1")}, 2, QStringLiteral("Display 1"), true) ==
+              QStringLiteral("Display 1"));
+        CHECK(cardName(lit, {QStringLiteral("Display 1"), QString()}, 2,
+                       QStringLiteral("Display 1"), true) == QStringLiteral("Display 1"));
+    }
+
     SECTION("VirtualDisplay — the other displays come back with the owner gone");
     CHECK(othersComeBack(false, true));
     CHECK(!othersComeBack(true, true));
