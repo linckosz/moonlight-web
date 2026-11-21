@@ -1383,7 +1383,7 @@ begin
          ewWaitUntilTerminated, rc);
   // End the logon task first so its supervisor cannot relaunch what we kill.
   Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN "{#MyAppName}"', '', SW_HIDE, ewWaitUntilTerminated, rc);
-  Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, rc);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM "{#MyAppExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, rc);
   // taskkill returns before Windows has actually torn the process down.
   Sleep(2000);
 end;
@@ -2035,7 +2035,7 @@ begin
     UnregisterWorkerService();
     // And the policy it pressed Ctrl+Alt+Suppr under, if ours alone.
     ReleaseSasPolicy();
-    Exec('taskkill.exe', '/IM "{#MyAppExe}" /F', '', SW_HIDE,
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM "{#MyAppExe}" /F', '', SW_HIDE,
          ewWaitUntilTerminated, rc);
     // The crash dumps under {app}\host-data, and its logs when the
     // configuration goes too. After the taskkill: nothing writes there any more.
