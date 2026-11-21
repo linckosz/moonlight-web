@@ -42,6 +42,7 @@ frontend/
 │   │   └── renderers/          # VideoRenderer base + Canvas2D / WebGl / WebGpu / VideoElement + factory
 │   ├── ui/
 │   │   ├── HostListView.js     # main view: host boxes with inline app grids
+│   │   ├── AppShortcutSheet.js / AppLinkLoader.js / AppLinkShortcut.js  # a link or a home-screen icon to one app (#63)
 │   │   ├── StreamView.js       # the streaming overlay (largest module: decode, render, input, stats)
 │   │   ├── StreamViewKeyboard.js / StreamViewTouch.js / StreamViewFullscreen.js
 │   │   ├── StreamViewTouchPad.js / TouchPadView.js  # on-screen controller: when it is offered and shown; its layer
@@ -50,6 +51,7 @@ frontend/
 │   │   ├── GamepadRemapDialog.js / GamepadArt.js / DeviceArt.js  # Test & Remap: wizard, drawn pad, radio, flight stick, wheel
 │   │   ├── PairDialog.js / Toast.js / icons.js
 │   │   ├── TvSignInView.js / TvPairApproveDialog.js / qrSvg.js  # a TV on plain HTTP signs in by QR code (#42)
+│   ├── net/                    # the tunnel's line and key; appLink.js / appIcon.js: #go= links, the page made a link's icon
 │   ├── models/                 # Host.js, App.js
 │   ├── util/                   # Mp4Muxer (NAL/avcC/hvcC/codec strings), Av1Utils (OBU parse),
 │   │                           # SdpUtils (forceOpusStereo), AutoBitrate (recommended kbps),
@@ -72,6 +74,7 @@ From the `app.js` header comment — one main view plus overlays:
   - `streaming` → no URL change (fullscreen `StreamView`)
 - Switching overlays uses `replaceState`; the Back button/gesture closes an overlay instead of leaving the app.
 - Guard states protect against accidental back-navigation during a stream.
+- **App links** (`net/appLink.js`, #63): `/#go=<alias>` opens one app of one host. The alias, ten random letters and digits the server keeps in `app-links.json`, points at the host's uuid and the app's id, and opens nothing by itself: the page takes the usual session, then presses that app's card, with every check and question a tap on it brings. Only the fragment carries it. To become the link's home-screen icon, the page reloads as that icon (`net/appIcon.js`): straight to the host through a manifest whose `start_url` is `/#go=<alias>`, through the introduction server by writing that manifest into the worker's cache itself. **Done**, a touch outside the banner or a launch puts the page back.
 
 Auth flow: `LoginView` is shown when the backend answers 401 (PIN entry or certificate-file upload); `BackendClient` force-reloads the page whenever a session expires or is revoked mid-use. On first run (macOS/Linux), `/setup` renders `SetupView` (config → live progress checklist → done).
 

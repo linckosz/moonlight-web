@@ -11,6 +11,7 @@
   "get.3": "<strong>Des manettes de jeu.</strong> Les manettes Xbox et PlayStation appairées en Bluetooth fonctionnent dans le navigateur. Pas de manette sous la main ? Une manette à l’écran est intégrée.",
   "get.4": "<strong>Une faible latence.</strong> Sur le Wi-Fi de la maison, la latence reste sous les 20 ms — assez rapide pour les jeux d’action, pas seulement pour le tour par tour.",
   "get.5": "<strong>N’importe quel navigateur.</strong> Safari suffit ; Chrome ou Edge sur iOS fonctionnent de la même façon.",
+  "get.6": "<strong>Une icône par jeu.</strong> Depuis le menu du PC, mettez un jeu ou le bureau sur l’écran d’accueil : un toucher l’ouvre directement.",
   "steps.h": "Installation en trois étapes",
   "step1.h": "Installez MoonlightWeb sur le PC gamer",
   "step1.p": "Windows, macOS (Apple Silicon) ou Linux — suivez le <a href=\"/guides/\">guide d’installation</a> de votre système. Ce PC est la seule machine sur laquelle il y a quelque chose à installer.",
