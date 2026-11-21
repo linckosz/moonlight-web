@@ -827,22 +827,22 @@ describe('the mwsr shader text', () => {
         // the pass after the kernel: quality only, by the scale
         const sh = (s, opts) => mwsrSharpen(1000, 1000, 1000 * s, 1000 * s, opts);
         const q = { mode: 'quality' };
-        expect(sh(4 / 3, q)).toBeCloseTo(0.5, 12);
-        expect(sh(1.2, q)).toBeCloseTo(0.5, 12);
-        expect(sh(1.5, q)).toBeCloseTo(0.25, 12);
+        expect(sh(4 / 3, q)).toBeCloseTo(0.3, 12);
+        expect(sh(1.2, q)).toBeCloseTo(0.3, 12);
+        expect(sh(1.5, q)).toBeCloseTo(0.15, 12);
         expect(sh(2, q)).toBe(0);
         expect(sh(3, q)).toBe(0);
         // straight lines in ln(s) between its points
-        expect(sh(Math.sqrt((4 / 3) * 1.5), q)).toBeCloseTo(0.375, 10);
-        expect(sh(Math.sqrt(1.5 * 2), q)).toBeCloseTo(0.125, 10);
+        expect(sh(Math.sqrt((4 / 3) * 1.5), q)).toBeCloseTo(0.225, 10);
+        expect(sh(Math.sqrt(1.5 * 2), q)).toBeCloseTo(0.075, 10);
         // it never grows with the scale
         const scales = [1.07, 1.1, 1.2, 4 / 3, 1.4, 1.5, 1.6, 1.8, 2, 2.5];
         for (let i = 1; i < scales.length; i++)
             expect(sh(scales[i], q), `${scales[i]}`).toBeLessThanOrEqual(sh(scales[i - 1], q));
         // none at 1:1, whole from S_FULL on, like the kernel's sharpening
         expect(sh(1, q)).toBe(0);
-        expect(sh(1 + (MWSR_CONSTANTS.S_FULL - 1) / 2, q)).toBeCloseTo(0.25, 10);
-        expect(sh(MWSR_CONSTANTS.S_FULL, q)).toBeCloseTo(0.5, 12);
+        expect(sh(1 + (MWSR_CONSTANTS.S_FULL - 1) / 2, q)).toBeCloseTo(0.15, 10);
+        expect(sh(MWSR_CONSTANTS.S_FULL, q)).toBeCloseTo(0.3, 12);
         // a reduction, an HDR feed and every other mode: no pass
         expect(sh(0.75, q)).toBe(0);
         expect(sh(4 / 3, { mode: 'quality', hdr: true })).toBe(0);

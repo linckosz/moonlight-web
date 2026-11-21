@@ -1,10 +1,11 @@
 /**
- * WebGpuRenderer — mwsr's two modes, the setting's (MwsrShader's MWSR_MODES).
- * 'performance' is the kernel alone, pushed by the mode's force; 'quality'
- * draws the kernel into intermTex and a sharpening pass from there to the
- * canvas, where the stream is scaled up by less than ×2 and is SDR. Driven
- * against a fake device: what matters is which passes a frame takes, into
- * which target, and what the two uniform blocks hold.
+ * WebGpuRenderer — mwsr's two modes (MwsrShader's MWSR_MODES), each a pass of
+ * its own name. 'mwsr' is the kernel alone, pushed by the `performance` mode's
+ * force in the product's sessions (opts.mwsrMode); 'mwsr-q' is `quality`: the
+ * kernel into intermTex and a sharpening pass from there to the canvas, where
+ * the stream is scaled up by less than ×2 and is SDR. Driven against a fake
+ * device: what matters is which passes a frame takes, into which target, and
+ * what the two uniform blocks hold.
  */
 /* global console */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -145,8 +146,8 @@ describe("WebGpuRenderer — mwsr's two modes", () => {
         delete globalThis.navigator.gpu;
     });
 
-    it('builds nothing of the pass without the quality mode, and draws by the kernel alone', async () => {
-        for (const mwsrMode of [undefined, 'performance', 'nonsense']) {
+    it('builds nothing of the pass under mwsr, and draws by the kernel alone', async () => {
+        for (const mwsrMode of [undefined, 'performance', 'quality']) {
             const gpu = fakeGpu();
             const r = await renderer(gpu, { mwsrMode });
             expect(r._mwsrSharpenPipeline, String(mwsrMode)).toBeNull();
@@ -158,21 +159,26 @@ describe("WebGpuRenderer — mwsr's two modes", () => {
             expect(passes[1].pipeline).toBe(r._mwsrPipelines.get('up'));
             expect(r._intermTex).toBeNull();
             expect(r.lastDraw.path).toBe('mwsr');
+            // the mode comes from the pass and the session, never from that word alone
+            expect(r.mwsrMode).toBe(mwsrMode === 'performance' ? 'performance' : null);
         }
     });
 
-    it('pushes the kernel by the mode in performance, and leaves it to the law otherwise', async () => {
+    it('pushes the kernel by the performance mode in a session of the product, not in quality', async () => {
         const law = mwsrLaw(1280, 720, 1920, 1080);
-        const block = async (mwsrMode) => {
+        const block = async (opts) => {
             const gpu = fakeGpu();
-            const r = await renderer(gpu, { mwsrMode });
+            const r = await renderer(gpu, opts);
             await r.draw(frame());
             return written(gpu, r._mwsrUniform);
         };
-        const plain = await block(undefined);
+        // the laboratory: the law alone
+        const plain = await block({});
         expect(plain[10]).toBeCloseTo(law.kg, 6);
-        expect(await block('quality')).toEqual(plain);
-        const perf = await block('performance');
+        // quality draws the kernel by the law, in the product's sessions too
+        expect(await block({ algo: 'mwsr-q' })).toEqual(plain);
+        expect(await block({ algo: 'mwsr-q', mwsrMode: 'performance' })).toEqual(plain);
+        const perf = await block({ mwsrMode: 'performance' });
         const pushed = mwsrLaw(1280, 720, 1920, 1080, { mode: 'performance' });
         expect(pushed.kg).toBeGreaterThan(law.kg);
         expect(perf[10]).toBeCloseTo(pushed.kg, 6);
@@ -182,9 +188,12 @@ describe("WebGpuRenderer — mwsr's two modes", () => {
 
     it('draws quality in three passes: the kernel into intermTex, then the sharpening into the canvas', async () => {
         const gpu = fakeGpu();
-        const r = await renderer(gpu, { mwsrMode: 'quality' });
+        const r = await renderer(gpu, { algo: 'mwsr-q' });
+        expect(r.mwsrMode).toBe('quality');
+        expect(r.algoName).toBe('MWSR');
         // built with the kernel's pipelines: nothing compiles at the first frame
-        expect(r._mwsrSharpenPipeline.code).toContain('u.strength');
+        expect(r._mwsrSharpenPipeline.code).toContain('clamp(c + u.gain * (c - mean), lo, hi)');
+        expect(r._mwsrSharpenPipeline.code).not.toContain('lobe');
         expect(r._mwsrSharpenPipeline.target).toBe('bgra8unorm');
         expect(r._mwsrPipelines.get('up>interm').target).toBe('rgba8unorm');
         expect(r._mwsrPipelines.get('up>interm').code).toBe(r._mwsrPipelines.get('up').code);
@@ -200,12 +209,12 @@ describe("WebGpuRenderer — mwsr's two modes", () => {
         expect(passes[1].pipeline).toBe(r._mwsrPipelines.get('up>interm'));
         expect(passes[2].view).toBe(CANVAS_VIEW);
         expect(passes[2].pipeline).toBe(r._mwsrSharpenPipeline);
-        // the pass reads intermTex, with the strength of ×1.5
+        // the pass reads intermTex, with the gain of ×1.5
         expect(r._rcasBindGroup.desc.entries[0].resource).toBe(r._intermTexView);
         const u = written(gpu, r._rcasUniform);
         expect(u[0]).toBeCloseTo(1 / 1920, 9);
         expect(u[1]).toBeCloseTo(1 / 1080, 9);
-        expect(u[2]).toBe(0.25);
+        expect(u[2]).toBeCloseTo(0.15, 6);
         expect(r.lastDraw.path).toBe('mwsr+sharp');
 
         // a second frame at the same sizes writes neither block again, builds nothing
@@ -217,9 +226,9 @@ describe("WebGpuRenderer — mwsr's two modes", () => {
 
     it('follows the scale: the pass at ×1.33, none from ×2 on, none for a reduction', async () => {
         const gpu = fakeGpu();
-        const r = await renderer(gpu, { mwsrMode: 'quality' }, 1706, 960);
+        const r = await renderer(gpu, { algo: 'mwsr-q' }, 1706, 960);
         expect(await passesOf(gpu, r)).toHaveLength(3);
-        expect(written(gpu, r._rcasUniform)[2]).toBe(0.5);
+        expect(written(gpu, r._rcasUniform)[2]).toBeCloseTo(0.3, 6);
 
         r.setOutputSize(2560, 1440);
         let passes = await passesOf(gpu, r);
@@ -237,15 +246,67 @@ describe("WebGpuRenderer — mwsr's two modes", () => {
         // and back: the pass again, its block rewritten for the new size
         r.setOutputSize(1920, 1080);
         expect(await passesOf(gpu, r)).toHaveLength(3);
-        expect(written(gpu, r._rcasUniform)[2]).toBe(0.25);
+        expect(written(gpu, r._rcasUniform)[2]).toBeCloseTo(0.15, 6);
     });
 
-    it('builds no pass on an HDR stream, tone-mapped or not', async () => {
+    it("steps between the two modes as the ladder does, without rebuilding the kernel's pipelines", async () => {
+        const gpu = fakeGpu();
+        const r = await renderer(gpu, { algo: 'mwsr-q', mwsrMode: 'performance' });
+        const law = mwsrLaw(1280, 720, 1920, 1080);
+        const pushed = mwsrLaw(1280, 720, 1920, 1080, { mode: 'performance' });
+        expect(await passesOf(gpu, r)).toHaveLength(3);
+        expect(written(gpu, r._mwsrUniform)[10]).toBeCloseTo(law.kg, 6);
+        const built = gpu.device.createRenderPipeline.mock.calls.length;
+
+        // down: the kernel alone, pushed by the performance mode
+        expect(r.setAlgo('mwsr-q')).toBe(false);
+        expect(r.setAlgo('mwsr')).toBe(true);
+        expect(r.mwsrMode).toBe('performance');
+        let passes = await passesOf(gpu, r);
+        expect(passes).toHaveLength(2);
+        expect(passes[1].view).toBe(CANVAS_VIEW);
+        expect(written(gpu, r._mwsrUniform)[10]).toBeCloseTo(pushed.kg, 6);
+        expect(r.lastDraw.path).toBe('mwsr');
+        expect(r.setAlgo('mwsr')).toBe(false);
+
+        // and back up: the pass again, the kernel by the law
+        expect(r.setAlgo('mwsr-q')).toBe(true);
+        expect(r.mwsrMode).toBe('quality');
+        passes = await passesOf(gpu, r);
+        expect(passes).toHaveLength(3);
+        expect(passes[2].pipeline).toBe(r._mwsrSharpenPipeline);
+        expect(written(gpu, r._mwsrUniform)[10]).toBeCloseTo(law.kg, 6);
+        expect(written(gpu, r._rcasUniform)[2]).toBeCloseTo(0.15, 6);
+        expect(gpu.device.createRenderPipeline.mock.calls.length).toBe(built);
+
+        // through 'off' and back, like a ladder at its last rung
+        expect(r.setAlgo('off')).toBe(true);
+        expect(r.mwsrMode).toBeNull();
+        expect(r.setAlgo('mwsr-q')).toBe(true);
+        expect(await passesOf(gpu, r)).toHaveLength(3);
+    });
+
+    it('builds the pass at the first step up to quality when the session started below it', async () => {
+        const gpu = fakeGpu();
+        const r = await renderer(gpu, { mwsrMode: 'performance' });
+        expect(r._mwsrSharpenPipeline).toBeNull();
+        expect(r.setAlgo('mwsr-q')).toBe(true);
+        expect(r._mwsrSharpenPipeline).not.toBeNull();
+        expect(r._mwsrPipelines.get('up>interm').target).toBe('rgba8unorm');
+        const passes = await passesOf(gpu, r);
+        expect(passes).toHaveLength(3);
+        expect(passes[2].pipeline).toBe(r._mwsrSharpenPipeline);
+    });
+
+    it('keeps the law alone on an HDR stream, tone-mapped or not: no pass, no push', async () => {
         for (const hdr of [{ hdrExtTonemap: true }, { hdrTonemap: true }, { hdr: true }]) {
             const gpu = fakeGpu();
-            const r = await renderer(gpu, { mwsrMode: 'quality', ...hdr });
+            const r = await renderer(gpu, { algo: 'mwsr-q', mwsrMode: 'performance', ...hdr });
             expect(r._mwsrSharpenPipeline, JSON.stringify(hdr)).toBeNull();
             expect(r._mwsrPipelines.has('up>interm')).toBe(false);
+            expect(r.mwsrMode).toBeNull();
+            expect(r.setAlgo('mwsr')).toBe(true);
+            expect(r.mwsrMode).toBeNull();
         }
     });
 });

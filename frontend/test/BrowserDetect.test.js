@@ -583,11 +583,12 @@ describe('BrowserDetect — the GPU string keys the auto upscaler', () => {
         expect(m.pickAutoEnhancer()).toBe('gl-mwsr');
     });
 
-    it('any other desktop GPU picks MWSR on WebGL2', async () => {
+    it('any other desktop GPU picks MWSR on WebGL2, in its quality mode on a dedicated card', async () => {
         const { m } = await freshModule(NVIDIA);
         expect(m.isSnapdragonGpu()).toBe(false);
         expect(m.isEntryMaliGpu()).toBe(false);
-        expect(m.pickAutoEnhancer()).toBe('gl-mwsr');
+        // (the tiers and the modes: gpuTier.test.js)
+        expect(m.pickAutoEnhancer()).toBe('gl-mwsr-q');
     });
 
     it('without WebGL the platform rule stands', async () => {
@@ -626,13 +627,17 @@ describe('BrowserDetect — the GPU string keys the auto upscaler', () => {
         expect(m.plainPresenterIsWebGpu()).toBe(false);
     });
 
-    it('asks the GPU once per page', async () => {
+    it('asks the GPU once per page, and once more for the context the stream will ask for', async () => {
         const { m, spy } = await freshModule(ADRENO);
+        m.isSnapdragonGpu();
+        m.plainPresenterIsWebGpu();
+        m.isEntryMaliGpu();
+        expect(spy).toHaveBeenCalledTimes(1);
+        // mwsr's mode asks about the high-performance context (gpuTier.test.js)
         m.pickAutoEnhancer();
         m.pickAutoEnhancer();
         m.isSnapdragonGpu();
-        m.plainPresenterIsWebGpu();
-        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy).toHaveBeenCalledTimes(2);
     });
 });
 

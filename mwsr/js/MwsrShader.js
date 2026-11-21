@@ -194,8 +194,9 @@ export const MWSR_LAW = Object.freeze({
  * line in ln(s); between those two scales that line was not measured.
  *
  * `quality`: the law as it is, then a sharpening pass of the renderer over the
- * scaled picture (mwsrSharpen gives its strength): 0.5 up to ×4/3, 0.25 at
- * ×1.5, none from ×2, straight lines in ln(s) between them. That pass is the
+ * scaled picture, which moves each pixel away from the mean of its four
+ * neighbours by a gain (mwsrSharpen gives it): 0.3 up to ×4/3, 0.15 at ×1.5,
+ * none from ×2, straight lines in ln(s) between them. That pass is the
  * renderer's, not this file's.
  *
  * From ×2 on, both draw the same picture. Without a mode the law is the
@@ -205,10 +206,10 @@ export const MWSR_MODES = Object.freeze({
     performance: Object.freeze({ force: 1.15, sharpen: null }),
     quality: Object.freeze({
         force: 1,
-        /** The pass's strength at a scale: [scale, strength], held before the first. */
+        /** The pass's gain at a scale: [scale, gain], held before the first. */
         sharpen: Object.freeze([
-            Object.freeze([4 / 3, 0.5]),
-            Object.freeze([1.5, 0.25]),
+            Object.freeze([4 / 3, 0.3]),
+            Object.freeze([1.5, 0.15]),
             Object.freeze([2, 0]),
         ]),
     }),
@@ -245,7 +246,7 @@ export function mwsrLaw(inW, inH, outW, outH, { mode = null } = {}) {
 }
 
 /**
- * The strength of the sharpening pass a renderer draws after the kernel in the
+ * The gain of the sharpening pass a renderer draws after the kernel in the
  * `quality` mode (MWSR_MODES), for an input of inW×inH drawn at outW×outH: 0,
  * no pass, which is every other mode, a reduction, 1:1, ×2 and beyond, and an
  * HDR feed (the pass was measured on SDR pictures only). Like the kernel's
@@ -255,7 +256,7 @@ export function mwsrLaw(inW, inH, outW, outH, { mode = null } = {}) {
  * @param {number} outW
  * @param {number} outH
  * @param {{mode?: 'performance'|'quality'|null, hdr?: boolean}} [opts]
- * @returns {number} 0 to 0.5
+ * @returns {number} 0 to 0.3
  */
 export function mwsrSharpen(inW, inH, outW, outH, { mode = null, hdr = false } = {}) {
     const points = (mode && MWSR_MODES[mode]?.sharpen) || null;

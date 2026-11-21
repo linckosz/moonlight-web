@@ -619,7 +619,7 @@ export function physicalScreenSize() {
     return { short: Math.round(Math.min(w, h)), long: Math.round(Math.max(w, h)) };
 }
 
-let rendererProbe = null;
+const rendererProbes = new Map();
 
 /**
  * The WebGL renderer string of the GPU drawing this page, '' when WebGL is
@@ -632,27 +632,120 @@ let rendererProbe = null;
  * (Qualcomm, Qualcomm(R) Adreno(TM) 618 GPU …)" on that bench, "Mali-G31" on
  * the Mi TV — and the GPU is the thing the answers below are about anyway.
  * Probed once per page: the GPU does not change under us.
+ *
+ * `power`: the context's powerPreference, for a question about the GPU the
+ * stream's own WebGL context will be on (WebGlRenderer asks for
+ * 'high-performance'); where a browser gives the two preferences two cards,
+ * each has its own answer, probed once too.
+ * @param {'high-performance'|'low-power'} [power] none: the browser's default
  * @returns {string}
  */
-export function gpuRendererString() {
-    if (rendererProbe === null) {
-        rendererProbe = '';
+export function gpuRendererString(power) {
+    const key = power || '';
+    if (!rendererProbes.has(key)) {
+        let name = '';
         try {
             const canvas = document.createElement('canvas');
-            const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+            const attrs = power ? { powerPreference: power } : undefined;
+            const gl = canvas.getContext('webgl2', attrs) || canvas.getContext('webgl', attrs);
             if (gl) {
                 const ext = gl.getExtension('WEBGL_debug_renderer_info');
-                rendererProbe = String(
+                name = String(
                     gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || '',
                 );
                 const lose = gl.getExtension('WEBGL_lose_context');
                 if (lose) lose.loseContext();
             }
         } catch (e) {
-            rendererProbe = '';
+            name = '';
         }
+        rendererProbes.set(key, name);
     }
-    return rendererProbe;
+    return rendererProbes.get(key);
+}
+
+/**
+ * The tier of a GPU by the name its driver gives (gpuRendererString), for the
+ * one question mwsr's modes ask (MwsrShader's MWSR_MODES; Bruno, 21/11/2026):
+ * may this computer take the `quality` mode's second pass? No browser says
+ * "integrated" or "dedicated"; the card's name is all there is.
+ *
+ *  - 'dedicated': a graphics card of its own — NVIDIA's GTX, RTX, Titan and
+ *    Quadro; AMD's Radeon RX with a number, Radeon Pro, FirePro, R9, Vega 56
+ *    and 64; Intel's Arc A and B series (A380, A770, B580…); Apple's M Pro,
+ *    M Max and M Ultra chips, integrated but at a card's level (measured on
+ *    an M1 Pro, the first of them: the pass in 0.29 ms at 1440p,
+ *    21/11/2026).
+ *  - 'light': an integrated GPU, and what stands at its level — Intel's UHD,
+ *    HD, Iris and Xe, and the Arc of a Core Ultra ("Arc Graphics", 130V,
+ *    140V, 130T, 140T: no letter before the number); AMD's "Radeon Graphics",
+ *    680M, 780M, 890M, 8060S and Vega 3 to 11; Apple's other chips (M1 to M4
+ *    plain, and Safari's masked "Apple GPU"); Adreno, Mali and
+ *    the other phone GPUs; the small dedicated cards (GeForce MX and GT, the
+ *    Radeon R5 and R7); a software renderer.
+ *  - 'unknown': an empty or masked name, or one no rule knows.
+ *
+ * Only 'dedicated' takes the second pass: the kernel alone costs what it did
+ * before the modes, so a card misread as light or unknown loses the pass and
+ * no frame, and a card misread as dedicated is caught by the ladder, which
+ * steps `quality` down to the kernel alone (EnhancerGovernor).
+ * @param {string} renderer
+ * @returns {'dedicated'|'light'|'unknown'}
+ */
+export function gpuTierOf(renderer) {
+    const s = String(renderer || '').toLowerCase();
+    if (!s) return 'unknown';
+    if (/swiftshader|llvmpipe|softpipe|basic render|\bwarp\b/.test(s)) return 'light';
+    if (/nvidia|geforce|quadro/.test(s)) {
+        return /\b(rtx|gtx|titan|quadro)\b/.test(s) ? 'dedicated' : 'light';
+    }
+    if (/\bamd\b|\bati\b|radeon|firepro/.test(s)) {
+        // the Ryzen APUs' "Radeon RX Vega 11 Graphics" carries the RX of a card
+        if (/vega\s*(3|6|8|10|11)\b/.test(s)) return 'light';
+        return /\brx\s*\d{3,4}|radeon\s*(\(tm\)\s*)?pro\b|firepro|vega\s*(56|64)\b|\br9\s+\d{3}/.test(
+            s,
+        )
+            ? 'dedicated'
+            : 'light';
+    }
+    if (/intel/.test(s)) {
+        return /arc(\(tm\))?\s*(pro\s*)?[ab]\d{2,3}/.test(s) ? 'dedicated' : 'light';
+    }
+    // Chrome names the chip ("ANGLE Metal Renderer: Apple M1 Pro"); Safari says "Apple GPU"
+    if (/\bapple\s+m\d+\s+(pro|max|ultra)\b/.test(s)) return 'dedicated';
+    if (/apple|adreno|qualcomm|mali|powervr|xclipse|videocore/.test(s)) return 'light';
+    return 'unknown';
+}
+
+/**
+ * Lab key, no UI, main thread only: localStorage.mw_mwsr_mode = 'quality' or
+ * 'performance' takes that mode of mwsr whatever the device (the eye tests and
+ * the benches); anything else, the device decides (mwsrQualityWanted).
+ * @returns {'quality'|'performance'|null}
+ */
+export function mwsrModeWanted() {
+    try {
+        const v = localStorage.getItem('mw_mwsr_mode');
+        return v === 'quality' || v === 'performance' ? v : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Whether this device takes mwsr's `quality` mode (Bruno, 21/11/2026: no
+ * setting, the device decides): a computer with a dedicated graphics card
+ * (gpuTierOf, of the GPU the stream's WebGL context asks for). A phone, a
+ * tablet, a TV, a computer on an integrated GPU or on a card nothing names
+ * take `performance`, the kernel alone. The lab key (mwsrModeWanted) comes
+ * first.
+ * @returns {boolean}
+ */
+export function mwsrQualityWanted() {
+    const lab = mwsrModeWanted();
+    if (lab) return lab === 'quality';
+    if (IS_MOBILE_OR_TABLET || IS_TV) return false;
+    return gpuTierOf(gpuRendererString('high-performance')) === 'dedicated';
 }
 
 /** True when the GPU drawing this page is a Qualcomm Adreno — a Snapdragon. */
@@ -813,14 +906,21 @@ function hasWebGpu() {
  *    no bench has seen, which ran SGSR1 before: mwsr cost less than SGSR1 on
  *    every GPU measured.
  * The low-memory and TV rules come first, in StreamView.
+ *
+ * Since v0.4.4 mwsr has two modes (MwsrShader's MWSR_MODES), and the device
+ * decides which (mwsrQualityWanted): `quality`, the pass 'mwsr-q', on a
+ * computer with a dedicated graphics card; `performance`, the kernel alone,
+ * everywhere else. An HDR stream keeps the kernel alone on every device: the
+ * quality mode's pass was measured on SDR pictures only.
  * @param {{hdr?: boolean}} [opts]
- * @returns {'off'|'mwsr'|'gl-mwsr'}
+ * @returns {'off'|'mwsr'|'mwsr-q'|'gl-mwsr'|'gl-mwsr-q'}
  */
 export function pickAutoEnhancer({ hdr = false } = {}) {
     if (isEntryMaliGpu()) return 'off';
     if (hdr) return 'mwsr';
-    if (IS_IOS && hasWebGpu()) return 'mwsr';
-    return 'gl-mwsr';
+    const mode = mwsrQualityWanted() ? '-q' : '';
+    if (IS_IOS && hasWebGpu()) return 'mwsr' + mode;
+    return 'gl-mwsr' + mode;
 }
 
 /**

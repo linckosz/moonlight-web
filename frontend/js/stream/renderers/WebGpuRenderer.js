@@ -51,14 +51,15 @@
  *   whose reports time it on the visitors' GPUs: it takes 11-15 % less on the
  *   9900X's Radeon and 7-9 % more on a 780M at a held clock (journal, 04/11).
  *
- * mwsr's two modes (opts.mwsrMode, the setting's; MwsrShader's MWSR_MODES):
- *   'performance' is the kernel alone, its force set by the mode; 'quality'
- *   draws the kernel into intermTex (rgba8unorm, output size) and a sharpening
- *   pass from there to the canvas (MWSR_SHARPEN_WGSL below, the strength by
- *   the scale: mwsrSharpen), on an SDR stream that is scaled up by less than
- *   ×2; any other frame takes the kernel's one pass. Its pipelines are built
- *   with the kernel's. Without opts.mwsrMode (the laboratory) nothing of it is
- *   built, and the kernel draws by the law alone.
+ * mwsr's two modes (MwsrShader's MWSR_MODES), each a pass of its own name so
+ *   that the ladder steps from one to the other like between any two passes:
+ *   'mwsr-q' is `quality`, the kernel into intermTex (rgba8unorm, output size)
+ *   and a sharpening pass from there to the canvas (MWSR_SHARPEN_WGSL below,
+ *   its gain by the scale: mwsrSharpen), on an SDR stream that is scaled
+ *   up by less than ×2; any other frame takes the kernel's one pass. Its
+ *   pipelines are built with the kernel's. 'mwsr' is the kernel alone: in the
+ *   product's sessions (opts.mwsrMode 'performance') pushed by that mode's
+ *   force, otherwise (the laboratory) by the law alone, as before the modes.
  *
  * mwsr 2 and 3 (opts.deblock 'fixed' or 'qp': the debug menu's « MoonlightWeb
  *   2 » and « 3 », never 'auto'): the same kernel after a deblocking of the
@@ -1111,17 +1112,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32>{
 }
 `;
 
-// mwsr's `quality` mode: the pass after the kernel. RCAS's math (AMD FidelityFX
-// FSR1, MIT, as above), written on vectors, with three differences: the
-// strength is a uniform (mwsrSharpen: it changes with the scale), the five
-// texels are loaded, not sampled (intermTex and the canvas are the same size),
-// and a flat or saturated neighbourhood divides by nothing — the range's
-// division gives 0 on a flat cross, the lower bound 0 under four black
-// neighbours, and four white neighbours leave the lower bound alone to decide.
-// Those guards are the ones of the measure Bruno chose this mode on (21/11/2026).
-// Uniform: (1/outW, 1/outH, strength, _); the texel size is not read.
+// mwsr's `quality` mode: the pass after the kernel, a formula of our own: the
+// one of mwsr's reduction (MwsrShader's MWSR_DOWN_LAW) with one gain and no
+// margin, brought to the scaled picture. Each pixel moves away from the mean
+// of its cross, the four neighbours that touch it:
+//     R = c + gain (c - the cross's mean)
+// and is held, channel by channel, within the range of itself and that cross.
+// A flat neighbourhood moves nothing, and no value leaves what the
+// neighbourhood already shows: the pass draws no overshoot of its own.
+// The gain is a uniform (mwsrSharpen: it changes with the scale), and the five
+// texels are loaded, not sampled (intermTex and the canvas are the same size).
+// Measured on nine pictures at ×4/3 against the native picture (21/11/2026):
+// at the gain 0.3, LPIPS 0.0320, PSNR 34.42 dB and VMAF NEG 85.95, where the
+// kernel alone gives 0.0346, 35.18 and 86.45. A gain that changes with the
+// edge's strength, a bound widened to the 3×3 and a gain that falls on a lone
+// texel were measured too and left out: none did better.
+// Uniform: (1/outW, 1/outH, gain, _); the texel size is not read.
 const MWSR_SHARPEN_WGSL = /* wgsl */ `
-struct Sharpen { texel : vec2f, strength : f32, pad : f32, }
+struct Sharpen { texel : vec2f, gain : f32, pad : f32, }
 @group(0) @binding(0) var input : texture_2d<f32>;
 @group(0) @binding(1) var sam : sampler;
 @group(0) @binding(2) var<uniform> u : Sharpen;
@@ -1142,43 +1150,14 @@ fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
     let p = vec2i(pos.xy);
     let b = at(p + vec2i(0, -1), last);
     let d = at(p + vec2i(-1, 0), last);
-    let e = at(p, last);
+    let c = at(p, last);
     let f = at(p + vec2i(1, 0), last);
     let h = at(p + vec2i(0, 1), last);
 
-    // how far the centre stands from its cross, as a share of their range:
-    // a lone texel is noise, and takes half the lobe
-    let w = vec3f(0.5, 1.0, 0.5);
-    let bL = dot(b, w);
-    let dL = dot(d, w);
-    let eL = dot(e, w);
-    let fL = dot(f, w);
-    let hL = dot(h, w);
-    let range = max(max(max(bL, dL), max(fL, hL)), eL) - min(min(min(bL, dL), min(fL, hL)), eL);
-    var nz = abs(0.25 * (bL + dL + fL + hL) - eL);
-    if (range > 0.0) {
-        nz = min(nz / range, 1.0);
-    } else {
-        nz = 0.0;
-    }
-    nz = 1.0 - 0.5 * nz;
-
-    // the strongest negative lobe that keeps every channel within 0..1
-    let mn4 = min(min(b, d), min(f, h));
-    let mx4 = max(max(b, d), max(f, h));
-    // (the floors below are never reached by 8-bit values that pass the tests
-    // beside them: they keep a division by zero out of the branch not taken)
-    let hitMin = min(mn4, e) / max(4.0 * mx4, vec3f(1e-6));
-    let hitMax = select(
-        vec3f(-1.0),
-        (vec3f(1.0) - max(mx4, e)) / min(4.0 * mn4 - vec3f(4.0), vec3f(-1e-6)),
-        mn4 < vec3f(1.0),
-    );
-    let lobe3 = max(-hitMin, hitMax);
-    let limit = 0.25 - (1.0 / 16.0);
-    let lobe = max(-limit, min(max(lobe3.r, max(lobe3.g, lobe3.b)), 0.0)) * u.strength * nz;
-
-    return vec4f((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), 1.0);
+    let mean = 0.25 * (b + d + f + h);
+    let lo = min(c, min(min(b, d), min(f, h)));
+    let hi = max(c, max(max(b, d), max(f, h)));
+    return vec4f(clamp(c + u.gain * (c - mean), lo, hi), 1.0);
 }
 `;
 
@@ -1195,8 +1174,10 @@ export class WebGpuRenderer extends VideoRenderer {
         this._passthrough = false;
         /** 4:4:4 stream: mwsr votes and sharpens per channel (CHROMA444). */
         this._yuv444 = false;
-        /** mwsr's mode (opts.mwsrMode: 'performance' | 'quality'), null: the law alone. */
-        this._mwsrMode = null;
+        /** The pass is 'mwsr-q', mwsr's `quality` mode (`_algo` stays 'mwsr': the same kernel). */
+        this._mwsrQ = false;
+        /** opts.mwsrMode 'performance': 'mwsr' pushes the kernel by that mode; else the law alone. */
+        this._mwsrPerf = false;
         /** `quality`: the pass after the kernel, built with it; null where it cannot run. */
         this._mwsrSharpenPipeline = null;
         /** What its uniform block holds, and whether the last draw ran it. */
@@ -1273,17 +1254,20 @@ export class WebGpuRenderer extends VideoRenderer {
         r.canvas = canvas;
         r.videoCodec = opts.videoCodec;
         // 'off' = WebGPU pass-through (blit only, no upscaler); sgsr is the safe default.
-        r._algo =
-            opts.algo === 'fsr1' ||
-            opts.algo === 'nis' ||
-            opts.algo === 'mwsr' ||
-            opts.algo === 'off'
-                ? opts.algo
-                : 'sgsr';
+        // 'mwsr-q' is mwsr in its `quality` mode: the same kernel, and a pass after it.
+        r._mwsrQ = opts.algo === 'mwsr-q';
+        r._algo = r._mwsrQ
+            ? 'mwsr'
+            : opts.algo === 'fsr1' ||
+                opts.algo === 'nis' ||
+                opts.algo === 'mwsr' ||
+                opts.algo === 'off'
+              ? opts.algo
+              : 'sgsr';
         r._yuv444 = opts.yuv444 === true;
-        // mwsr's mode, the setting's; anything else, the law alone (the lab).
-        r._mwsrMode =
-            opts.mwsrMode === 'quality' || opts.mwsrMode === 'performance' ? opts.mwsrMode : null;
+        // The product's sessions: 'mwsr' is the `performance` mode. Without it
+        // (the laboratory) 'mwsr' draws by the law alone.
+        r._mwsrPerf = opts.mwsrMode === 'performance';
         // mwsr 2 / 3: the deblocking before the kernel (the debug menu's).
         r._deblock = opts.deblock === 'fixed' || opts.deblock === 'qp' ? opts.deblock : null;
         // The gaze zone the caller wants (BrowserDetect.mwsrGazeWanted): the
@@ -1370,6 +1354,7 @@ export class WebGpuRenderer extends VideoRenderer {
         console.log(
             '[WebGpuRenderer] created algo=' +
                 r._algo +
+                (r._mwsrQ ? '-q' : '') +
                 ' hdr=' +
                 r._hdr +
                 ' hdrTonemap=' +
@@ -1401,6 +1386,18 @@ export class WebGpuRenderer extends VideoRenderer {
     /** See VideoRenderer.passthrough: the last frame was copied 1:1, no pass run. */
     get passthrough() {
         return this._passthrough;
+    }
+
+    /**
+     * mwsr's mode (MwsrShader's MWSR_MODES) as this renderer draws it now:
+     * 'quality' on the pass 'mwsr-q', 'performance' on 'mwsr' in a session of
+     * the product (opts.mwsrMode), null otherwise: the law alone.
+     * @returns {'quality'|'performance'|null}
+     */
+    get mwsrMode() {
+        // An HDR stream keeps the law alone: neither mode was measured on one.
+        if (this._algo !== 'mwsr' || !this._mwsrSharpenFits()) return null;
+        return this._mwsrQ ? 'quality' : this._mwsrPerf ? 'performance' : null;
     }
 
     /** Effective algorithm name for the overlay: 'SGSR' | 'NIS' | 'FSR1' | 'MWSR' | 'Off'. */
@@ -1807,14 +1804,7 @@ export class WebGpuRenderer extends VideoRenderer {
         // `quality`: the kernel's pipeline into intermTex and the pass after it,
         // on an SDR stream only (the pass was measured on 8-bit pictures).
         this._mwsrSharpenPipeline = null;
-        if (this._mwsrMode === 'quality' && this._mwsrSharpenFits()) {
-            this._buildMwsrSharpenResources();
-            this._mwsrPipeline(
-                regimes.find((r) => r.mode === 'up'),
-                false,
-                true,
-            );
-        }
+        if (this._mwsrQ) this._ensureMwsrSharpen();
         // The zones: the same bindings and the zones' texture, the `up` kernel's
         // second text, built now too, so that a frame's zones compile nothing.
         if (this._zoneMap) {
@@ -1910,6 +1900,20 @@ export class WebGpuRenderer extends VideoRenderer {
             !this._hdr &&
             !this._hdrYuv &&
             !this._hdrExtTonemap
+        );
+    }
+
+    // `quality`: the pass and the kernel's pipeline into intermTex, built once
+    // (with the kernel's at create(), or at the ladder's first step up to it).
+    _ensureMwsrSharpen() {
+        if (this._mwsrSharpenPipeline || !this._mwsrSharpenFits()) return;
+        this._buildMwsrSharpenResources();
+        this._mwsrPipeline(
+            mwsrRegimes({ srgb: this._srgbViews, linear: this._hdrLinear }).find(
+                (r) => r.mode === 'up',
+            ),
+            false,
+            true,
         );
     }
 
@@ -2831,36 +2835,58 @@ export class WebGpuRenderer extends VideoRenderer {
      * pass 0 exist in both of their targets from the start, so 'off' needs
      * nothing built or rebuilt.)
      *
-     * @param {string} algo 'sgsr' | 'nis' | 'fsr1' | 'mwsr' | 'off'; anything else is refused.
+     * 'mwsr-q' and 'mwsr' are one kernel: between them only the pass after it
+     * comes or goes (and the kernel's values, by the mode), so the ladder's
+     * step from `quality` to `performance` rebuilds nothing.
+     *
+     * @param {string} algo 'sgsr' | 'nis' | 'fsr1' | 'mwsr-q' | 'mwsr' | 'off'; anything else is refused.
      * @returns {boolean} true when the renderer switched.
      */
     setAlgo(algo) {
-        if (algo === this._algo) return false;
+        const q = algo === 'mwsr-q';
+        const next = q ? 'mwsr' : algo;
+        if (next === this._algo && (next !== 'mwsr' || q === this._mwsrQ)) return false;
         if (!this._ready || !this._device) return false;
         if (
-            algo !== 'sgsr' &&
-            algo !== 'nis' &&
-            algo !== 'fsr1' &&
-            algo !== 'mwsr' &&
-            algo !== 'off'
+            next !== 'sgsr' &&
+            next !== 'nis' &&
+            next !== 'fsr1' &&
+            next !== 'mwsr' &&
+            next !== 'off'
         )
             return false;
 
         try {
-            if (algo === 'sgsr' && !this._enhancePipeline) this._buildSgsrResources();
-            else if (algo === 'nis' && !this._nisPipeline) this._buildNisResources();
-            else if (algo === 'fsr1' && !this._easuPipeline) this._buildFsr1Resources();
-            else if (algo === 'mwsr' && !this._mwsrLayout) this._buildMwsrResources();
+            if (next === 'sgsr' && !this._enhancePipeline) this._buildSgsrResources();
+            else if (next === 'nis' && !this._nisPipeline) this._buildNisResources();
+            else if (next === 'fsr1' && !this._easuPipeline) this._buildFsr1Resources();
+            else if (next === 'mwsr') {
+                // _buildMwsrResources builds the pass too when the mode is quality
+                const wasQ = this._mwsrQ;
+                this._mwsrQ = q;
+                try {
+                    if (!this._mwsrLayout) this._buildMwsrResources();
+                    else if (q) this._ensureMwsrSharpen();
+                } catch (e) {
+                    this._mwsrQ = wasQ;
+                    throw e;
+                }
+            }
         } catch (e) {
             console.error('[WebGpuRenderer] setAlgo(' + algo + ') failed: ' + e.message);
             return false;
         }
 
-        this._algo = algo;
+        this._algo = next;
+        if (next !== 'mwsr') this._mwsrQ = false;
         this._inW = 0;
         this._inH = 0;
         this._intermW = 0;
         this._intermH = 0;
+        // both blocks are rewritten: the mode changed the kernel's values, and
+        // FSR1 may have written the pass's block since
+        this._mwsrUniKey = '';
+        this._mwsrSharpenKey = '';
         console.log('[WebGpuRenderer] algo → ' + algo);
         return true;
     }
@@ -3456,6 +3482,8 @@ export class WebGpuRenderer extends VideoRenderer {
                         frame.timestamp,
                         reg.mode === 'up' ? Math.min(cw / inW, ch / inH) : 0,
                     );
+                // The mode this frame is drawn in (null: the law alone).
+                const mode = this.mwsrMode;
                 const uniKey =
                     inW +
                     'x' +
@@ -3467,13 +3495,13 @@ export class WebGpuRenderer extends VideoRenderer {
                     '@' +
                     gaze +
                     (zoned ? 'z' : '') +
-                    (this._mwsrMode || '');
-                // `quality`: the strength of the pass after the kernel at this
+                    (mode || '');
+                // `quality`: the gain of the pass after the kernel at this
                 // scale, 0 where the kernel's one pass is the whole picture (a
                 // reduction, ×2 and beyond, a frame read with the host's zones).
                 const sharpen =
                     this._mwsrSharpenPipeline && reg.mode === 'up' && !zoned
-                        ? mwsrSharpen(inW, inH, cw, ch, { mode: this._mwsrMode })
+                        ? mwsrSharpen(inW, inH, cw, ch, { mode })
                         : 0;
                 this._mwsrSharpened = sharpen > 0;
                 if (this._mwsrUniKey !== uniKey) {
@@ -3487,7 +3515,7 @@ export class WebGpuRenderer extends VideoRenderer {
                             gaze,
                             zone: this._mwsrZone || undefined,
                             hdr: this._hdrLinear,
-                            mode: this._mwsrMode,
+                            mode,
                         }),
                     );
                 }

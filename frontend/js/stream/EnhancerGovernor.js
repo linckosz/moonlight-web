@@ -34,7 +34,7 @@
  * and fine at 60fps (16.7ms apart); costing 19.5ms at 60fps is not.
  *
  * The ladder only ever goes DOWN from what the user picked (fsr1 → nis → sgsr →
- * mwsr → off) and climbs back when the pressure is gone. Recovery is deliberately shy: the
+ * mwsr-q → mwsr → off) and climbs back when the pressure is gone. Recovery is deliberately shy: the
  * cost at the level above cannot be measured from the level below, so a restore
  * is a bet. Each undone bet doubles the wait before the next one, which turns a
  * long call into one failed attempt instead of a flip-flop every 15 seconds.
@@ -56,8 +56,16 @@
  * `mwsr` and its only step down is 'off'. The memory (rememberRung) stores
  * names and is read under the same ceiling only: a verdict kept under FSR1 or
  * SGSR1's ceiling is ignored by an MWSR session, nothing to migrate.
+ *
+ * `mwsr-q` is mwsr's quality mode (v0.4.4: the same kernel and a sharpening
+ * pass after it, MwsrShader's MWSR_MODES), which 'auto' takes on a computer
+ * with a dedicated graphics card: its step down is `mwsr`, the kernel alone,
+ * so a card that cannot hold the second pass keeps the upscaler. It sits
+ * above `mwsr` for that, and is a rung of those sessions alone: one that
+ * comes down from FSR1, NIS or SGSR1 skips it (EnhancerGovernor's _step).
  */
-export const ENHANCER_LADDER = ['fsr1', 'nis', 'sgsr', 'mwsr', 'off'];
+export const ENHANCER_LADDER = ['fsr1', 'nis', 'sgsr', 'mwsr-q', 'mwsr', 'off'];
+const QUALITY_RUNG = ENHANCER_LADDER.indexOf('mwsr-q');
 
 /** A renderer's pass as a rung of the ladder: 'gl-sgsr' is 'sgsr'. */
 export function ladderRung(algo) {
@@ -233,6 +241,16 @@ export class EnhancerGovernor {
         this._presentationBound = false;
     }
 
+    /**
+     * One rung down (1) or up (-1). `mwsr-q` is a rung of the sessions whose
+     * setting it is, and of no other: a session coming down from FSR1, NIS or
+     * SGSR1 goes on to `mwsr` as it always did, and climbs back past it.
+     */
+    _step(dir) {
+        this._level += dir;
+        if (this._level === QUALITY_RUNG && this._ceiling !== QUALITY_RUNG) this._level += dir;
+    }
+
     /** Current algo — what the renderer should be running. */
     get level() {
         return ENHANCER_LADDER[this._level];
@@ -377,7 +395,7 @@ export class EnhancerGovernor {
             if (this._lastRecoveryMs > 0 && now - this._lastRecoveryMs < RECOVER_REGRET_MS) {
                 this._recoverAfterMs = Math.min(RECOVER_MAX_MS, this._recoverAfterMs * 2);
             }
-            this._level++;
+            this._step(1);
             this._settleUntil = now + SETTLE_MS;
             return this.level;
         }
@@ -393,7 +411,7 @@ export class EnhancerGovernor {
             if (this._recoverSince === 0) this._recoverSince = now;
             if (now - this._recoverSince < this._recoverAfterMs) return null;
             this._recoverSince = 0;
-            this._level--;
+            this._step(-1);
             this._lastRecoveryMs = now;
             this._settleUntil = now + SETTLE_MS;
             return this.level;

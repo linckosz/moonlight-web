@@ -845,6 +845,9 @@ export class StreamView {
                     'gl-nis': 'nis',
                     'gl-fsr1': 'fsr1',
                     'gl-mwsr': 'mwsr',
+                    // the quality mode's pass is not proven on an HDR
+                    // picture: the kernel alone
+                    'gl-mwsr-q': 'mwsr',
                 };
                 const moved = toGpu[sel] || 'off';
                 console.log('[StreamView] HDR: enhancer ' + sel + ' → ' + moved + ' on WebGPU');
@@ -857,7 +860,12 @@ export class StreamView {
                 algo = sel;
             } else {
                 wantWebGpu = true;
-                algo = sel === 'nis' || sel === 'fsr1' || sel === 'mwsr' ? sel : 'sgsr';
+                // (an HDR stream keeps the kernel alone, as above)
+                if (sel === 'mwsr-q' && hdr) sel = 'mwsr';
+                algo =
+                    sel === 'nis' || sel === 'fsr1' || sel === 'mwsr' || sel === 'mwsr-q'
+                        ? sel
+                        : 'sgsr';
             }
         }
         // An entry-level Mali presents on WebGPU with no pass as well, the
@@ -7229,9 +7237,15 @@ export class StreamView {
                 ? t('stream.enhancerPassthrough')
                 : this._videoEnhancementAlgo === 'off'
                   ? t('stream.enhancerOff')
-                  : { fsr1: 'FSR1', nis: 'NIS', sgsr: 'SGSR', mwsr: 'MWSR' }[
-                        this._videoEnhancementAlgo
-                    ] || 'SGSR';
+                  : {
+                        fsr1: 'FSR1',
+                        nis: 'NIS',
+                        sgsr: 'SGSR',
+                        // mwsr's mode, the device's choice; none in HDR, where
+                        // the kernel draws by the law alone
+                        mwsr: this._hdrEnabled ? 'MWSR' : 'MWSR Performance',
+                        'mwsr-q': 'MWSR Quality',
+                    }[this._videoEnhancementAlgo] || 'SGSR';
             if (this._videoEnhancementAlgo === 'mwsr' && this._mwsrDeblock && !passIdle) {
                 enhancerName = this._mwsrDeblock === 'qp' ? 'MWSR 3' : 'MWSR 2';
                 // mwsr 3: the last frame's QP and the threshold it gave (the
@@ -7260,7 +7274,9 @@ export class StreamView {
                         'gl-fsr1': 'WebGL FSR1',
                         'gl-sgsr': 'WebGL SGSR',
                         'gl-nis': 'WebGL NIS',
-                        'gl-mwsr': 'WebGL MWSR',
+                        // mwsr is named by its mode alone, on either renderer
+                        'gl-mwsr': 'MWSR Performance',
+                        'gl-mwsr-q': 'MWSR Quality',
                     }[this._videoEnhancementAlgo] || 'WebGL';
             if (this._enhancerDegraded && !passIdle) enhancerName += ' (auto)';
         } else if (NO_WEBGPU_ALGOS.includes(this._enhancerCeiling)) {

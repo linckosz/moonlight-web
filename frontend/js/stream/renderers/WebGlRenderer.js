@@ -44,12 +44,15 @@
  *               regime, the one to run picked per frame by the frame and
  *               canvas sizes. Bilinear taps and screen derivatives only, no
  *               gather to emulate. The reduction averages in software light:
- *               a WebGL2 drawing buffer has no sRGB view. Its two modes
- *               (opts.mwsrMode, MwsrShader's MWSR_MODES): 'performance', the
- *               kernel alone; 'quality', the kernel into gl-fsr1's intermediate
- *               framebuffer and a sharpening pass from there to the canvas
+ *               a WebGL2 drawing buffer has no sRGB view. The kernel alone:
+ *               pushed by the `performance` mode in the product's sessions
+ *               (opts.mwsrMode), by the law alone otherwise.
+ *   'gl-mwsr-q' — the same kernel in its `quality` mode (MwsrShader's
+ *               MWSR_MODES): drawn into gl-fsr1's intermediate framebuffer,
+ *               then a sharpening pass from there to the canvas
  *               (MWSR_SHARPEN_FS, the twin of WebGpuRenderer's text), where
- *               the stream is scaled up by less than ×2.
+ *               the stream is scaled up by less than ×2. A pass of its own
+ *               name, so that the ladder steps from it down to 'gl-mwsr'.
  *
  * GLSL ES 3.00 (WebGL2) has no textureGather: every gather is four texelFetch
  * on the 2×2 footprint a bilinear tap would cover, in the same component
@@ -305,15 +308,15 @@ void main() {
 `;
 
 // gl-mwsr's `quality` mode: the pass after the kernel, the GLSL twin of
-// WebGpuRenderer's MWSR_SHARPEN_WGSL (RCAS's math, AMD FidelityFX FSR1, MIT;
-// the strength a uniform, the same guards on a flat or saturated
-// neighbourhood). The five texels are fetched by the fragment's own
-// coordinates: the kernel drew this framebuffer texture pixel for pixel, so no
-// flip is needed, and the cross is symmetric.
+// WebGpuRenderer's MWSR_SHARPEN_WGSL (a formula of our own: each pixel moves
+// away from the mean of its cross by a gain, a uniform, and is held within the
+// range of itself and that cross). The five texels are fetched by the
+// fragment's own coordinates: the kernel drew this framebuffer texture pixel
+// for pixel, so no flip is needed, and the cross is symmetric.
 const MWSR_SHARPEN_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uTex;
-uniform float uStrength;
+uniform float uGain;
 out vec4 oColor;
 vec3 at(ivec2 p, ivec2 last) {
     return texelFetch(uTex, clamp(p, ivec2(0), last), 0).rgb;
@@ -323,38 +326,14 @@ void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
     vec3 b = at(p + ivec2(0, -1), last);
     vec3 d = at(p + ivec2(-1, 0), last);
-    vec3 e = at(p, last);
+    vec3 c = at(p, last);
     vec3 f = at(p + ivec2(1, 0), last);
     vec3 h = at(p + ivec2(0, 1), last);
 
-    // how far the centre stands from its cross, as a share of their range:
-    // a lone texel is noise, and takes half the lobe
-    const vec3 w = vec3(0.5, 1.0, 0.5);
-    float bL = dot(b, w);
-    float dL = dot(d, w);
-    float eL = dot(e, w);
-    float fL = dot(f, w);
-    float hL = dot(h, w);
-    float range = max(max(max(bL, dL), max(fL, hL)), eL) - min(min(min(bL, dL), min(fL, hL)), eL);
-    float nz = abs(0.25 * (bL + dL + fL + hL) - eL);
-    nz = range > 0.0 ? min(nz / range, 1.0) : 0.0;
-    nz = 1.0 - 0.5 * nz;
-
-    // the strongest negative lobe that keeps every channel within 0..1
-    // (the floors are never reached by 8-bit values that pass the tests beside
-    // them: they keep a division by zero out of the branch not taken)
-    vec3 mn4 = min(min(b, d), min(f, h));
-    vec3 mx4 = max(max(b, d), max(f, h));
-    vec3 hitMin = min(mn4, e) / max(4.0 * mx4, vec3(1e-6));
-    vec3 hitMax = mix(
-        vec3(-1.0),
-        (vec3(1.0) - max(mx4, e)) / min(4.0 * mn4 - vec3(4.0), vec3(-1e-6)),
-        lessThan(mn4, vec3(1.0)));
-    vec3 lobe3 = max(-hitMin, hitMax);
-    const float limit = 0.25 - (1.0 / 16.0);
-    float lobe = max(-limit, min(max(lobe3.r, max(lobe3.g, lobe3.b)), 0.0)) * uStrength * nz;
-
-    oColor = vec4((lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0), 1.0);
+    vec3 mean = 0.25 * (b + d + f + h);
+    vec3 lo = min(c, min(min(b, d), min(f, h)));
+    vec3 hi = max(c, max(max(b, d), max(f, h)));
+    oColor = vec4(clamp(c + uGain * (c - mean), lo, hi), 1.0);
 }
 `;
 
@@ -739,7 +718,10 @@ void main() {
 }
 `;
 
-export const WEBGL_ALGOS = ['gl-fsr1', 'gl-sgsr', 'gl-nis', 'gl-mwsr'];
+export const WEBGL_ALGOS = ['gl-fsr1', 'gl-sgsr', 'gl-nis', 'gl-mwsr-q', 'gl-mwsr'];
+
+/** Both of mwsr's passes draw with the kernel's programs. */
+const isMwsr = (algo) => algo === 'gl-mwsr' || algo === 'gl-mwsr-q';
 
 /**
  * A draw's fence is looked at once it is this old (takeGpuBehind): at the next
@@ -767,8 +749,8 @@ export class WebGlRenderer extends VideoRenderer {
         this._mwsr = null;
         this._mwsrUni = null;
         this._mwsrUniKey = '';
-        /** gl-mwsr's mode (opts.mwsrMode: 'performance' | 'quality'), null: the law alone. */
-        this._mwsrMode = null;
+        /** opts.mwsrMode 'performance': 'gl-mwsr' pushes the kernel by that mode; else the law alone. */
+        this._mwsrPerf = false;
         /** @type {{prog: WebGLProgram, u: Object}|null} `quality`: the pass after the kernel. */
         this._mwsrSharpen = null;
         /** The last draw ran it. */
@@ -904,9 +886,9 @@ export class WebGlRenderer extends VideoRenderer {
         r.videoCodec = opts.videoCodec;
         r._algo = WEBGL_ALGOS.includes(opts.algo) || opts.algo === 'off' ? opts.algo : 'gl-fsr1';
         r._yuv444 = opts.yuv444 === true;
-        // gl-mwsr's mode, the setting's; anything else, the law alone (the lab).
-        r._mwsrMode =
-            opts.mwsrMode === 'quality' || opts.mwsrMode === 'performance' ? opts.mwsrMode : null;
+        // The product's sessions: 'gl-mwsr' is the `performance` mode. Without
+        // it (the laboratory) 'gl-mwsr' draws by the law alone.
+        r._mwsrPerf = opts.mwsrMode === 'performance';
         // The gaze zone the caller wants (BrowserDetect.mwsrGazeWanted): the
         // kernel's programs take it, its weight follows the stream's motion.
         if (opts.gazeZone) r.setMwsrZone({});
@@ -978,11 +960,22 @@ export class WebGlRenderer extends VideoRenderer {
         return this._passthrough;
     }
 
+    /**
+     * mwsr's mode (MwsrShader's MWSR_MODES) as this renderer draws it now:
+     * 'quality' on the pass 'gl-mwsr-q', 'performance' on 'gl-mwsr' in a
+     * session of the product (opts.mwsrMode), null otherwise: the law alone.
+     * @returns {'quality'|'performance'|null}
+     */
+    get mwsrMode() {
+        if (this._algo === 'gl-mwsr-q') return 'quality';
+        return this._algo === 'gl-mwsr' && this._mwsrPerf ? 'performance' : null;
+    }
+
     /** Effective algorithm name for the overlay. */
     get algoName() {
         if (this._algo === 'gl-nis') return 'WebGL NIS';
         if (this._algo === 'gl-sgsr') return 'WebGL SGSR';
-        if (this._algo === 'gl-mwsr') return 'WebGL MWSR';
+        if (isMwsr(this._algo)) return 'WebGL MWSR';
         if (this._algo === 'off') return 'WebGL';
         return 'WebGL FSR1';
     }
@@ -1005,6 +998,8 @@ export class WebGlRenderer extends VideoRenderer {
             return false;
         }
         this._algo = algo;
+        // mwsr's two passes share the kernel's block: the mode changes its values
+        this._mwsrUniKey = '';
         console.log('[WebGlRenderer] algo → ' + algo);
         return true;
     }
@@ -1050,7 +1045,7 @@ export class WebGlRenderer extends VideoRenderer {
         if (gl && !this.isContextLost())
             for (const p of this._mwsr.values()) gl.deleteProgram(p.prog);
         this._mwsr = null;
-        if (this._algo === 'gl-mwsr' && gl && !this.isContextLost()) this._buildAlgo('gl-mwsr');
+        if (isMwsr(this._algo) && gl && !this.isContextLost()) this._buildAlgo(this._algo);
     }
 
     /**
@@ -1074,7 +1069,7 @@ export class WebGlRenderer extends VideoRenderer {
         if (gl && !this.isContextLost())
             for (const p of this._mwsr.values()) gl.deleteProgram(p.prog);
         this._mwsr = null;
-        if (this._algo === 'gl-mwsr' && gl && !this.isContextLost()) this._buildAlgo('gl-mwsr');
+        if (isMwsr(this._algo) && gl && !this.isContextLost()) this._buildAlgo(this._algo);
     }
 
     /**
@@ -1179,10 +1174,10 @@ export class WebGlRenderer extends VideoRenderer {
             this._buildInterm();
         } else if (algo === 'gl-sgsr') {
             if (!this._sgsr) this._sgsr = this._program(SGSR_FS, ['uTex', 'uView']);
-        } else if (algo === 'gl-mwsr') {
+        } else if (isMwsr(algo)) {
             // `quality`: the pass after the kernel, and the framebuffer between them.
-            if (this._mwsrMode === 'quality' && !this._mwsrSharpen) {
-                this._mwsrSharpen = this._program(MWSR_SHARPEN_FS, ['uTex', 'uStrength']);
+            if (algo === 'gl-mwsr-q' && !this._mwsrSharpen) {
+                this._mwsrSharpen = this._program(MWSR_SHARPEN_FS, ['uTex', 'uGain']);
                 this._buildInterm();
             }
             if (this._mwsr) return;
@@ -1392,7 +1387,7 @@ export class WebGlRenderer extends VideoRenderer {
                 gl.uniform1i(this._sgsr.u.uTex, 0);
                 gl.uniform4f(this._sgsr.u.uView, 1 / inW, 1 / inH, inW, inH);
                 gl.drawArrays(gl.TRIANGLES, 0, 3);
-            } else if (pass === 'gl-mwsr') {
+            } else if (isMwsr(pass)) {
                 // The regime by the frame and canvas sizes — never 'copy', the
                 // 1:1 frame took the plain copy; the uniform block of the WGSL
                 // twin, kept while the sizes hold, in six vec4.
@@ -1401,23 +1396,24 @@ export class WebGlRenderer extends VideoRenderer {
                 // The gaze zone's weight for this draw, 0 without a zone: it
                 // moves in steps of 1/64, so the block is remade rarely.
                 const gaze = this._mwsrGazeFor(inW * inH);
-                const uniKey =
-                    inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze + (this._mwsrMode || '');
+                // The mode this frame is drawn in (null: the law alone).
+                const mode = this.mwsrMode;
+                const uniKey = inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze + (mode || '');
                 if (this._mwsrUniKey !== uniKey) {
                     this._mwsrUniKey = uniKey;
                     this._mwsrUni = mwsrUniforms(inW, inH, cw, ch, {
                         ...(this._mwsrTuning || {}),
                         gaze,
                         zone: this._mwsrZone || undefined,
-                        mode: this._mwsrMode,
+                        mode,
                     });
                 }
-                // `quality`: the strength of the pass after the kernel at this
+                // `quality`: the gain of the pass after the kernel at this
                 // scale; 0 (a reduction, ×2 and beyond), the kernel's one pass
                 // is the whole picture and goes straight to the canvas.
                 const sharpen =
                     this._mwsrSharpen && reg.mode === 'up'
-                        ? mwsrSharpen(inW, inH, cw, ch, { mode: this._mwsrMode })
+                        ? mwsrSharpen(inW, inH, cw, ch, { mode })
                         : 0;
                 this._mwsrSharpened = sharpen > 0;
                 if (sharpen > 0) this._ensureInterm(cw, ch);
@@ -1443,7 +1439,7 @@ export class WebGlRenderer extends VideoRenderer {
                     gl.useProgram(this._mwsrSharpen.prog);
                     gl.bindTexture(gl.TEXTURE_2D, this._intermTex);
                     gl.uniform1i(this._mwsrSharpen.u.uTex, 0);
-                    gl.uniform1f(this._mwsrSharpen.u.uStrength, sharpen);
+                    gl.uniform1f(this._mwsrSharpen.u.uGain, sharpen);
                     gl.drawArrays(gl.TRIANGLES, 0, 3);
                 }
             } else if (pass === 'off') {
@@ -1503,7 +1499,7 @@ export class WebGlRenderer extends VideoRenderer {
             waitMs,
             (this._passthrough
                 ? '1:1'
-                : this._algo + (pass === 'gl-mwsr' && this._mwsrSharpened ? '+sharp' : '')) +
+                : this._algo + (isMwsr(pass) && this._mwsrSharpened ? '+sharp' : '')) +
                 ':' +
                 path,
         );

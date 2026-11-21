@@ -33,10 +33,11 @@ import { videoSinkCtor } from './videoSink.js';
 
 /**
  * Enhancer choices that run WITHOUT WebGPU: the WebGL2 shaders (WEBGL_ALGOS:
- * the three ports and 'gl-mwsr', MoonlightWeb's own) and 'smooth2d' (Canvas2D
- * drawing at the display size with its best resampling filter). The caller
- * keeps opts.webgpu false for all of them; anything not in this list ('sgsr' /
- * 'nis' / 'fsr1' / 'mwsr' / 'off') is handled by the WebGPU or Canvas2D path.
+ * the three ports, and 'gl-mwsr' and 'gl-mwsr-q', MoonlightWeb's own in its
+ * two modes) and 'smooth2d' (Canvas2D drawing at the display size with its
+ * best resampling filter). The caller keeps opts.webgpu false for all of
+ * them; anything not in this list ('sgsr' / 'nis' / 'fsr1' / 'mwsr' /
+ * 'mwsr-q' / 'off') is handled by the WebGPU or Canvas2D path.
  */
 export const NO_WEBGPU_ALGOS = ['smooth2d', ...WEBGL_ALGOS];
 
@@ -133,6 +134,11 @@ export function presentsOnVsync(s) {
 }
 
 export async function createVideoRenderer(canvas, opts) {
+    // The product's sessions draw mwsr by its modes (MwsrShader's MWSR_MODES):
+    // the pass 'mwsr' is `performance`, the kernel pushed, and 'mwsr-q' is
+    // `quality`. The laboratory makes its renderers itself, without this
+    // option, and keeps the law alone under 'mwsr'.
+    opts = { mwsrMode: 'performance', ...opts };
     // HDR: route decoded frames to a <video> element via the track generator.
     // The canvas paths (WebGPU/Canvas2D) tone-map HDR away (importExternalTexture /
     // drawImage only output SDR color spaces) — <video> presents HDR natively. Needs
