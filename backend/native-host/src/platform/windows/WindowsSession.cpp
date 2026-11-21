@@ -318,6 +318,8 @@ public:
         // built: a D3D12 queue takes the priority of the class it is made
         // under, for good. Taken after the first build, the class left every
         // D3D12 session's queues at HIGH under REALTIME (G2 bench, 27/09/2026).
+        // The guests' shared feed is named first: one step below the owner.
+        if (m_Config.yieldsToOwner) StreamPriority::setRole(StreamPriority::Role::Feed);
         StreamPriority::engageProcess();
 
         // Everything between the captured picture and the bitstream — the
@@ -2307,9 +2309,14 @@ private:
         // a game's render thread, ahead of the desktop's background work, for
         // the whole life of the session. Refusal (a service session, a policy)
         // is logged once and costs nothing — the loop is the same either way.
+        // Not for the guests' shared feed, which yields to the owner (see
+        // StreamPriority): MMCSS would lift it over the process's class.
         DWORD mmcssTask = 0;
-        HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Games", &mmcssTask);
-        if (mmcss)
+        HANDLE mmcss = nullptr;
+        if (!StreamPriority::takesMmcss())
+            log::info("capture thread at its process's priority (the guests' feed yields to the "
+                      "owner)");
+        else if ((mmcss = AvSetMmThreadCharacteristicsW(L"Games", &mmcssTask)))
             log::info("capture thread on MMCSS Games");
         else
             log::info("MMCSS Games refused for the capture thread (error " +

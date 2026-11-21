@@ -157,6 +157,29 @@ bool enableBasePriorityPrivilege()
 }
 
 std::atomic<StreamPriority::GpuClass> g_GrantedClass{StreamPriority::GpuClass::Unknown};
+std::atomic<StreamPriority::Role> g_Role{StreamPriority::Role::Owner};
+
+/// The guests' feed: one class below what an owner's session gets with the
+/// same token (see the header). HIGH and ABOVE_NORMAL ask nothing of the token.
+void lowerFeedGpuScheduling(SetSchedulingClassFn set, const std::string& who)
+{
+    const bool ownerRealtime = who != "limited" && !envIs("MW_GPU_PRIORITY", "high");
+    const StreamPriority::GpuClass want = StreamPriority::feedClassToAsk(ownerRealtime);
+    const bool high = want == StreamPriority::GpuClass::High;
+    const LONG first = set(::GetCurrentProcess(), high ? KmtHigh : KmtAboveNormal);
+    if (first == 0) {
+        g_GrantedClass = want;
+        log::info(std::string("[native] priority: guests' feed, GPU scheduling class ") +
+                  StreamPriority::toString(want) + ", one below the owner's (token " + who + ")");
+        return;
+    }
+    const LONG lower = high ? set(::GetCurrentProcess(), KmtAboveNormal) : first;
+    g_GrantedClass = high && lower == 0 ? StreamPriority::GpuClass::AboveNormal
+                                        : StreamPriority::GpuClass::Normal;
+    log::info(std::string("[native] priority: guests' feed, GPU scheduling class ") +
+              StreamPriority::toString(want) + " refused (" + hex(first) + "), " +
+              StreamPriority::toString(g_GrantedClass.load()) + " instead");
+}
 
 void raiseGpuScheduling()
 {
@@ -173,6 +196,10 @@ void raiseGpuScheduling()
     // token can have it; MW_GPU_PRIORITY=high keeps the older class, for a
     // bench's before.
     const std::string who = tokenKind();
+    if (g_Role.load() == StreamPriority::Role::Feed) {
+        lowerFeedGpuScheduling(set, who);
+        return;
+    }
     if (envIs("MW_GPU_PRIORITY", "high")) {
         log::info("[native] priority: MW_GPU_PRIORITY=high — REALTIME not asked");
     } else if (who == "limited") {
@@ -216,6 +243,17 @@ void StreamPriority::engageProcess()
     } else {
         g_GrantedClass = GpuClass::LeftAlone;
         log::info("[native] priority: MW_GPU_PRIORITY=normal — GPU scheduling left as is");
+    }
+    // The guests' feed waits for the owner on the CPU too: its capture,
+    // conversion and encode run below every ordinary thread of the machine.
+    if (g_Role.load() == Role::Feed) {
+        if (::SetPriorityClass(::GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS))
+            log::info("[native] priority: guests' feed, CPU priority class BELOW_NORMAL");
+        else
+            log::info("[native] priority: guests' feed, CPU priority class BELOW_NORMAL "
+                      "refused (error " +
+                      std::to_string(::GetLastError()) + ")");
+        return;
     }
     // Bench switch, off by default: the whole process one class up on the
     // CPU. Never REALTIME, which can starve the input stack itself.
@@ -267,12 +305,57 @@ const char* StreamPriority::toString(GpuClass gpuClass)
 
 D3D12_COMMAND_QUEUE_PRIORITY StreamPriority::queuePriority()
 {
-    switch (grantedClass()) {
+    return queuePriorityFor(role(), grantedClass());
+}
+
+D3D12_COMMAND_QUEUE_PRIORITY StreamPriority::queuePriorityFor(Role role, GpuClass gpuClass)
+{
+    // The feed's queues are raised only as far as its class: HIGH under HIGH
+    // (where the owner's are GLOBAL_REALTIME), NORMAL otherwise.
+    if (role == Role::Feed)
+        return gpuClass == GpuClass::High ? D3D12_COMMAND_QUEUE_PRIORITY_HIGH
+                                          : D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+    switch (gpuClass) {
     case GpuClass::Realtime: return D3D12_COMMAND_QUEUE_PRIORITY_GLOBAL_REALTIME;
     case GpuClass::LeftAlone: return D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
     default: break;
     }
     return D3D12_COMMAND_QUEUE_PRIORITY_HIGH;
+}
+
+StreamPriority::GpuClass StreamPriority::feedClassToAsk(bool ownerGetsRealtime)
+{
+    return ownerGetsRealtime ? GpuClass::High : GpuClass::AboveNormal;
+}
+
+int StreamPriority::deviceThreadPriorityFor(Role role)
+{
+    return role == Role::Feed ? 0 : 7;
+}
+
+void StreamPriority::setRole(Role role)
+{
+    if (role == Role::Feed && envIs("MW_FEED_PRIORITY", "same")) {
+        log::info("[native] priority: MW_FEED_PRIORITY=same — the guests' feed keeps the "
+                  "owner's standing");
+        role = Role::Owner;
+    } else if (role == Role::Feed && g_ProcessDone.load()) {
+        // Too late to lower what engageProcess() already raised: said, not hidden.
+        log::info("[native] priority: the guests' feed was named after the process was raised — "
+                  "left at the owner's standing");
+        return;
+    }
+    g_Role = role;
+}
+
+StreamPriority::Role StreamPriority::role()
+{
+    return g_Role.load();
+}
+
+bool StreamPriority::takesMmcss()
+{
+    return role() != Role::Feed;
 }
 
 void StreamPriority::release()
@@ -329,10 +412,17 @@ void StreamPriority::raiseDevice(ID3D11Device* device, const char* role)
     if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi)))) return;
     logHardwareScheduling(dxgi.Get(), role);
     if (envIs("MW_GPU_PRIORITY", "normal")) return;
-    const HRESULT hr = dxgi->SetGPUThreadPriority(7);
+    const int priority = deviceThreadPriorityFor(StreamPriority::role());
+    if (priority == 0) {
+        log::info(std::string("[native] priority: guests' feed, GPU thread priority left at "
+                              "Windows' default on the ") +
+                  role + " device");
+        return;
+    }
+    const HRESULT hr = dxgi->SetGPUThreadPriority(priority);
     if (SUCCEEDED(hr))
-        log::info(std::string("[native] priority: GPU thread priority 7 on the ") + role +
-                  " device");
+        log::info(std::string("[native] priority: GPU thread priority ") +
+                  std::to_string(priority) + " on the " + role + " device");
     else
         log::info(std::string("[native] priority: GPU thread priority refused on the ") + role +
                   " device (" + hex(hr) + ")");

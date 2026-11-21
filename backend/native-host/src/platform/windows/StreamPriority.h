@@ -52,6 +52,20 @@ namespace mw::native {
 /// since it decides what a class means. MW_CPU_PRIORITY=high (a bench switch
 /// too) raises the process's CPU class.
 ///
+/// The guests' shared feed. It is a second capture and a second encode of the
+/// owner's display, in a process of its own, and with the owner's standing it
+/// competes with the owner for every core and for the GPU's 3D engine, where
+/// the colour conversion runs: on a weak host (an N95, 21/11/2026), one guest
+/// took the owner's p99 from 13 to 80-88 ms and its latency over 400 ms, with
+/// the CPU at 92-100 % and the 3D engine at 86-96 %. So the feed's process is
+/// set one step below the owner's (setRole(Role::Feed), before
+/// engageProcess()): its GPU class one step down (HIGH where the owner gets
+/// REALTIME, ABOVE_NORMAL where it gets HIGH), its queues and devices not
+/// raised, no MMCSS on its threads, and the BELOW_NORMAL CPU class. When the
+/// host has room for both, nothing changes; when it does not, the guests wait
+/// and the owner does not. MW_FEED_PRIORITY=same keeps the feed at the
+/// owner's standing, for a bench's before.
+///
 /// Staying awake. A viewer watching without touching anything sends no input,
 /// and the machine would sleep or blank its screen under the stream — which
 /// the viewer sees as the picture going black. Held for the session only.
@@ -98,6 +112,31 @@ public:
     /// HIGH otherwise — HIGH asks nothing of the token. A D3D11 device has no
     /// queue to give a priority to; SetGPUThreadPriority is its equivalent.
     static D3D12_COMMAND_QUEUE_PRIORITY queuePriority();
+
+    /// Whose stream this process carries: a viewer's own session (Owner, the
+    /// default) or the guests' shared feed (Feed), which yields to the owner.
+    enum class Role
+    {
+        Owner,
+        Feed,
+    };
+    /// Once, before engageProcess(). Feed is refused under
+    /// MW_FEED_PRIORITY=same (logged), which leaves the process an Owner.
+    static void setRole(Role role);
+    static Role role();
+    /// Whether this process's capture and encode threads take MMCSS "Games":
+    /// the owner's do, the feed's do not.
+    static bool takesMmcss();
+
+    /// The rules above, as pure functions (tested without a GPU).
+    /// The class a feed asks: HIGH where an owner's session would get REALTIME
+    /// (a privileged token, MW_GPU_PRIORITY not high), ABOVE_NORMAL otherwise.
+    static GpuClass feedClassToAsk(bool ownerGetsRealtime);
+    /// A D3D12 queue's priority for a role under a granted class.
+    static D3D12_COMMAND_QUEUE_PRIORITY queuePriorityFor(Role role, GpuClass gpuClass);
+    /// SetGPUThreadPriority's value for a role's devices: 7, the top, for the
+    /// owner; 0, Windows' own default, for the feed.
+    static int deviceThreadPriorityFor(Role role);
 
 private:
     HANDLE m_PowerRequest = nullptr;

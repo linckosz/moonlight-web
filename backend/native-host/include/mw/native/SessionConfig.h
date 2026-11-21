@@ -88,6 +88,12 @@ struct SessionConfig
     /// hand (codecAuto). False by default: nothing lowers it unasked.
     bool bitrateFollowsFrame = false;
 
+    /// This session is the guests' shared feed: its process yields to the
+    /// owner's session on the CPU and the GPU (StreamPriority's Feed role,
+    /// Windows; MW_FEED_PRIORITY=same keeps the owner's standing). False for
+    /// every viewer's own session.
+    bool yieldsToOwner = false;
+
     /// Codecs the BROWSER accepts, best first. The engine intersects this with
     /// what the display's GPU can encode and picks the first survivor — which
     /// is why no codec question is ever asked (§27).

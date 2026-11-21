@@ -104,6 +104,8 @@ public:
         /// The rate was worked out, not set by hand — see
         /// SessionConfig::bitrateFollowsFrame.
         bool bitrateFollowsFrame = false;
+        /// The guests' shared feed — see SessionConfig::yieldsToOwner.
+        bool yieldsToOwner = false;
         /// VIDEO_FORMAT_* bitmask of what the browser can decode.
         int clientVideoFormats = 0;
         bool hdr = false;

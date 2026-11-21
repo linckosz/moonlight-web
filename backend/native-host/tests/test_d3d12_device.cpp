@@ -26,6 +26,57 @@ using Microsoft::WRL::ComPtr;
 void run_d3d12_device_tests()
 {
 #if defined(_WIN32)
+    SECTION("StreamPriority — the guests' feed stands one step below the owner");
+    {
+        using GpuClass = StreamPriority::GpuClass;
+        using Role = StreamPriority::Role;
+        // The class it asks: one below what the owner gets with the same token.
+        CHECK(StreamPriority::feedClassToAsk(true) == GpuClass::High);
+        CHECK(StreamPriority::feedClassToAsk(false) == GpuClass::AboveNormal);
+        // Its queues: never above HIGH, and NORMAL unless its class is HIGH.
+        CHECK(StreamPriority::queuePriorityFor(Role::Feed, GpuClass::High) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_HIGH);
+        CHECK(StreamPriority::queuePriorityFor(Role::Feed, GpuClass::AboveNormal) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_NORMAL);
+        CHECK(StreamPriority::queuePriorityFor(Role::Feed, GpuClass::Normal) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_NORMAL);
+        CHECK(StreamPriority::queuePriorityFor(Role::Feed, GpuClass::LeftAlone) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_NORMAL);
+        CHECK(StreamPriority::queuePriorityFor(Role::Feed, GpuClass::Unknown) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_NORMAL);
+        // The owner's, as before.
+        CHECK(StreamPriority::queuePriorityFor(Role::Owner, GpuClass::Realtime) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_GLOBAL_REALTIME);
+        CHECK(StreamPriority::queuePriorityFor(Role::Owner, GpuClass::High) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_HIGH);
+        CHECK(StreamPriority::queuePriorityFor(Role::Owner, GpuClass::Unknown) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_HIGH);
+        CHECK(StreamPriority::queuePriorityFor(Role::Owner, GpuClass::LeftAlone) ==
+              D3D12_COMMAND_QUEUE_PRIORITY_NORMAL);
+        // Its devices are not raised; the owner's go to the top.
+        CHECK_EQ(StreamPriority::deviceThreadPriorityFor(Role::Feed), 0);
+        CHECK_EQ(StreamPriority::deviceThreadPriorityFor(Role::Owner), 7);
+
+        // A process is an owner's unless named the feed.
+        CHECK(StreamPriority::role() == Role::Owner);
+        CHECK(StreamPriority::takesMmcss());
+        // Named the feed: it is one (when its priorities were not taken yet in
+        // this runner), and its threads take no MMCSS.
+        StreamPriority::setRole(Role::Feed);
+        CHECK(StreamPriority::takesMmcss() == (StreamPriority::role() != Role::Feed));
+        if (StreamPriority::role() == Role::Feed)
+            CHECK(StreamPriority::queuePriority() ==
+                  StreamPriority::queuePriorityFor(Role::Feed, StreamPriority::grantedClass()));
+        StreamPriority::setRole(Role::Owner);
+        CHECK(StreamPriority::role() == Role::Owner);
+        // MW_FEED_PRIORITY=same: the feed keeps the owner's standing.
+        ::SetEnvironmentVariableA("MW_FEED_PRIORITY", "same");
+        StreamPriority::setRole(Role::Feed);
+        CHECK(StreamPriority::role() == Role::Owner);
+        CHECK(StreamPriority::takesMmcss());
+        ::SetEnvironmentVariableA("MW_FEED_PRIORITY", nullptr);
+    }
+
     SECTION("D3D12 device — queues, fences and timers, on WARP");
 
     ComPtr<IDXGIFactory4> factory;

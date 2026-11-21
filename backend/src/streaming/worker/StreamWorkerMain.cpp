@@ -455,6 +455,9 @@ int runFeedWorker(const QJsonObject& cfg)
     p.bitrateKbps = cfg["bitrateKbps"].toInt(10000);
     // The feed's rate is the server's estimate for its height, never a hand's.
     p.bitrateFollowsFrame = true;
+    // A second capture and encode of the owner's display: it waits for the
+    // owner's session on a host that cannot carry both (StreamPriority).
+    p.yieldsToOwner = true;
     // HEVC with H.264 behind it, or H.264 alone once a guest has said it
     // decodes nothing else (VIDEO_FORMAT_* masks, as the owner's /start).
     p.clientVideoFormats = cfg["h264"].toBool() ? 0x000F : (0x0F00 | 0x000F);

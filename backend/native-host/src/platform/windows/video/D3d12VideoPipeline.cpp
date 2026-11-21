@@ -24,6 +24,7 @@
 #include "../../../encode/windows/d3d12/NvencEncoder12.h"
 #include "../../../encode/windows/d3d12/UltraEncoder12.h"
 #include "../../../encode/windows/d3d12/VideoEncode12.h"
+#include "../StreamPriority.h"
 
 #include <avrt.h>
 
@@ -947,9 +948,11 @@ void D3d12VideoPipeline::stopEncodeThread()
 
 void D3d12VideoPipeline::encodeLoop()
 {
-    // As the capture thread: a game's render thread's standing (MMCSS Games).
+    // As the capture thread: a game's render thread's standing (MMCSS Games),
+    // except in the guests' shared feed, which yields to the owner.
     DWORD task = 0;
-    const HANDLE mmcss = ::AvSetMmThreadCharacteristicsW(L"Games", &task);
+    const HANDLE mmcss =
+        StreamPriority::takesMmcss() ? ::AvSetMmThreadCharacteristicsW(L"Games", &task) : nullptr;
     bool saidRefused = false;
     for (;;) {
         EncodeJob job;
