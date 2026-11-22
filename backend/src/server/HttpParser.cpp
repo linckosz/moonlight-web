@@ -99,6 +99,7 @@ HttpRequest parse(const QByteArray& raw)
             for (const auto& item : query.queryItems()) {
                 if (hasControlChars(item.first) || hasControlChars(item.second))
                     req.malformed = true;
+                if (req.queryParams.contains(item.first)) req.repeatedQueryKeys.insert(item.first);
                 req.queryParams[item.first] = item.second;
             }
         }

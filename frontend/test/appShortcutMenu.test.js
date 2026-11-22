@@ -35,7 +35,7 @@ import { HostListView } from '../js/ui/HostListView.js';
 import { Host } from '../js/models/Host.js';
 import { BackendClient } from '../js/api/BackendClient.js';
 import { Toast } from '../js/ui/Toast.js';
-import { appIconName, pickAppForShortcut } from '../js/ui/AppShortcutSheet.js';
+import { appIconName, appIconShortName, pickAppForShortcut } from '../js/ui/AppShortcutSheet.js';
 
 const HOST = {
     uuid: 'h1',
@@ -72,6 +72,14 @@ describe('the name of a link’s home-screen icon', () => {
         expect(appIconName(host, APPS[1])).toBe(
             'Bureau — MoonlightWeb Host 2 · Display 1 · MoonlightWeb',
         );
+    });
+
+    // I63SHORT: under the icon, the app alone, as it reads in the name.
+    it('gives the app alone as the short name', () => {
+        expect(appIconShortName(APPS[0])).toBe('Virtual Display');
+        expect(appIconShortName(APPS[1])).toBe('Display 1');
+        expect(appIconShortName({ displayName: 'MoonlightWeb' })).toBe('MoonlightWeb');
+        expect(appIconShortName({ displayName: '  ' })).toBe('');
     });
 });
 

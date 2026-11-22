@@ -855,10 +855,14 @@ void HttpServer::personaliseForHomeScreen(const HttpRequest& req, HttpResponse& 
 void HttpServer::personaliseForAppIcon(const HttpRequest& req, HttpResponse& resp, bool shell,
                                        const QString& ifNoneMatch) const
 {
-    // The name the page that makes the icon wrote into the request (n=), never
-    // looked up: given back as the icon's name, when it holds as one.
-    const QString name =
-        mw::homescreen::appIconNameAsked(req.queryParams.value(QStringLiteral("n")));
+    // The names the page that makes the icon wrote into the request (n=, s=),
+    // never looked up: given back as the icon's names, each when it holds as
+    // one. A key given twice counts as not given (security review, I63SHORT).
+    const QString n = QStringLiteral("n");
+    const QString s = QStringLiteral("s");
+    const mw::homescreen::AppIconNames name = mw::homescreen::appIconNamesAsked(
+        req.queryParams.value(n), req.repeatedQueryKeys.contains(n), req.queryParams.value(s),
+        req.repeatedQueryKeys.contains(s));
     if (shell) {
         resp.body = mw::homescreen::appIconShell(
             resp.body, req.queryParams.value(QStringLiteral("icon")), name);
@@ -869,7 +873,7 @@ void HttpServer::personaliseForAppIcon(const HttpRequest& req, HttpResponse& res
         // This origin is the machine, as for /api/app/web-manifest off the
         // tunnel: its own "/", the link, the icons inlined, and no machine, no
         // key — nothing a request without a session may not read — and no
-        // name but the one the request gave.
+        // names but the ones the request gave.
         resp.body = mw::homescreen::manifest(resp.body, QString(), QString(), QString(),
                                              homeScreenIcon("/assets/icon-192.png"),
                                              homeScreenIcon("/assets/icon-512.png"),

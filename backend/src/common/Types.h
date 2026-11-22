@@ -19,6 +19,7 @@
 
 #include <QByteArray>
 #include <QMap>
+#include <QSet>
 #include <QString>
 #include <QJsonObject>
 #include <QJsonDocument>
@@ -30,6 +31,10 @@ struct HttpRequest
     QString path;
     QMap<QString, QString> headers;
     QMap<QString, QString> queryParams;
+    // The query's keys given more than once, decoded as queryParams's are:
+    // queryParams keeps the last of them. Read where a repeated key must count
+    // as no key at all (an icon's names, HttpServer::personaliseForAppIcon).
+    QSet<QString> repeatedQueryKeys;
     QMap<QString, QString> pathParams;
     QByteArray body;
     QString clientAddress;      // Populated by HttpServer from socket peer

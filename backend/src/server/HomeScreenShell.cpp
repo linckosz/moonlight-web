@@ -118,9 +118,31 @@ QString shownMachineName(const QString& machineName, bool signedIn)
     return signedIn ? machineName : QString();
 }
 
+QString AppIconNames::shown() const
+{
+    const QString own = appIconName(shortName);
+    return own.isEmpty() ? appIconShortName(name) : own;
+}
+
+AppIconNames appIconNamesAsked(const QString& n, bool nRepeated, const QString& s, bool sRepeated)
+{
+    if (QUrl::toPercentEncoding(n).size() + QUrl::toPercentEncoding(s).size() >
+        kAppIconNamesQueryMax)
+        return {};
+    return {nRepeated ? QString() : appIconNameAsked(n),
+            sRepeated ? QString() : appIconNameAsked(s)};
+}
+
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
                     const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
-                    const QString& appLink, const QString& appName)
+                    const QString& appLink)
+{
+    return manifest(json, title, hostId, handoffKey, icon192, icon512, appLink, AppIconNames());
+}
+
+QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
+                    const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
+                    const QString& appLink, const AppIconNames& names)
 {
     QJsonParseError error;
     const QJsonDocument doc = QJsonDocument::fromJson(json, &error);
@@ -163,14 +185,16 @@ QByteArray manifest(const QByteArray& json, const QString& title, const QString&
     }
     // A shortcut to one app names nothing of its own: not the app (the browser
     // fetches a manifest without the session, and nothing is looked up), not
-    // the machine or the edition either. Only the name the page that made it
-    // wrote into the request, given back as it was, once it holds as a name
-    // (appIconName): it is a label, and the alias alone says what opens.
+    // the machine or the edition either. Only the names the page that made it
+    // wrote into the request, given back as they were, each once it holds as a
+    // name (appIconName): labels, and the alias alone says what opens. The
+    // short name, the one under the icon, is the app's (I63SHORT); without one,
+    // the name cut short.
     if (!go.isEmpty()) {
         obj.remove(QStringLiteral("name"));
         obj.remove(QStringLiteral("short_name"));
-        const QString name = appIconName(appName);
-        const QString shortName = appIconShortName(appName);
+        const QString name = appIconName(names.name);
+        const QString shortName = names.shown();
         if (!name.isEmpty()) obj[QStringLiteral("name")] = name;
         if (!shortName.isEmpty()) obj[QStringLiteral("short_name")] = shortName;
     }
@@ -223,21 +247,24 @@ AppIconPart appIconPart(const QString& path, const QString& icon, const QString&
     return AppIconPart::None;
 }
 
-QByteArray appIconShell(const QByteArray& html, const QString& alias, const QString& name)
+QByteArray appIconShell(const QByteArray& html, const QString& alias, const AppIconNames& names)
 {
     if (!mw::applinks::validAlias(alias)) return html;
     static const QRegularExpression manifestLink(
         QString::fromLatin1(R"re(<link\s+rel="manifest"\s+href="([^"]*)")re"));
     QString page = QString::fromUtf8(html);
     // An attribute, so escaped as one, and its value an address, so encoded as
-    // one — ten letters and digits come out of both unchanged. The name, when
-    // it holds as one, only ever here: encoded down to A-Z a-z 0-9 - . _ ~,
+    // one — ten letters and digits come out of both unchanged. The names, each
+    // when it holds as one, only ever here: encoded down to A-Z a-z 0-9 - . _ ~,
     // which leaves nothing for the HTML to read (security review, I63NAME C7).
     QString href = QStringLiteral("/manifest.webmanifest?go=") +
                    QString::fromLatin1(QUrl::toPercentEncoding(alias));
-    const QString shown = appIconName(name);
-    if (!shown.isEmpty())
-        href += QStringLiteral("&n=") + QString::fromLatin1(QUrl::toPercentEncoding(shown));
+    const QString name = appIconName(names.name);
+    const QString shortName = appIconName(names.shortName);
+    if (!name.isEmpty())
+        href += QStringLiteral("&n=") + QString::fromLatin1(QUrl::toPercentEncoding(name));
+    if (!shortName.isEmpty())
+        href += QStringLiteral("&s=") + QString::fromLatin1(QUrl::toPercentEncoding(shortName));
     replaceCaptured(page, manifestLink, htmlAttribute(href));
     return page.toUtf8();
 }

@@ -37,18 +37,29 @@ function machineName(host) {
 
 /**
  * The name of a link's home-screen icon: the machine, then the app, then
- * MoonlightWeb — "DualRTX · Virtual Display · MoonlightWeb". The phone shows
- * its first letters under the icon, so the machine comes first; an app named
- * after MoonlightWeb drops it there, since it ends the name anyway.
+ * MoonlightWeb — "DualRTX · Virtual Display · MoonlightWeb". The one under the
+ * icon is appIconShortName's; an app named after MoonlightWeb drops it here,
+ * since it ends the name anyway.
  *
  * @param {{ displayName?: string }} host
  * @param {{ displayName?: string }} app
  * @returns {string}
  */
 export function appIconName(host, app) {
+    return [machineName(host), appIconShortName(app), 'MoonlightWeb'].filter(Boolean).join(' · ');
+}
+
+/**
+ * The name under a link's home-screen icon: the app alone — "Virtual Display"
+ * (I63SHORT). A phone shows a short name there, and cut from the whole name it
+ * read "DualRTX · Vi".
+ *
+ * @param {{ displayName?: string }} app
+ * @returns {string}
+ */
+export function appIconShortName(app) {
     const full = String((app && app.displayName) || '').trim();
-    const shortApp = full.replace(/^MoonlightWeb\s+/i, '').trim() || full;
-    return [machineName(host), shortApp, 'MoonlightWeb'].filter(Boolean).join(' · ');
+    return full.replace(/^MoonlightWeb\s+/i, '').trim() || full;
 }
 
 /**

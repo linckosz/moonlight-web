@@ -70,12 +70,15 @@ QString shownMachineName(const QString& machineName, bool signedIn);
 /// an alias's shape, and nothing about what it points at is: not its app's
 /// name, not its icon — a manifest is fetched without the session. Such a
 /// manifest names nothing of its own, not even the machine or the edition: its
-/// only name is @p appName, the one the signed-in page that made the icon wrote
-/// into the request, given back when it holds as a name (appIconName) and left
-/// out otherwise. Nothing is looked up to write it.
+/// only names are @p names, the ones the signed-in page that made the icon wrote
+/// into the request (AppIconNames). Nothing is looked up to write them.
+struct AppIconNames;
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
                     const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
-                    const QString& appLink = QString(), const QString& appName = QString());
+                    const QString& appLink = QString());
+QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
+                    const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
+                    const QString& appLink, const AppIconNames& names);
 
 /// The shell with @p title as its apple-mobile-web-app-title and @p icon180
 /// inlined as its apple-touch-icon. Anything it does not find is left as it is.
@@ -85,11 +88,14 @@ QByteArray shell(const QByteArray& html, const QString& title, const QByteArray&
  * A link straight to one app made into a home-screen icon, off the tunnel
  * (issue #63). A phone makes the icon from the manifest of the page as it was
  * loaded, never from one the page points at later; so the page reloads on
- * "/?icon=<alias>&n=<name>", and the shell it gets names, from the start, the
- * manifest that opens the link: "/manifest.webmanifest?go=<alias>&n=<name>".
+ * "/?icon=<alias>&n=<name>&s=<short name>", and the shell it gets names, from
+ * the start, the manifest that opens the link:
+ * "/manifest.webmanifest?go=<alias>&n=<name>&s=<short name>".
  *
- * Both answers depend on the request alone: the alias's shape, and the name the
- * page wrote, given back as the icon's name. No store is asked, no session
+ * Both answers depend on the request alone: the alias's shape, and the names
+ * the page wrote — the host, the app and the edition as the icon's name, the
+ * app alone as its short name, the one under the icon — given back as they
+ * were. No store is asked, no session
  * read, no host named, so they tell nobody whether an alias exists, nor what it
  * opens; whoever learns the name wrote it. Through the tunnel neither applies —
  * there the page writes that manifest into the service worker's cache, and no
@@ -99,8 +105,10 @@ QByteArray shell(const QByteArray& html, const QString& title, const QByteArray&
 /// The longest name an icon is given, and its short name, in code points.
 inline constexpr qsizetype kAppIconNameMax = 64;
 inline constexpr qsizetype kAppIconShortNameMax = 12;
-/// Past this many bytes, percent-encoded, a name is not read at all.
+/// Past this many bytes, percent-encoded, a name is not read at all; and past
+/// this many for the two together, neither is.
 inline constexpr qsizetype kAppIconNameQueryMax = 512;
+inline constexpr qsizetype kAppIconNamesQueryMax = 768;
 
 /// @p name when it holds as the name of an icon: not blank, at most
 /// kAppIconNameMax code points, and without a control character, a character
@@ -118,6 +126,25 @@ QString appIconShortName(const QString& name);
 /// or empty, unread, past kAppIconNameQueryMax bytes once encoded. Still to be
 /// checked by appIconName.
 QString appIconNameAsked(const QString& queryValue);
+
+/// The two names of an icon, each one checked on its own (appIconName): empty
+/// when it does not hold. A short name refused counts as none at all.
+struct AppIconNames
+{
+    QString name;      ///< n: the icon's name, "host · app · edition"
+    QString shortName; ///< s: the one under the icon, the app alone
+
+    /// The manifest's short_name: the short name when there is one, else the
+    /// name cut to kAppIconShortNameMax. Never the other way round: a short
+    /// name never stands for the name.
+    QString shown() const;
+};
+
+/// The names a request asks for, from its `n` and `s` as HttpParser keeps them
+/// (appIconNameAsked for each). A key given more than once (@p nRepeated,
+/// @p sRepeated) counts as not given; past kAppIconNamesQueryMax bytes for the
+/// two together, encoded, neither is read.
+AppIconNames appIconNamesAsked(const QString& n, bool nRepeated, const QString& s, bool sRepeated);
 
 /// How a request reached this host, as far as an icon is concerned. Only the
 /// direct way in — one of this host's own listening sockets, where the origin
@@ -145,11 +172,11 @@ enum class AppIconPart
 AppIconPart appIconPart(const QString& path, const QString& icon, const QString& go,
                         IconReach reach);
 
-/// The shell whose manifest link opens the link to @p alias, and carries @p name
-/// when it holds as one (appIconName), percent-encoded: in that address and
-/// nowhere else in the page. Returned unchanged, byte for byte, when @p alias
-/// does not have an alias's shape.
+/// The shell whose manifest link opens the link to @p alias, and carries each of
+/// @p names that holds (appIconName) as `n` and `s`, percent-encoded: in that
+/// address and nowhere else in the page. Returned unchanged, byte for byte,
+/// when @p alias does not have an alias's shape.
 QByteArray appIconShell(const QByteArray& html, const QString& alias,
-                        const QString& name = QString());
+                        const AppIconNames& names = AppIconNames());
 
 } // namespace mw::homescreen

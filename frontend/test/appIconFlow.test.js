@@ -122,6 +122,16 @@ describe('making a link’s icon through the introduction server', () => {
         expect(mark()).toMatchObject({ alias: ALIAS, title: 'Display 1 · PC' });
     });
 
+    it('puts the app alone under the icon through the tunnel too (I63SHORT)', async () => {
+        const store = workerCache();
+        await MoonlightApp._makeAppIcon(ALIAS, 'PC · Display 1 · MoonlightWeb', 'Display 1');
+        expect(store.held()).toMatchObject({
+            name: 'PC · Display 1 · MoonlightWeb',
+            short_name: 'Display 1',
+        });
+        for (const [url] of fetch.mock.calls) expect(String(url)).not.toContain('Display');
+    });
+
     it('makes nothing on a page that lost its worker, and asks nothing with the alias', async () => {
         tb.worker = false;
         workerCache();
@@ -144,6 +154,17 @@ describe('making a link’s icon straight to the host', () => {
         expect(open).toHaveBeenCalledWith(`/?icon=${ALIAS}&n=Display%201%20%C2%B7%20PC`);
         expect(fetch).not.toHaveBeenCalled();
         expect(mark()).toMatchObject({ alias: ALIAS });
+    });
+
+    it('sends the app alone as the short name, when it holds (I63SHORT)', async () => {
+        vi.stubGlobal('fetch', vi.fn());
+        await MoonlightApp._makeAppIcon(ALIAS, 'PC · Display 1 · MoonlightWeb', 'Display 1');
+        expect(open).toHaveBeenCalledWith(
+            `/?icon=${ALIAS}&n=PC%20%C2%B7%20Display%201%20%C2%B7%20MoonlightWeb&s=Display%201`,
+        );
+        open.mockClear();
+        await MoonlightApp._makeAppIcon(ALIAS, 'PC · Display 1', 'Display‮1');
+        expect(open).toHaveBeenCalledWith(`/?icon=${ALIAS}&n=PC%20%C2%B7%20Display%201`);
     });
 
     it('sends no name that would not hold as one', async () => {

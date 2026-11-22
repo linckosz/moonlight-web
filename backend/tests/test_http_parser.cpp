@@ -35,6 +35,21 @@ void run_http_parser_tests()
         CHECK_EQ(r.path, QString("/api/x"));
         CHECK_EQ(r.queryParams.value("a"), QString("1"));
         CHECK_EQ(r.queryParams.value("b"), QString("two"));
+        CHECK(r.repeatedQueryKeys.isEmpty());
+    }
+
+    // A key given more than once is noted, decoded as queryParams's keys are:
+    // "n" and "%6E" are the same key, an empty value counts (I63SHORT). The
+    // last value is still the one queryParams keeps, for every other route.
+    {
+        HttpRequest r =
+            HttpParser::parse(raw("GET /?icon=x&n=a&%6E=b&s=c&s=&t=1 HTTP/1.1\r\n\r\n"));
+        CHECK(r.repeatedQueryKeys.contains("n"));
+        CHECK(r.repeatedQueryKeys.contains("s"));
+        CHECK(!r.repeatedQueryKeys.contains("icon"));
+        CHECK(!r.repeatedQueryKeys.contains("t"));
+        CHECK_EQ(r.queryParams.value("n"), QString("b"));
+        CHECK_EQ(r.queryParams.value("s"), QString());
     }
 
     // POST body after the blank line is preserved verbatim.

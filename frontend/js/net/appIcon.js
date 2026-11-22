@@ -82,11 +82,12 @@ function decide() {
                 current = mark;
             }
         }
-        if (asked !== null || url.searchParams.has('n')) {
+        if (asked !== null || url.searchParams.has('n') || url.searchParams.has('s')) {
             // First, before any request: the alias leaves the query, and the
-            // icon's name with it.
+            // icon's names with it — every one of them, given once or more.
             url.searchParams.delete('icon');
             url.searchParams.delete('n');
+            url.searchParams.delete('s');
             const hash = current ? `#go=${current.alias}` : ownLink ? linked.hash : url.hash;
             history.replaceState(history.state, '', url.pathname + url.search + hash);
         } else if (!current && ownLink) {
@@ -134,11 +135,13 @@ export function appIconAddress(alias) {
  * The machine's manifest made into the one that opens the link to @p alias,
  * here rather than asked of the host, so the alias is never in an address
  * that goes out: `go=` first in the fragment of where it opens, the application
- * named apart in its `id` (one icon per app), and no name but @p name, the
- * icon's, when it holds as one (appIconName). The same shape as the host's own
- * (server/HomeScreenShell.cpp manifest). Anything but an alias: unchanged.
+ * named apart in its `id` (one icon per app), and no names but @p name, the
+ * icon's, and @p shortName, the one under it (the app alone), each when it
+ * holds as one (appIconName); without a short name, the name cut short. The
+ * same shape and rules as the host's own (server/HomeScreenShell.cpp
+ * manifest). Anything but an alias: unchanged.
  */
-export function manifestWithAppLink(manifest, alias, name = '') {
+export function manifestWithAppLink(manifest, alias, name = '', shortName = '') {
     if (!isAppLinkAlias(alias) || !manifest || typeof manifest !== 'object') return manifest;
     const out = { ...manifest };
     const start = String(out.start_url || '/');
@@ -152,11 +155,10 @@ export function manifestWithAppLink(manifest, alias, name = '') {
     delete out.name;
     delete out.short_name;
     const shown = appIconName(name);
-    if (shown) {
-        out.name = shown;
-        const short = appIconShortName(shown);
-        if (short) out.short_name = short;
-    }
+    // A short name refused counts as none; it never stands for the name.
+    const under = appIconName(shortName) || appIconShortName(shown);
+    if (shown) out.name = shown;
+    if (under) out.short_name = under;
     return out;
 }
 

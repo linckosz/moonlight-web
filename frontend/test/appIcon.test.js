@@ -128,6 +128,18 @@ describe('straight to the host', () => {
         expect(window.location.search).toBe('');
     });
 
+    // I63SHORT: the short name goes too — every n and s, given once or more, and
+    // "%6E" read as "n": the same request the host's test parses
+    // (test_http_parser.cpp).
+    it('takes every name out of the query, repeated or encoded', async () => {
+        mark();
+        const mod = await loadAt(`/?icon=${ALIAS}&n=a&%6E=b&s=c&s=&t=1`);
+        expect(window.location.search).toBe('?t=1');
+        expect(mod.appIconMode().alias).toBe(ALIAS);
+        await loadAt('/?s=Steam&s=Other');
+        expect(window.location.search).toBe('');
+    });
+
     it('is nothing to a guest page', async () => {
         mark();
         const mod = await loadAt(`/p?icon=${ALIAS}`);
@@ -216,6 +228,33 @@ describe('the manifest the worker’s cache holds', () => {
             'a\uD800b',
         ])
             expect(manifestWithAppLink(machine, ALIAS, hostile)).toEqual(bare);
+    });
+
+    // I63SHORT, as the host does it (test_app_links.cpp, "the icon's short name").
+    it('puts the app alone under the icon, each name checked on its own', async () => {
+        const { manifestWithAppLink } = await loadAt('/');
+        const name = 'DualRTX · Display 1 · MoonlightWeb';
+        const both = manifestWithAppLink(machine, ALIAS, name, 'Display 1');
+        expect(both.name).toBe(name);
+        expect(both.short_name).toBe('Display 1');
+        expect(manifestWithAppLink(machine, ALIAS, name, 'abcdefghijklm').short_name).toBe(
+            'abcdefghijklm',
+        );
+        expect(manifestWithAppLink(machine, ALIAS, name, 'Pokémon').short_name).toBe('Pokémon');
+        expect(manifestWithAppLink(machine, ALIAS, name).short_name).toBe('DualRTX · Di');
+        for (const bad of ['a‮b', 'a​b', 'a\u0000b', 'a�b', 'a\uD800b', 'a'.repeat(65), '  ']) {
+            const badShort = manifestWithAppLink(machine, ALIAS, name, bad);
+            expect(badShort.name).toBe(name);
+            expect(badShort.short_name).toBe('DualRTX · Di');
+            const badName = manifestWithAppLink(machine, ALIAS, bad, 'Display 1');
+            expect(badName).not.toHaveProperty('name');
+            expect(badName.short_name).toBe('Display 1');
+            const bothBad = manifestWithAppLink(machine, ALIAS, bad, bad);
+            expect(bothBad).not.toHaveProperty('name');
+            expect(bothBad).not.toHaveProperty('short_name');
+        }
+        expect(both.start_url).toBe(manifestWithAppLink(machine, ALIAS).start_url);
+        expect(manifestWithAppLink(machine, 'x7Kq2#k=AA', name, 'Display 1')).toBe(machine);
     });
 
     it('checks a name as the host does: code points, and a letter kept with its marks', async () => {
