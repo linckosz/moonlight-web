@@ -291,7 +291,7 @@ describe("WebGpuRenderer — mwsr's zones from the native host", () => {
             expect(console.error).not.toHaveBeenCalled();
         });
 
-        it('draws a frame without zones by the law alone, whole', async () => {
+        it('draws a frame without zones by the kernel alone, whole', async () => {
             const gpu = fakeGpu();
             const r = await renderer(gpu, {
                 algo: 'mwsr',

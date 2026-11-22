@@ -9,11 +9,15 @@
 // (scripts/bench/scaler-lab/scaler-lab.js): the figures of the page are the
 // README's method, on the visitor's GPU.
 //
-// 'mwsr' is the kernel alone, at its law. 'mwsr-q' is MoonlightWeb's quality
-// mode as its WebGPU renderer draws it: that kernel into a texture of the
-// output's size, then the renderer's sharpening pass (MWSR_SHARPEN_WGSL) at the
-// gain mwsrSharpen gives for the case. Where that gain is 0 (a reduction, 1:1,
-// from x2 on, HDR) the client draws no pass, and neither does this row.
+// MWSR's two rows are its two modes, as MoonlightWeb's WebGPU renderer draws
+// them and mwsr/ hands them to other programs. 'mwsr-p', the performance
+// mode, the default: the kernel alone, at that mode's force (mwsrUniforms;
+// on HDR the force starts from 1). 'mwsr-q', the quality mode: the kernel at
+// the force 1 into a texture of the output's size, then the sharpening pass
+// (MwsrShader's MWSR_SHARPEN_WGSL) at the gain mwsrSharpen gives for the case.
+// Where that gain is 0 (a reduction, 1:1, from x2 on, HDR) no pass is drawn,
+// by the client or by this row. 'mwsr' below is the quality mode's kernel,
+// for 'mwsr-q' to draw; it has no row of its own.
 
 const VS = /* wgsl */ `
 struct VSOut {
@@ -95,7 +99,7 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 
 /** The upscalers, in the order of the page. `wrap`: runs inside the reversible tone map on HDR. */
 export const KERNELS = [
-  { id: 'mwsr', name: 'MWSR', half: true },
+  { id: 'mwsr-p', name: 'MWSR Performance', half: true },
   { id: 'mwsr-q', name: 'MWSR Quality', half: false },
   { id: 'fsr1', name: 'FSR1', half: true, wrap: true },
   { id: 'nis', name: 'NIS', half: false, wrap: true },
@@ -273,7 +277,10 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
             0,
           ]),
         ),
-        mwsr: ubo(mwsrUniforms(inW, inH, outW, outH, { hdr })),
+        // the quality mode's kernel, the force 1, which 'mwsr-q' draws before its pass
+        mwsr: ubo(mwsrUniforms(inW, inH, outW, outH, { hdr, mode: 'quality' })),
+        // the performance mode's force; on HDR it starts from 1 (mwsrLaw's hdr)
+        perf: ubo(mwsrUniforms(inW, inH, outW, outH, { hdr, mode: 'performance' })),
         sharpen: ubo(new Float32Array([1 / outW, 1 / outH, gain, 0])),
       },
     };
@@ -289,12 +296,14 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     }
   }
 
-  /** The passes of an upscaler reading `src`, the last one into `dst`. */
-  function passes(id, half, { c444 = false } = {}, src, dst) {
+  /** The passes of an upscaler reading `src`, the last one into `dst`; `uni`, MWSR's uniforms (the quality mode's kernel by default). */
+  function passes(id, half, { c444 = false } = {}, src, dst, uni = C.u.mwsr) {
     const f = C.format;
     const sv = src.createView();
     const dv = dst.createView();
     switch (id) {
+      case 'mwsr-p':
+        return passes('mwsr', half, { c444 }, src, dst, C.u.perf);
       case 'mwsr': {
         const r = C.reg;
         if (r.mode === 'down') {
@@ -312,7 +321,7 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
           return [
             {
               pipeline: pl,
-              group: bind(pl, [sampler, from, { buffer: C.u.mwsr }]),
+              group: bind(pl, [sampler, from, { buffer: uni }]),
               view: dst.createView({ format: fv }),
             },
           ];
@@ -326,12 +335,12 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
           ['vs', 'fs'],
           constants,
         );
-        return [{ pipeline: pl, group: bind(pl, [sampler, sv, { buffer: C.u.mwsr }]), view: dv }];
+        return [{ pipeline: pl, group: bind(pl, [sampler, sv, { buffer: uni }]), view: dv }];
       }
       case 'mwsr-q': {
         // the kernel in its 32-bit text, the one the client runs, then the pass over its picture
         if (!(C.gain > 0)) return passes('mwsr', false, { c444 }, src, dst);
-        const pl = pipeline('mwsrpass', K.MWSR_SHARPEN_WGSL, f, plPass);
+        const pl = pipeline('mwsrpass', mwsr.MWSR_SHARPEN_WGSL, f, plPass);
         return [
           ...passes('mwsr', false, { c444 }, src, C.interm),
           { pipeline: pl, group: bind(pl, [C.interm.createView(), sampler, { buffer: C.u.sharpen }]), view: dv },
@@ -573,12 +582,12 @@ export async function createEngine({ K, mwsr, nis, soft = false, onLost = () => 
     hasF16,
     /** Whether `id` has a 16-bit text for this case (MWSR's reduction has none). */
     halfOf: (id) =>
-      hasF16 && KERNELS.find((k) => k.id === id).half && !(id === 'mwsr' && C.reg.mode === 'down'),
+      hasF16 && KERNELS.find((k) => k.id === id).half && !(id === 'mwsr-p' && C.reg.mode === 'down'),
     /** MWSR's mode for this case: 'up' or 'down'. */
     mwsrMode: () => C && C.reg.mode,
     /** The text MWSR runs in this case: 'up', 'down1', 'down9lin'… */
     mwsrKey: () => C && mwsr.mwsrRegimeKey(C.reg),
-    /** The gain of the quality mode's pass in this case: 0, no pass, and 'mwsr-q' draws what 'mwsr' draws. */
+    /** The gain of the quality mode's pass in this case: 0, no pass, and 'mwsr-q' draws the kernel at its law. */
     sharpenGain: () => (C ? C.gain : 0),
     vendor: info.vendor,
     architecture: info.architecture,

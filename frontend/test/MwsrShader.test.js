@@ -739,7 +739,8 @@ describe('the mwsr shader text', () => {
     });
 
     it('gives the kernel its values by the scale, the force of the eye over the fit', () => {
-        const at = (s) => mwsrLaw(1000, 1000, 1000 * s, 1000 * s);
+        // the quality mode's kernel: the force from 1, the law as Bruno's eye set it
+        const at = (s) => mwsrLaw(1000, 1000, 1000 * s, 1000 * s, { mode: 'quality' });
         const { curves, force, ft, kwc } = MWSR_LAW;
         const fit = (c, s) => {
             const x = Math.log(s);
@@ -767,9 +768,9 @@ describe('the mwsr shader text', () => {
         expect(at(1.02)).toEqual(at(MWSR_LAW.scale[0]));
         expect(at(9)).toEqual(at(MWSR_LAW.scale[1]));
         // a reduction is held at the lowest scale: it does not read these values
-        expect(mwsrLaw(2560, 1440, 1280, 720)).toEqual(at(MWSR_LAW.scale[0]));
+        expect(mwsrLaw(2560, 1440, 1280, 720, { mode: 'quality' })).toEqual(at(MWSR_LAW.scale[0]));
         // the smaller axis decides; the surface's size does not enter
-        expect(mwsrLaw(1280, 720, 2560, 1000)).toEqual(at(1000 / 720));
+        expect(mwsrLaw(1280, 720, 2560, 1000, { mode: 'quality' })).toEqual(at(1000 / 720));
         expect(mwsrLaw(1920, 1080, 3840, 2160)).toEqual(mwsrLaw(1280, 720, 2560, 1440));
         // sane over the whole measured range
         for (const s of [1.07, 1.15, 1.25, 4 / 3, 1.5, 1.75, 2, 2.5, 3, 4]) {
@@ -790,39 +791,48 @@ describe('the mwsr shader text', () => {
         expect(MWSR_CONSTANTS.S_FULL).toBeLessThanOrEqual(MWSR_LAW.scale[0]);
     });
 
-    it('has two modes for the setting: the kernel pushed alone, or the law and a pass after it', () => {
-        const at = (s, mode) => mwsrLaw(1000, 1000, 1000 * s, 1000 * s, { mode });
+    it('has two modes for the setting: the kernel pushed alone, the default, or the kernel and a pass after it', () => {
+        const at = (s, mode, hdr = false) => mwsrLaw(1000, 1000, 1000 * s, 1000 * s, { mode, hdr });
         const { force } = MWSR_LAW;
         const perf = MWSR_MODES.performance.force;
         expect(perf).toBe(1.15);
-        // without a mode, and in quality, the law as it was
+        expect(MWSR_MODES.quality.force).toBe(1);
+        // the default is performance: without a mode, or with one it does not know
         for (const s of [1.07, 1.2, 4 / 3, 1.5, 2, 3]) {
-            expect(at(s, 'quality')).toEqual(at(s));
-            expect(at(s, null)).toEqual(at(s));
-            expect(at(s, 'nonsense')).toEqual(at(s));
+            expect(at(s, null)).toEqual(at(s, 'performance'));
+            expect(at(s, undefined)).toEqual(at(s, 'performance'));
+            expect(at(s, 'nonsense')).toEqual(at(s, 'performance'));
+            expect(at(s, 'toString')).toEqual(at(s, 'performance'));
+            // an HDR feed: the force from 1 in either mode, the quality mode's kernel
+            expect(at(s, 'performance', true)).toEqual(at(s, 'quality'));
+            expect(at(s, null, true)).toEqual(at(s, 'quality'));
+            expect(at(s, 'quality', true)).toEqual(at(s, 'quality'));
         }
         // performance: the force from 1.15, on kg and kl only, up to ×4/3
         for (const s of [1.07, 1.2, 4 / 3]) {
-            expect(at(s, 'performance').kg).toBeCloseTo(at(s).kg * perf, 12);
-            expect(at(s, 'performance').kl).toBeCloseTo(at(s).kl * perf, 12);
-            expect(at(s, 'performance').kc).toBe(at(s).kc);
-            expect(at(s, 'performance').kr).toBe(at(s).kr);
-            expect(at(s, 'performance').ft).toBe(at(s).ft);
-            expect(at(s, 'performance').kwc).toBe(at(s).kwc);
+            expect(at(s, 'performance').kg).toBeCloseTo(at(s, 'quality').kg * perf, 12);
+            expect(at(s, 'performance').kl).toBeCloseTo(at(s, 'quality').kl * perf, 12);
+            expect(at(s, 'performance').kc).toBe(at(s, 'quality').kc);
+            expect(at(s, 'performance').kr).toBe(at(s, 'quality').kr);
+            expect(at(s, 'performance').ft).toBe(at(s, 'quality').ft);
+            expect(at(s, 'performance').kwc).toBe(at(s, 'quality').kwc);
         }
-        // then a straight line in ln(s) to the law's own force at ×2, and the same picture from there
+        // then a straight line in ln(s) to the force 1.35 at ×2, and the same picture from there
         const mid = Math.sqrt(force.from * force.to);
-        const lawMid = 1 + (force.top - 1) / 2;
-        expect(at(mid, 'performance').kg / at(mid).kg).toBeCloseTo(
-            (perf + (force.top - perf) / 2) / lawMid,
+        const qMid = 1 + (force.top - 1) / 2;
+        expect(at(mid, 'performance').kg / at(mid, 'quality').kg).toBeCloseTo(
+            (perf + (force.top - perf) / 2) / qMid,
             10,
         );
-        for (const s of [2, 2.5, 4]) expect(at(s, 'performance')).toEqual(at(s));
-        // the uniform block takes the mode: kg at its place (10), kl at its place (20)
-        const block = (mode) => mwsrUniforms(1920, 1080, 2560, 1440, { mode });
-        expect(block('performance')[10]).toBeCloseTo(block()[10] * perf, 6);
-        expect(block('performance')[20]).toBeCloseTo(block()[20] * perf, 6);
-        expect(Array.from(block('quality'))).toEqual(Array.from(block()));
+        for (const s of [2, 2.5, 4]) expect(at(s, 'performance')).toEqual(at(s, 'quality'));
+        // the uniform block takes the mode, performance by default: kg at its place (10), kl at its place (20)
+        const block = (mode, hdr) => mwsrUniforms(1920, 1080, 2560, 1440, { mode, hdr });
+        expect(Array.from(block())).toEqual(Array.from(block('performance')));
+        expect(block()[10]).toBeCloseTo(block('quality')[10] * perf, 6);
+        expect(block()[20]).toBeCloseTo(block('quality')[20] * perf, 6);
+        // on HDR the block is the quality mode's kernel, without its margin
+        expect(Array.from(block(null, true))).toEqual(Array.from(block('quality', true)));
+        expect(block(null, true)[10]).toBeCloseTo(block('quality')[10], 6);
 
         // the pass after the kernel: quality only, by the scale
         const sh = (s, opts) => mwsrSharpen(1000, 1000, 1000 * s, 1000 * s, opts);

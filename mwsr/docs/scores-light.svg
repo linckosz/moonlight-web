@@ -8,8 +8,8 @@
 <text x="0" y="96" font-size="13" font-weight="600" fill="#0b0b0b">Game (0 A.D.), 1080p → 1440p</text>
 <line x1="78.0" y1="122" x2="392.0" y2="122" stroke="#e4e3df" stroke-width="1"/>
 <text x="0" y="122" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
-<circle cx="291.5" cy="122" r="6" fill="#2a78d6"/>
-<text x="302.5" y="122" font-size="12" fill="#52514e" dominant-baseline="middle">0.1624</text>
+<circle cx="305.1" cy="122" r="6" fill="#2a78d6"/>
+<text x="316.1" y="122" font-size="12" fill="#52514e" dominant-baseline="middle">0.1551</text>
 <line x1="78.0" y1="151" x2="392.0" y2="151" stroke="#e4e3df" stroke-width="1"/>
 <text x="0" y="151" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
 <circle cx="333.1" cy="151" r="6" fill="#9b9a95"/>
@@ -33,19 +33,19 @@
 <line x1="506.0" y1="122" x2="820.0" y2="122" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="122" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
 <circle cx="761.1" cy="122" r="6" fill="#2a78d6"/>
-<text x="772.1" y="122" font-size="12" fill="#52514e" dominant-baseline="middle">0.0385</text>
+<text x="772.1" y="122" font-size="12" fill="#52514e" dominant-baseline="middle">0.0377</text>
 <line x1="506.0" y1="151" x2="820.0" y2="151" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="151" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
-<circle cx="679.6" cy="151" r="6" fill="#9b9a95"/>
-<text x="690.6" y="151" font-size="12" fill="#52514e" dominant-baseline="middle">0.0493</text>
+<circle cx="675.5" cy="151" r="6" fill="#9b9a95"/>
+<text x="686.5" y="151" font-size="12" fill="#52514e" dominant-baseline="middle">0.0493</text>
 <line x1="506.0" y1="180" x2="820.0" y2="180" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="180" font-size="13" fill="#52514e" dominant-baseline="middle">NIS</text>
-<circle cx="739.2" cy="180" r="6" fill="#9b9a95"/>
-<text x="750.2" y="180" font-size="12" fill="#52514e" dominant-baseline="middle">0.0414</text>
+<circle cx="733.5" cy="180" r="6" fill="#9b9a95"/>
+<text x="744.5" y="180" font-size="12" fill="#52514e" dominant-baseline="middle">0.0414</text>
 <line x1="506.0" y1="209" x2="820.0" y2="209" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="209" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
-<circle cx="748.7" cy="209" r="6" fill="#9b9a95"/>
-<text x="759.7" y="209" font-size="12" fill="#52514e" dominant-baseline="middle">0.0402</text>
+<circle cx="742.7" cy="209" r="6" fill="#9b9a95"/>
+<text x="753.7" y="209" font-size="12" fill="#52514e" dominant-baseline="middle">0.0402</text>
 <line x1="506.0" y1="238" x2="820.0" y2="238" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="238" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
 <circle cx="524.9" cy="238" r="6" fill="#c9c8c3"/>
@@ -106,23 +106,23 @@
 <line x1="78.0" y1="652" x2="392.0" y2="652" stroke="#e4e3df" stroke-width="1"/>
 <text x="0" y="652" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
 <circle cx="333.1" cy="652" r="6" fill="#2a78d6"/>
-<text x="344.1" y="652" font-size="12" fill="#52514e" dominant-baseline="middle">85.9</text>
+<text x="344.1" y="652" font-size="12" fill="#52514e" dominant-baseline="middle">85.6</text>
 <line x1="78.0" y1="681" x2="392.0" y2="681" stroke="#e4e3df" stroke-width="1"/>
 <text x="0" y="681" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
-<circle cx="316.9" cy="681" r="6" fill="#9b9a95"/>
-<text x="327.9" y="681" font-size="12" fill="#52514e" dominant-baseline="middle">84.8</text>
+<circle cx="320.9" cy="681" r="6" fill="#9b9a95"/>
+<text x="331.9" y="681" font-size="12" fill="#52514e" dominant-baseline="middle">84.8</text>
 <line x1="78.0" y1="710" x2="392.0" y2="710" stroke="#e4e3df" stroke-width="1"/>
 <text x="0" y="710" font-size="13" fill="#52514e" dominant-baseline="middle">NIS</text>
 <circle cx="96.9" cy="710" r="6" fill="#9b9a95"/>
 <text x="107.9" y="710" font-size="12" fill="#52514e" dominant-baseline="middle">70.5</text>
 <line x1="78.0" y1="739" x2="392.0" y2="739" stroke="#e4e3df" stroke-width="1"/>
 <text x="0" y="739" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
-<circle cx="291.2" cy="739" r="6" fill="#9b9a95"/>
-<text x="302.2" y="739" font-size="12" fill="#52514e" dominant-baseline="middle">83.1</text>
+<circle cx="294.7" cy="739" r="6" fill="#9b9a95"/>
+<text x="305.7" y="739" font-size="12" fill="#52514e" dominant-baseline="middle">83.1</text>
 <line x1="78.0" y1="768" x2="392.0" y2="768" stroke="#e4e3df" stroke-width="1"/>
 <text x="0" y="768" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
-<circle cx="193.5" cy="768" r="6" fill="#c9c8c3"/>
-<text x="204.5" y="768" font-size="12" fill="#52514e" dominant-baseline="middle">76.8</text>
+<circle cx="195.2" cy="768" r="6" fill="#c9c8c3"/>
+<text x="206.2" y="768" font-size="12" fill="#52514e" dominant-baseline="middle">76.8</text>
 <line x1="78.0" y1="793" x2="390.0" y2="793" stroke="#8a8984" stroke-width="1.5" marker-end="url(#arrow)"/>
 <text x="78.0" y="809" font-size="11" fill="#8a8984">further</text>
 <text x="392.0" y="809" font-size="11" fill="#8a8984" text-anchor="end">closer to the native frame</text>
@@ -130,19 +130,19 @@
 <line x1="506.0" y1="652" x2="820.0" y2="652" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="652" font-size="13" fill="#0b0b0b" dominant-baseline="middle" font-weight="600">MWSR</text>
 <circle cx="761.1" cy="652" r="6" fill="#2a78d6"/>
-<text x="772.1" y="652" font-size="12" fill="#52514e" dominant-baseline="middle">66.4</text>
+<text x="772.1" y="652" font-size="12" fill="#52514e" dominant-baseline="middle">67.1</text>
 <line x1="506.0" y1="681" x2="820.0" y2="681" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="681" font-size="13" fill="#52514e" dominant-baseline="middle">FSR1</text>
-<circle cx="630.4" cy="681" r="6" fill="#9b9a95"/>
-<text x="641.4" y="681" font-size="12" fill="#52514e" dominant-baseline="middle">57.3</text>
+<circle cx="626.3" cy="681" r="6" fill="#9b9a95"/>
+<text x="637.3" y="681" font-size="12" fill="#52514e" dominant-baseline="middle">57.3</text>
 <line x1="506.0" y1="710" x2="820.0" y2="710" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="710" font-size="13" fill="#52514e" dominant-baseline="middle">NIS</text>
-<circle cx="699.8" cy="710" r="6" fill="#9b9a95"/>
-<text x="710.8" y="710" font-size="12" fill="#52514e" dominant-baseline="middle">62.2</text>
+<circle cx="693.0" cy="710" r="6" fill="#9b9a95"/>
+<text x="704.0" y="710" font-size="12" fill="#52514e" dominant-baseline="middle">62.2</text>
 <line x1="506.0" y1="739" x2="820.0" y2="739" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="739" font-size="13" fill="#52514e" dominant-baseline="middle">SGSR1</text>
-<circle cx="667.3" cy="739" r="6" fill="#9b9a95"/>
-<text x="678.3" y="739" font-size="12" fill="#52514e" dominant-baseline="middle">59.9</text>
+<circle cx="661.8" cy="739" r="6" fill="#9b9a95"/>
+<text x="672.8" y="739" font-size="12" fill="#52514e" dominant-baseline="middle">59.9</text>
 <line x1="506.0" y1="768" x2="820.0" y2="768" stroke="#e4e3df" stroke-width="1"/>
 <text x="428" y="768" font-size="13" fill="#52514e" dominant-baseline="middle">Bilinear</text>
 <circle cx="524.9" cy="768" r="6" fill="#c9c8c3"/>

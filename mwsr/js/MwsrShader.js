@@ -35,7 +35,9 @@
  * from the same tables of constants so that the two texts cannot drift
  * apart, which the laboratory's conformity flow holds to 2/255 (C11). An
  * HLSL twin (mwsrHlsl) serves the native renderers of other programs,
- * Direct3D 11 and 12, from the same tables (the mwsr/ folder).
+ * Direct3D 11 and 12, from the same tables (the mwsr/ folder). The quality
+ * mode's sharpening pass, drawn after the kernel, is here too, in WGSL and
+ * GLSL (MWSR_SHARPEN_WGSL, MWSR_SHARPEN_GLSL), as the renderers draw it.
  *
  * Two modes (plan §4.3), chosen per frame by mwsrRegime():
  *
@@ -171,7 +173,9 @@ const MWSR_ZONE_REF = [-0.2384, 10.3176, -26.8143, 28.681, -10.6546];
  * above that: the force, 1 up to ×1.33, 1.35 from ×2 (two comparisons of six
  * pictures each), a straight line in ln(s) between them, which his eye took at
  * ×1.5 on six pictures of six. Beyond ×2 it stays there: nothing higher was seen.
- * Outside the measured range, s is held at its ends.
+ * Outside the measured range, s is held at its ends. Where the force starts
+ * from is the mode's (MWSR_MODES): the performance mode, the default, starts
+ * higher; the quality mode's kernel keeps that 1.
  */
 export const MWSR_LAW = Object.freeze({
     /** The scales measured: the law holds its ends beyond. */
@@ -189,18 +193,20 @@ export const MWSR_LAW = Object.freeze({
  * nine pictures at four scales against the native picture, LPIPS first, then
  * PSNR and VMAF NEG.
  *
- * `performance`: the kernel alone, the least work. Its force is 1.15 where the
- * law's is 1, up to ×4/3, and joins the law's 1.35 at ×2 by the same straight
- * line in ln(s); between those two scales that line was not measured.
+ * `performance`, the default (Bruno, 22/11/2026: what other programs take is
+ * this mode, the quality pass theirs to turn on): the kernel alone, the least
+ * work. Its force is 1.15 up to ×4/3, and joins 1.35 at ×2 by a straight line
+ * in ln(s); between those two scales that line was not measured. On an HDR
+ * feed its force is 1, as the quality mode's kernel: neither mode was
+ * measured on one.
  *
- * `quality`: the law as it is, then a sharpening pass of the renderer over the
- * scaled picture, which moves each pixel away from the mean of its four
- * neighbours by a gain (mwsrSharpen gives it): 0.3 up to ×4/3, 0.15 at ×1.5,
- * none from ×2, straight lines in ln(s) between them. That pass is the
- * renderer's, not this file's.
+ * `quality`: the kernel at the force 1, then a sharpening pass over the
+ * scaled picture (MWSR_SHARPEN_WGSL, MWSR_SHARPEN_GLSL), which moves each
+ * pixel away from the mean of its four neighbours by a gain (mwsrSharpen
+ * gives it): 0.3 up to ×4/3, 0.15 at ×1.5, none from ×2, straight lines in
+ * ln(s) between them; on an HDR feed, no pass.
  *
- * From ×2 on, both draw the same picture. Without a mode the law is the
- * kernel's alone, as the laboratory, the comparison page and mwsr/ read it.
+ * From ×2 on, both draw the same picture.
  */
 export const MWSR_MODES = Object.freeze({
     performance: Object.freeze({ force: 1.15, sharpen: null }),
@@ -221,17 +227,21 @@ export const MWSR_MODES = Object.freeze({
  * @param {number} inH
  * @param {number} outW
  * @param {number} outH
- * @param {{mode?: 'performance'|'quality'|null}} [opts] the setting's mode
- *   (MWSR_MODES): where the force starts from; none, the law's own 1
+ * @param {{mode?: 'performance'|'quality'|null, hdr?: boolean}} [opts] the
+ *   setting's mode (MWSR_MODES), where the force starts from: none, the
+ *   default, performance; `hdr`: the feed holds values past 1.0, the force
+ *   starts from 1 in either mode
  * @returns {{kc: number, ft: number, kg: number, kr: number, kwc: number, kl: number}}
  */
-export function mwsrLaw(inW, inH, outW, outH, { mode = null } = {}) {
+export function mwsrLaw(inW, inH, outW, outH, { mode = null, hdr = false } = {}) {
     const [lo, hi] = MWSR_LAW.scale;
     const s = Math.min(Math.max(Math.min(outW / inW, outH / inH), lo), hi);
     const x = Math.log(s);
     const value = ([c0, c1, c2]) => c0 + x * (c1 + x * c2);
     const { from, to, top } = MWSR_LAW.force;
-    const base = (mode && MWSR_MODES[mode]?.force) || 1;
+    const base = hdr
+        ? 1
+        : (Object.hasOwn(MWSR_MODES, mode) ? MWSR_MODES[mode] : MWSR_MODES.performance).force;
     const force =
         base + (top - base) * Math.min(Math.max(Math.log(s / from) / Math.log(to / from), 0), 1);
     const { kc, kg, kr, kl } = MWSR_LAW.curves;
@@ -259,7 +269,7 @@ export function mwsrLaw(inW, inH, outW, outH, { mode = null } = {}) {
  * @returns {number} 0 to 0.3
  */
 export function mwsrSharpen(inW, inH, outW, outH, { mode = null, hdr = false } = {}) {
-    const points = (mode && MWSR_MODES[mode]?.sharpen) || null;
+    const points = (Object.hasOwn(MWSR_MODES, mode) && MWSR_MODES[mode].sharpen) || null;
     const s = Math.min(outW / inW, outH / inH);
     if (!points || hdr || !(s > 1)) return 0;
     const strength = Math.min(Math.max((s - 1) / (MWSR_CONSTANTS.S_FULL - 1), 0), 1);
@@ -276,6 +286,93 @@ export function mwsrSharpen(inW, inH, outW, outH, { mode = null, hdr = false } =
     }
     return v * strength;
 }
+
+// The `quality` mode's pass after the kernel, a formula of our own: the one of
+// the reduction (MWSR_DOWN_LAW) with one gain and no margin, brought to the
+// scaled picture. Each pixel moves away from the mean of its cross, the four
+// neighbours that touch it:
+//     R = c + gain (c - the cross's mean)
+// and is held, channel by channel, within the range of itself and that cross.
+// A flat neighbourhood moves nothing, and no value leaves what the
+// neighbourhood already shows: the pass draws no overshoot of its own.
+// The gain is a uniform (mwsrSharpen: it changes with the scale), and the five
+// texels are loaded, not sampled: the kernel's picture and the pass's target
+// are the same size.
+// Measured on nine pictures at ×4/3 against the native picture (21/11/2026):
+// at the gain 0.3, LPIPS 0.0320, PSNR 34.42 dB and VMAF NEG 85.95, where the
+// kernel alone at the force 1 gives 0.0346, 35.18 and 86.45. A gain that
+// changes with the edge's strength, a bound widened to the 3×3 and a gain that
+// falls on a lone texel were measured too and left out: none did better.
+
+/**
+ * The pass in WGSL, its own vertex stage (`vs`, a full-screen triangle) and
+ * fragment stage (`fs`): the kernel's picture at binding 0, a sampler at 1
+ * that it does not read, and at 2 the uniform (1/outW, 1/outH, gain, _), of
+ * which the texel size is not read either.
+ */
+export const MWSR_SHARPEN_WGSL = /* wgsl */ `
+struct Sharpen { texel : vec2f, gain : f32, pad : f32, }
+@group(0) @binding(0) var input : texture_2d<f32>;
+@group(0) @binding(1) var sam : sampler;
+@group(0) @binding(2) var<uniform> u : Sharpen;
+
+@vertex
+fn vs(@builtin(vertex_index) vid : u32) -> @builtin(position) vec4f {
+    let uv = vec2f(f32((vid << 1u) & 2u), f32(vid & 2u));
+    return vec4f(uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);
+}
+
+fn at(p : vec2i, last : vec2i) -> vec3f {
+    return textureLoad(input, clamp(p, vec2i(0), last), 0).rgb;
+}
+
+@fragment
+fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
+    let last = vec2i(textureDimensions(input)) - vec2i(1);
+    let p = vec2i(pos.xy);
+    let b = at(p + vec2i(0, -1), last);
+    let d = at(p + vec2i(-1, 0), last);
+    let c = at(p, last);
+    let f = at(p + vec2i(1, 0), last);
+    let h = at(p + vec2i(0, 1), last);
+
+    let mean = 0.25 * (b + d + f + h);
+    let lo = min(c, min(min(b, d), min(f, h)));
+    let hi = max(c, max(max(b, d), max(f, h)));
+    return vec4f(clamp(c + u.gain * (c - mean), lo, hi), 1.0);
+}
+`;
+
+/**
+ * The pass in GLSL ES 3.00, the fragment stage (the uniforms uTex, the
+ * kernel's picture, and uGain), for any vertex stage that covers the target.
+ * The five texels are fetched by the fragment's own coordinates: the kernel
+ * drew its texture pixel for pixel, so no flip is needed, and the cross is
+ * symmetric.
+ */
+export const MWSR_SHARPEN_GLSL = `#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform float uGain;
+out vec4 oColor;
+vec3 at(ivec2 p, ivec2 last) {
+    return texelFetch(uTex, clamp(p, ivec2(0), last), 0).rgb;
+}
+void main() {
+    ivec2 last = textureSize(uTex, 0) - 1;
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec3 b = at(p + ivec2(0, -1), last);
+    vec3 d = at(p + ivec2(-1, 0), last);
+    vec3 c = at(p, last);
+    vec3 f = at(p + ivec2(1, 0), last);
+    vec3 h = at(p + ivec2(0, 1), last);
+
+    vec3 mean = 0.25 * (b + d + f + h);
+    vec3 lo = min(c, min(min(b, d), min(f, h)));
+    vec3 hi = max(c, max(max(b, d), max(f, h)));
+    oColor = vec4(clamp(c + uGain * (c - mean), lo, hi), 1.0);
+}
+`;
 
 /**
  * The reduction's sharpening (Bruno, 03/11/2026): the setting his eye took on
@@ -494,7 +591,7 @@ function zoneRef(sx, sy) {
  * @returns {Float32Array}
  */
 export function mwsrUniforms(inW, inH, outW, outH, u = {}) {
-    const law = mwsrLaw(inW, inH, outW, outH, { mode: u.mode });
+    const law = mwsrLaw(inW, inH, outW, outH, { mode: u.mode, hdr: !!u.hdr });
     const gaze = Math.min(Math.max(u.gaze ?? 0, 0), 1);
     const z = { ...MWSR_ZONE, ...(u.zone || {}) };
     // a ring of no width would put the smoothstep's two edges together

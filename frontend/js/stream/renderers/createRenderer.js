@@ -137,7 +137,7 @@ export async function createVideoRenderer(canvas, opts) {
     // The product's sessions draw mwsr by its modes (MwsrShader's MWSR_MODES):
     // the pass 'mwsr' is `performance`, the kernel pushed, and 'mwsr-q' is
     // `quality`. The laboratory makes its renderers itself, without this
-    // option, and keeps the law alone under 'mwsr'.
+    // option, and 'mwsr' takes the module's default there, `performance` too.
     opts = { mwsrMode: 'performance', ...opts };
     // HDR: route decoded frames to a <video> element via the track generator.
     // The canvas paths (WebGPU/Canvas2D) tone-map HDR away (importExternalTexture /

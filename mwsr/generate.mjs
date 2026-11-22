@@ -9,7 +9,9 @@
 // OpenGL ES) with the product's defaults baked in, the HLSL twins (Direct3D
 // 11 and 12) with their constants as defines, the C++ header of the CPU side
 // (cpp/mwsr.h), the libplacebo / mpv user shader (Vulkan) with the law worked
-// out in it, the Metal text, and a copy of the module itself. cpp/example_d3d11.cpp is
+// out in it, the Metal text, and a copy of the module itself; and in each of
+// them the quality mode's sharpening pass, which a program turns on (the
+// performance mode, the kernel alone, is the default). cpp/example_d3d11.cpp is
 // written by hand. frontend/test/mwsrDist.test.js fails when a file here lags
 // behind.
 //
@@ -26,8 +28,11 @@ import {
     MWSR_DOWN_TAPS,
     MWSR_DOWN_TAPS_SRGB,
     MWSR_LAW,
+    MWSR_MODES,
     MWSR_OVERRIDES,
     MWSR_OVERRIDE_SPEC,
+    MWSR_SHARPEN_GLSL,
+    MWSR_SHARPEN_WGSL,
     MWSR_ZONE,
     mwsrGlsl,
     mwsrHlsl,
@@ -108,6 +113,7 @@ function cppHeader() {
     const { force } = MWSR_LAW;
     const dl = MWSR_DOWN_LAW;
     const pair = ([a, b]) => `{${cppNumber(a)}, ${cppNumber(b)}}`;
+    const sharpenPoints = MWSR_MODES.quality.sharpen.map(pair).join(', ');
     return `${header('the CPU side for a native renderer (C++17, header only)', 'generate.mjs or the tables of that module')}
 //
 // What it gives a Direct3D 11 or 12 renderer (or any other), with no
@@ -115,7 +121,9 @@ function cppHeader() {
 // shader file (regime, shaderFile), the kernel's values for those sizes (law),
 // the 96 bytes of the constant buffer at register b0 (constants), and the
 // defines to compile the shader with (defines), each the twin of the JavaScript
-// module's function of that name.
+// module's function of that name; and for the quality mode, off by default,
+// the gain of its sharpening pass, hlsl/mwsr-sharpen.hlsl (sharpenGain, the
+// twin of mwsrSharpen()), and that pass's 16 bytes (sharpenConstants).
 // example_d3d11.cpp shows them at work.
 
 #pragma once
@@ -174,14 +182,23 @@ struct Zone {
 
 // The law's coefficients (mwsrLaw()), value = c0 + c1 x + c2 x^2, x = ln(scale),
 // in the order of kc, kg, kr, kl; the scales it holds at their ends; the force
-// of the sharpness on kg and kl, 1 at kForceFrom, kForceTop from kForceTo, a
-// straight line in x between them.
+// of the sharpness on kg and kl, the mode's up to kForceFrom, kForceTop from
+// kForceTo, a straight line in x between them.
 constexpr double kLaw[4][3] = {
 ${lawTable(MWSR_LAW.curves)}
 };
 constexpr double kLawScaleMin = ${cppNumber(MWSR_LAW.scale[0])}, kLawScaleMax = ${cppNumber(MWSR_LAW.scale[1])};
 constexpr double kForceFrom = ${cppNumber(force.from)}, kForceTo = ${cppNumber(force.to)}, kForceTop = ${cppNumber(force.top)};
 constexpr double kLawFt = ${cppNumber(MWSR_LAW.ft)}, kLawKwc = ${cppNumber(MWSR_LAW.kwc)};
+
+// The modes (MWSR_MODES): where the force starts from in the performance mode,
+// the default, the kernel alone; and in the quality mode, whose kernel is
+// followed by the sharpening pass. On an HDR feed it starts from 1 in both.
+constexpr double kForcePerformance = ${cppNumber(MWSR_MODES.performance.force)}, kForceQuality = ${cppNumber(MWSR_MODES.quality.force)};
+
+// The quality mode's pass: its gain {scale, gain} at each point, held before
+// the first, a straight line in ln(scale) between two.
+constexpr double kSharpen[][2] = {${sharpenPoints}};
 
 // The scale from which the kernel's sharpening is whole.
 constexpr double kFullScale = ${cppNumber(MWSR_CONSTANTS.S_FULL)};
@@ -239,18 +256,21 @@ inline std::string shaderFile(const Regime& r, bool half = false)
 }
 
 // The kernel's values for an input of inW x inH drawn at outW x outH (mwsrLaw()):
-// each a curve over the scale, the smaller axis.
+// each a curve over the scale, the smaller axis. quality: the quality mode's
+// kernel, else the performance mode's, the default; hdr: the feed holds values
+// past 1.0, the force starts from 1 in either.
 struct Law {
     double kc, ft, kg, kr, kwc, kl;
 };
 
-inline Law law(int inW, int inH, int outW, int outH)
+inline Law law(int inW, int inH, int outW, int outH, bool quality = false, bool hdr = false)
 {
     auto hold = [](double v, double lo, double hi) { return std::min(std::max(v, lo), hi); };
     const double s = hold(std::min(double(outW) / inW, double(outH) / inH), kLawScaleMin, kLawScaleMax);
     const double x = std::log(s);
     auto value = [&](int i) { return kLaw[i][0] + x * (kLaw[i][1] + x * kLaw[i][2]); };
-    const double force = 1.0 + (kForceTop - 1.0) * hold(std::log(s / kForceFrom) / std::log(kForceTo / kForceFrom), 0.0, 1.0);
+    const double base = hdr ? 1.0 : quality ? kForceQuality : kForcePerformance;
+    const double force = base + (kForceTop - base) * hold(std::log(s / kForceFrom) / std::log(kForceTo / kForceFrom), 0.0, 1.0);
     return {value(0), kLawFt, value(1) * force, value(2), kLawKwc, value(3) * force};
 }
 
@@ -288,12 +308,13 @@ struct Options {
     double gaze = 0.0;  // 0 to 1, read only with MWSR_GAZE 1
     Zone zone;
     bool hdr = false;  // the feed holds values past 1.0: the bound takes no margin, a reduction does not sharpen
+    bool quality = false;  // the quality mode: this kernel, then hlsl/mwsr-sharpen.hlsl at sharpenGain()
 };
 
 // The constant buffer for an input of inW x inH drawn at outW x outH (mwsrUniforms()).
 inline Constants constants(int inW, int inH, int outW, int outH, const Options& o = {})
 {
-    const Law l = law(inW, inH, outW, outH);
+    const Law l = law(inW, inH, outW, outH, o.quality, o.hdr);
     // a ring of no width would put the smoothstep's two edges together
     const double ring = std::max(o.zone.ring, 1e-3);
     Constants c{};
@@ -329,6 +350,45 @@ inline Constants constants(int inW, int inH, int outW, int outH, const Options& 
     c.kl = float(o.kl.value_or(down ? d.kl : o.hdr ? 0.0 : l.kl));
     c.zoneRef = down ? float(d.zref) : 1.0f;
     return c;
+}
+
+// The gain of the quality mode's pass after the kernel, for an input of
+// inW x inH drawn at outW x outH (mwsrSharpen()): 0, no pass to draw, in the
+// performance mode, on a reduction, at 1:1, from x2 on and on an HDR feed.
+inline double sharpenGain(int inW, int inH, int outW, int outH, bool quality = true, bool hdr = false)
+{
+    const double s = std::min(double(outW) / inW, double(outH) / inH);
+    if (!quality || hdr || !(s > 1.0))
+        return 0.0;
+    const double strength = std::min(std::max((s - 1.0) / (kFullScale - 1.0), 0.0), 1.0);
+    const int n = int(sizeof kSharpen / sizeof kSharpen[0]);
+    double v = kSharpen[0][1];
+    for (int i = 1; i < n; ++i) {
+        const double s0 = kSharpen[i - 1][0], v0 = kSharpen[i - 1][1];
+        const double s1 = kSharpen[i][0], v1 = kSharpen[i][1];
+        if (s >= s1) {
+            v = v1;
+            continue;
+        }
+        if (s > s0)
+            v = v0 + ((v1 - v0) * std::log(s / s0)) / std::log(s1 / s0);
+        break;
+    }
+    return v * strength;
+}
+
+// The pass's constant buffer, register b0 of hlsl/mwsr-sharpen.hlsl: the
+// texel size of the output, which it does not read, and the gain.
+struct SharpenConstants {
+    float texel[2];  // 1 / outW, 1 / outH
+    float gain;      // sharpenGain()
+    float pad;
+};
+static_assert(sizeof(SharpenConstants) == 16, "the pass's constant buffer is 4 floats");
+
+inline SharpenConstants sharpenConstants(int inW, int inH, int outW, int outH, bool hdr = false)
+{
+    return {{float(1.0 / outW), float(1.0 / outH)}, float(sharpenGain(inW, inH, outW, outH, true, hdr)), 0.0f};
 }
 
 // A define to compile a shader with: MWSR_<name>=<value>.
@@ -378,18 +438,26 @@ function hookText() {
     const { curves, force, scale, ft, kwc } = MWSR_LAW;
     const curve = ([c0, c1, c2]) => `${glNumber(c0)} + x * (${glNumber(c1)} + x * ${glNumber(c2)})`;
     const luma = MWSR_CONSTANTS.LUMA.map(glNumber).join(', ');
+    const { performance, quality } = MWSR_MODES;
+    // mwsrSharpen()'s points {scale, gain}, for the pass's GLSL to walk
+    const pts = quality.sharpen;
+    const points = pts.map(([s, v]) => `vec2(${glNumber(s)}, ${glNumber(v)})`).join(', ');
     return `${header('the upscale, a libplacebo / mpv user shader', 'generate.mjs or the tables of that module')}
 //
 // The kernel of hlsl/mwsr-up.hlsl line for line, one pass on the RGB picture
 // (MAIN) when both axes grow, drawn at the output's size: libplacebo's own
 // scalers then have nothing left to do. Its per-draw values are worked out here
 // from the input's and the output's sizes, as cpp/mwsr.h's constants() does.
+// With MWSR_QUALITY 1, the quality mode: the kernel at its own force, then a
+// second pass, the sharpening of hlsl/mwsr-sharpen.hlsl at the gain
+// cpp/mwsr.h's sharpenGain() gives, which copies the picture as it is where
+// that gain is 0. MWSR_QUALITY 0, the default, is the performance mode.
 // In a libplacebo renderer: pl_mpv_user_shader_parse(), then the parameters
 // below. In mpv: --vo=gpu-next --glsl-shaders=mwsr-up.hook, with
-// --glsl-shader-opts=MWSR_HDR=1 on PQ content.
+// --glsl-shader-opts=MWSR_HDR=1 on PQ content, MWSR_QUALITY=1 for the quality mode.
 
 //!PARAM MWSR_HDR
-//!DESC 1 when the input holds PQ code values (HDR): the bound then takes no margin
+//!DESC 1 when the input holds PQ code values (HDR): the bound then takes no margin, the force starts from 1 and the quality mode draws no pass
 //!TYPE DEFINE
 //!MINIMUM 0
 //!MAXIMUM 1
@@ -397,6 +465,13 @@ function hookText() {
 
 //!PARAM MWSR_CHROMA444
 //!DESC 1 for a 4:4:4 stream: the borders between two colours of one luma are sharpened too
+//!TYPE DEFINE
+//!MINIMUM 0
+//!MAXIMUM 1
+0
+
+//!PARAM MWSR_QUALITY
+//!DESC 1: the quality mode, the kernel then a sharpening pass (a dedicated GPU); 0: the performance mode, the kernel alone (an integrated GPU, a phone, a tablet)
 //!TYPE DEFINE
 //!MINIMUM 0
 //!MAXIMUM 1
@@ -433,7 +508,15 @@ vec4 hook() {
     float smin = min(scale.x, scale.y);
     float sl = clamp(smin, ${glNumber(scale[0])}, ${glNumber(scale[1])});
     float x = log(sl);
-    float force = 1.0 + (${glNumber(force.top)} - 1.0) * clamp(log(sl / ${glNumber(force.from)}) / log(${glNumber(force.to)} / ${glNumber(force.from)}), 0.0, 1.0);
+    // where the force starts from: the quality mode's kernel, or the performance mode's, 1 on HDR
+#if MWSR_HDR
+    float base = 1.0;
+#elif MWSR_QUALITY
+    float base = ${glNumber(quality.force)};
+#else
+    float base = ${glNumber(performance.force)};
+#endif
+    float force = base + (${glNumber(force.top)} - base) * clamp(log(sl / ${glNumber(force.from)}) / log(${glNumber(force.to)} / ${glNumber(force.from)}), 0.0, 1.0);
     float strength = clamp((smin - 1.0) / (${glNumber(MWSR_CONSTANTS.S_FULL)} - 1.0), 0.0, 1.0);
     float kc = ${curve(curves.kc)};
     float kg = (${curve(curves.kg)}) * force * strength;
@@ -492,6 +575,67 @@ vec4 hook() {
     vec3 mx = max(rM, max(ra, rb));
     vec3 mg = (mx - mn) * kl;
     return vec4(clamp(R, max(mn - mg, vec3(0.0)), mx + mg), 1.0);
+}
+
+//!HOOK MAIN
+//!BIND HOOKED
+//!DESC MWSR quality pass
+//!WHEN MWSR_QUALITY
+
+// The gain at this scale (cpp/mwsr.h's sharpenGain()): 0 on a reduction, at
+// 1:1, from x${pts[pts.length - 1][0]} on and on HDR, where the pass copies the picture.
+float mwsrGain() {
+#if MWSR_HDR
+    return 0.0;
+#else
+    vec2 scale = target_size / input_size;
+    float smin = min(scale.x, scale.y);
+    if (!(smin > 1.0)) {
+        return 0.0;
+    }
+    float strength = clamp((smin - 1.0) / (${glNumber(MWSR_CONSTANTS.S_FULL)} - 1.0), 0.0, 1.0);
+    const vec2 P[${pts.length}] = vec2[${pts.length}](${points});
+    float v = P[0].y;
+    for (int i = 1; i < ${pts.length}; i++) {
+        if (smin >= P[i].x) {
+            v = P[i].y;
+            continue;
+        }
+        if (smin > P[i - 1].x) {
+            v = P[i - 1].y + (P[i].y - P[i - 1].y) * log(smin / P[i - 1].x) / log(P[i].x / P[i - 1].x);
+        }
+        break;
+    }
+    return v * strength;
+#endif
+}
+
+// The kernel's picture as the other ports' pass reads it, from a target of 8
+// bits that holds 0 to 1: libplacebo keeps it in floats, where the kernel's
+// margin may pass 1.
+vec3 mwsrAt(ivec2 p, ivec2 last) {
+    return clamp((HOOKED_mul * texelFetch(HOOKED_raw, clamp(p, ivec2(0), last), 0)).rgb, 0.0, 1.0);
+}
+
+// hlsl/mwsr-sharpen.hlsl line for line: each pixel away from the mean of its
+// cross by the gain, held within the range of itself and that cross. At the
+// gain 0 the pass copies the picture as it is.
+vec4 hook() {
+    ivec2 last = ivec2(HOOKED_size) - 1;
+    ivec2 p = ivec2(HOOKED_pos * HOOKED_size);
+    float gain = mwsrGain();
+    if (!(gain > 0.0)) {
+        return vec4((HOOKED_mul * texelFetch(HOOKED_raw, clamp(p, ivec2(0), last), 0)).rgb, 1.0);
+    }
+    vec3 b = mwsrAt(p + ivec2(0, -1), last);
+    vec3 d = mwsrAt(p + ivec2(-1, 0), last);
+    vec3 c = mwsrAt(p, last);
+    vec3 f = mwsrAt(p + ivec2(1, 0), last);
+    vec3 h = mwsrAt(p + ivec2(0, 1), last);
+    vec3 mean = 0.25 * (b + d + f + h);
+    vec3 lo = min(c, min(min(b, d), min(f, h)));
+    vec3 hi = max(c, max(max(b, d), max(f, h)));
+    return vec4(clamp(c + gain * (c - mean), lo, hi), 1.0);
 }
 `;
 }
@@ -609,6 +753,130 @@ fragment float4 mwsr_up(Vertex v [[ stage_in ]],
 `;
 }
 
+/**
+ * hlsl/mwsr-sharpen.hlsl: the quality mode's pass after the upscale, the twin
+ * of the module's MWSR_SHARPEN_WGSL, over cpp/mwsr.h's sharpenConstants().
+ * @returns {string}
+ */
+function sharpenHlsl() {
+    return `${header("the quality mode's pass after the upscale, HLSL (Direct3D 11 with FXC, 12 with DXC)", 'generate.mjs or the tables of that module')}
+//
+// Off by default: the performance mode, the default, is the upscale alone.
+// The quality mode draws the upscale at cpp/mwsr.h's constants() with
+// Options::quality, into a texture of the output's size, then this pass from
+// that texture to the target, where sharpenGain() is above 0 (above 1:1 and
+// below x2, on SDR). MwsrVS, the vertex stage, is the upscale's. Each pixel
+// moves away from the mean of its cross, the four neighbours that touch it, by
+// the gain, and is held within the range of itself and that cross: the pass
+// draws no overshoot of its own. The five texels are loaded, not sampled.
+#ifndef MWSR_CB_REGISTER
+#define MWSR_CB_REGISTER b0
+#endif
+#ifndef MWSR_TEX_REGISTER
+#define MWSR_TEX_REGISTER t0
+#endif
+
+struct VSOut {
+    float4 pos : SV_Position;
+    float2 uv : TEXCOORD0;
+};
+
+VSOut MwsrVS(uint vid : SV_VertexID) {
+    VSOut o;
+    float2 uv = float2(float((vid << 1) & 2u), float(vid & 2u));
+    o.uv = uv;
+    o.pos = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    return o;
+}
+
+// mwsr::SharpenConstants
+cbuffer MwsrSharpen : register(MWSR_CB_REGISTER) {
+    float2 texel;
+    float gain;
+    float pad;
+};
+
+Texture2D<float4> tex : register(MWSR_TEX_REGISTER);
+
+float3 at(int2 p, int2 last) {
+    return tex.Load(int3(clamp(p, int2(0, 0), last), 0)).rgb;
+}
+
+float4 MwsrSharpenPS(VSOut i) : SV_Target {
+    uint w, h;
+    tex.GetDimensions(w, h);
+    int2 last = int2(int(w), int(h)) - int2(1, 1);
+    int2 p = int2(i.pos.xy);
+    float3 b = at(p + int2(0, -1), last);
+    float3 d = at(p + int2(-1, 0), last);
+    float3 c = at(p, last);
+    float3 f = at(p + int2(1, 0), last);
+    float3 hh = at(p + int2(0, 1), last);
+
+    float3 mean = 0.25 * (b + d + f + hh);
+    float3 lo = min(c, min(min(b, d), min(f, hh)));
+    float3 hi = max(c, max(max(b, d), max(f, hh)));
+    return float4(clamp(c + gain * (c - mean), lo, hi), 1.0);
+}
+`;
+}
+
+/**
+ * metal/mwsr-sharpen.metal: the same pass in Metal Shading Language.
+ * @returns {string}
+ */
+function sharpenMsl() {
+    return `${header("the quality mode's pass after the upscale, Metal Shading Language", 'generate.mjs or the tables of that module')}
+//
+// Off by default: the performance mode, the default, is mwsr_up alone. The
+// quality mode draws mwsr_up at cpp/mwsr.h's constants() with Options::quality
+// into a texture of the output's size, then the fragment function
+// mwsr_sharpen from that texture (texture(0)) to the target, where
+// sharpenGain() is above 0, its constants, sharpenConstants(), at buffer(1).
+// The vertex stage is mwsr_up's. The twin of hlsl/mwsr-sharpen.hlsl.
+#include <metal_stdlib>
+using namespace metal;
+
+// What the vertex stage hands the fragment stage
+struct Vertex
+{
+    float4 position [[ position ]];
+    float2 texCoords;
+};
+
+// mwsr::SharpenConstants
+struct MwsrSharpenConstants
+{
+    float2 texel;
+    float gain;
+    float pad;
+};
+
+static float3 mwsrAt(texture2d<float> tex, int2 p, int2 last)
+{
+    return tex.read(uint2(clamp(p, int2(0), last))).rgb;
+}
+
+fragment float4 mwsr_sharpen(Vertex v [[ stage_in ]],
+                             constant MwsrSharpenConstants &c [[ buffer(1) ]],
+                             texture2d<float> tex [[ texture(0) ]])
+{
+    int2 last = int2(int(tex.get_width()), int(tex.get_height())) - 1;
+    int2 p = int2(v.position.xy);
+    float3 b = mwsrAt(tex, p + int2(0, -1), last);
+    float3 d = mwsrAt(tex, p + int2(-1, 0), last);
+    float3 m = mwsrAt(tex, p, last);
+    float3 f = mwsrAt(tex, p + int2(1, 0), last);
+    float3 h = mwsrAt(tex, p + int2(0, 1), last);
+
+    float3 mean = 0.25 * (b + d + f + h);
+    float3 lo = min(m, min(min(b, d), min(f, h)));
+    float3 hi = max(m, max(max(b, d), max(f, h)));
+    return float4(clamp(m + c.gain * (m - mean), lo, hi), 1.0);
+}
+`;
+}
+
 /** A GLSL text with the header after its `#version` line, which must come first. */
 function glsl(what, text) {
     const nl = text.indexOf('\n');
@@ -642,6 +910,17 @@ export function mwsrDist() {
         'cpp/mwsr.h': cppHeader(),
         'libplacebo/mwsr-up.hook': hookText(),
         'metal/mwsr-up.metal': mslText(),
+        // the quality mode's pass after the upscale, off by default
+        'wgsl/mwsr-sharpen.wgsl':
+            header("the quality mode's pass after the upscale (off by default), WGSL") +
+            '\n' +
+            MWSR_SHARPEN_WGSL,
+        'glsl/mwsr-sharpen.frag': glsl(
+            "the quality mode's pass after the upscale (off by default), GLSL ES 3.00",
+            MWSR_SHARPEN_GLSL,
+        ),
+        'hlsl/mwsr-sharpen.hlsl': sharpenHlsl(),
+        'metal/mwsr-sharpen.metal': sharpenMsl(),
     };
     for (const taps of [1, 4, 9, 16]) {
         const k = Math.sqrt(taps);

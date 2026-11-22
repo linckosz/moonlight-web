@@ -14,7 +14,9 @@ THEMES = {
     "light": dict(ink="#0b0b0b", soft="#52514e", mute="#8a8984", grid="#e4e3df", mwsr="#2a78d6", dot="#9b9a95", low="#c9c8c3"),
     "dark": dict(ink="#f0efec", soft="#c3c2b7", mute="#8f8e88", grid="#33322f", mwsr="#3987e5", dot="#8f8e88", low="#55544f"),
 }
-ROWS = [("MWSR", "mwsr"), ("FSR1", "fsr1"), ("NIS", "nis"), ("SGSR1", "sgsr1"), ("Bilinear", "bilinear")]
+# MWSR as mwsr/ ships it: the performance mode, its default
+MWSR = "mwsr-p"
+ROWS = [("MWSR", MWSR), ("FSR1", "fsr1"), ("NIS", "nis"), ("SGSR1", "sgsr1"), ("Bilinear", "bilinear")]
 SCALES = [("1.33", "1080p → 1440p"), ("2", "720p → 1440p")]
 PICS = [("0ad", "Game (0 A.D.)"), ("text", "Text chart")]
 METRICS = [(0, "LPIPS", "%.4f", True), (1, "VMAF NEG", "%.1f", False)]
@@ -38,9 +40,9 @@ def panel(out, t, x0, x1, x2, y, title, scores, index, fmt, lower_is_better):
     yy = y + 26
     for name, key in ROWS:
         v = scores[key][index]
-        bold = ' font-weight="600"' if key == "mwsr" else ""
-        ink = t["ink"] if key == "mwsr" else t["soft"]
-        fill = t["mwsr"] if key == "mwsr" else t["low"] if key == "bilinear" else t["dot"]
+        bold = ' font-weight="600"' if key == MWSR else ""
+        ink = t["ink"] if key == MWSR else t["soft"]
+        fill = t["mwsr"] if key == MWSR else t["low"] if key == "bilinear" else t["dot"]
         out.append('<line x1="%.1f" y1="%d" x2="%.1f" y2="%d" stroke="%s" stroke-width="1"/>' % (x1, yy, x2, yy, t["grid"]))
         out.append('<text x="%d" y="%d" font-size="13" fill="%s" dominant-baseline="middle"%s>%s</text>' % (x0, yy, ink, bold, name))
         out.append('<circle cx="%.1f" cy="%d" r="6" fill="%s"/>' % (px(v), yy, fill))

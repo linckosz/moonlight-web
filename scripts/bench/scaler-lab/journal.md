@@ -3385,4 +3385,33 @@ Trouvé en passant, dans le noyau HDR d'aujourd'hui et sans la passe : sur un te
 
 Essayée sur SwiftShader, par le crochet de labo de la page : à ×1,33, sur Junk Shop en 4:2:0 et sur le texte en 4:4:4 avec `CHROMA444`, la ligne est la formule de la passe sur l'image du noyau, à 1/255 au plus ; à ×2, à 1:1, à ×0,75 et sur le texte HDR, ses octets sont ceux de MWSR et la ligne dit « kernel alone ». Une mesure entière lui donne ses scores et son temps, et l'envoi la nomme `mwsr-q`. Sur les cinq images SDR de la page, à ×1,33 en 4:2:0, son LPIPS passe devant celui de MWSR sur trois (0 A.D. ,1561 contre ,1768 ; texte ,0428 contre ,0451 ; iso ,0379 contre ,0421) et derrière sur deux (Junk Shop ,0162 contre ,0153 ; Gears ,0271 contre ,0266) : ces images sont réduites, jamais encodées. Pas essayée sur une vraie carte.
 
+**22/11 : la ligne MWSR de la page devient « MWSR Performance »** (décision de Bruno). C'est le noyau à la force du mode (`mwsrUniforms` avec `mode: 'performance'`), et sa loi en HDR, comme le client. Son id devient `mwsr-p` ; un ancien lien `b=mwsr` l'ouvre. Le noyau seul à sa loi n'a plus de ligne en direct ; les tableaux fixes, ceux du README de `mwsr/`, passent à Performance avec `mwsr/` (J60).
+
+Essayée sur SwiftShader, contre une référence que seul le serveur du contrôle ajoutait à la page : le noyau avec kg et kl multipliés par la force, écrite d'après sa définition (1,15 jusqu'à ×4/3, puis la droite en ln(s) jusqu'au 1,35 de la loi à ×2), et non lue dans `MWSR_MODES`. La ligne Performance a les mêmes octets que cette référence dans les six cas :
+- à ×1,33, Junk Shop en 4:2:0 et le texte en 4:4:4 avec `CHROMA444` ;
+- à ×2, à 1:1 et à ×0,75 sur Junk Shop ;
+- sur le texte HDR.
+
+À ×1,33 en SDR, elle s'écarte de la loi : 785 385 octets sur Junk Shop (6/255 au plus), 1 601 115 sur le texte (8/255 au plus). Partout ailleurs, elle a ses octets, 1:1 compris. La ligne Quality garde les résultats de la veille.
+
+Une mesure entière sur Junk Shop à ×1,33 en 4:2:0, contre l'image native : LPIPS 0,0157 pour Performance, 0,0162 pour Quality, 0,0153 pour la loi seule (mesurée par la référence au premier passage), 0,0154 pour FSR1. Sur cette image, les deux modes sont un peu derrière la loi ; c'est l'inverse sur la moyenne des neuf images (§17). La mesure envoyée nomme `mwsr-p` et `mwsr-q` ; l'id `mwsr` n'y figure plus.
+
 **Pas fait.** L'essai des deux modes par Bruno sur un stream réel. Aucun œil n'a comparé les deux modes sur un téléphone ni sur un GPU intégré.
+
+## 2026-11-22 — J60, `mwsr/` livre les deux modes, Performance par défaut
+
+**La décision** (Bruno, 22/11, MWPPLAW) : « Il faut que le shader donné aux utilisateurs soit le même que le MWSR performance et quality (avec la fonction qualité désactivée par défaut […], mais la doc doit préciser comment l'activer et avec une recommandation pour quel type de GPU). Je ne propose plus l'ancienne version du shader. » Le même jour : tableaux fixes remesurés en Performance (MWPPSTAT B), zoom du README redessiné en Qualité sur la RTX (MWPPZOOM B), une Qualité dont la passe ne peut pas tourner en SDR retombe sur Performance (MWPPFALL A), Metal vérifié sur le M1 Pro de Léo (MWPPMETAL A).
+
+**Ce qui change dans `mwsr/`.** `generate.mjs` écrit les deux modes dans chaque portage, depuis `MWSR_MODES` du module :
+- la loi prend le mode : force de départ 1,15 en Performance, 1 en Qualité et sur un flux HDR (`mwsrLaw`, `law()` de `mwsr.h`, le hook libplacebo, le tampon de Metal) ; sans mode, Performance ;
+- la passe de Qualité en quatre langages (`mwsr-sharpen.wgsl`, `.frag`, `.hlsl`, `.metal`), son gain dans `mwsr.h` (`sharpenGain()`, `sharpenConstants()`, `Options::quality`), `--quality` dans l'exemple Direct3D 11, et une seconde passe du hook sous `//!WHEN MWSR_QUALITY` ;
+- la passe passe sous licence MIT avec le reste du dossier.
+
+**Vérifié** (22/11) :
+- **C++.** `mwsr.h` contre le module : 78 lignes sur 78 identiques au bit (13 tailles × défaut, Performance, Qualité × SDR, HDR ; le défaut est Performance). `cl /W4` propre ; 31 compilations HLSL avec FXC et DXC.
+- **WARP contre SwiftShader**, 11 cas (quatre images, 4:2:0 et 4:4:4). Agrandissements en Performance : 0,003 à 0,05 % des pixels au-delà de 1/255, PSNR 60 à 67,6 dB, comme le 03/11. Réductions : 0,002 à 0,012 %. Qualité à ×1,33 : 0,17 à 1 % au-delà de 1/255, PSNR 58,5 à 65,8 dB. C'est le bruit du noyau que la passe accentue : la passe HLSL seule, sur la même image, rend sa formule à 1/255 près.
+- **libplacebo**, sur lavapipe, ffmpeg 7.1.5 et LLVM 19.1.7. `//!WHEN` sur un paramètre DEFINE marche : à `MWSR_QUALITY` 0, le hook livré donne les octets du noyau seul. Premier essai : 3,8 % de pixels hors formule sur le texte, car libplacebo garde l'image du noyau en flottants, au-delà de 1. Corrigé dans `generate.mjs` : la passe tient ses lectures dans 0..1 et copie l'image telle quelle à gain 0. Ensuite, la passe rend sa formule à 1/255 près, ×2 copie à l'octet, et le noyau de Qualité est celui du hook du 06/11, octet pour octet. Écarts au score de WARP : −0,028 à +0,085 dB en Performance, −0,028 à +0,078 en Qualité. Le hook du 06/11, inchangé, donne +0,073 aujourd'hui (0,05 alors) : la plateforme a bougé, pas le shader.
+- **Scores** (`cmp_lab.py`, 75 cas, 12:41-13:04) : seul MWSR Performance à ×1,33 bouge (15 cas), tous les autres scores sont ceux du 04/11. 0 A.D. ×1,33 4:4:4 : l'ancienne loi 0,1624 / 85,88, Performance 0,1551 / 85,61, Qualité 0,1414 / 85,62 (LPIPS / VMAF NEG) ; texte : 0,0385 / 66,45, 0,0377 / 67,11, 0,0355 / 67,88. `mwsr_charts.py` lit `mwsr-p`.
+- **Zoom** (13:16, RTX). Les colonnes Native, FSR1, NIS et SGSR1 de la figure sont les dessins du jour, au pixel près : même entrée, même GPU. Seule la colonne MWSR change, en Qualité. La carte de partage `og.png` est redessinée aussi. Son outil du 04/11 n'a pas été gardé, et aucun filtre n'en redonne les cases : les dix cases sont refaites à partir des dessins du jour (mêmes recadrages, agrandissement bicubique), MWSR en Qualité.
+
+**Pas fait.** Metal sur le M1 Pro (MWPPMETAL), la passe comprise. libplacebo sur un vrai GPU.

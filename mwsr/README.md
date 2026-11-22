@@ -6,6 +6,10 @@ each decoded frame into the size of the screen in one fragment pass, from that f
 vectors, no neural network. That keeps it free of the latency a temporal method adds, and light on an iPhone 13 Pro,
 though not on an entry-level phone: the figures are under **Cost**.
 
+It has two modes. **Performance**, the default, is that one pass. **Quality** draws a light sharpening pass after it,
+and is off until you turn it on: take it on a dedicated graphics card, and keep Performance on an integrated GPU, a
+phone or a tablet. See [Two modes](#two-modes).
+
 By Bruno Martin, under the [MIT License](LICENSE): you may take it into any program, open or closed, as long as the
 copyright and licence notice stay with it. The rest of MoonlightWeb is under the GPL v3; this folder and
 `frontend/js/stream/renderers/MwsrShader.js` are not.
@@ -38,8 +42,9 @@ with the margin, 1000-nit text reached about 1400 nits.
 ×4 on LPIPS first, then VMAF NEG, on 15 pictures of games, text and interfaces, clean and through HEVC at a stream's bit
 rate, and measured back on 15 others. A person's eye then raised the sharpness above that fit: `kg` and `kl` times a
 force that goes from 1 at ×1.33 to 1.35 at ×2. Those two marks and ×1.5 were chosen by eye on six pictures each, the
-pictures seen one at a time and not blind, by one person. Between ×1.33 and ×2 the eye and PSNR, SSIM, MS-SSIM and VMAF
-NEG can disagree on games: see the tables below.
+pictures seen one at a time and not blind, by one person. The Performance mode starts that force at 1.15 instead of 1,
+chosen on nine pictures at four scales against the native picture, LPIPS first; HDR keeps 1. Between ×1.33 and ×2 the eye
+and PSNR, SSIM, MS-SSIM and VMAF NEG can disagree on games: see the tables below.
 
 **Cost** (GPU timestamps, from 720p and from 1080p to 1440p, a game picture and a text chart, 03/11/2026, the Radeon 780M on 04/11/2026): 0.08 to 0.09 ms per
 frame on an RTX 5060 Ti, 1.5 to 2.4 ms on the Ryzen 9 9900X's integrated Radeon and 0.41 to 0.61 ms on a Radeon 780M held at 938 MHz, in 32-bit, the text MoonlightWeb runs.
@@ -58,6 +63,41 @@ The design, the measurements against FSR1, SGSR1, NIS and the host's Lanczos, an
 are in the lab journal, [`scripts/bench/scaler-lab/journal.md`](../scripts/bench/scaler-lab/journal.md), and the
 design document, [`docs/design/upscaler-mwsr.md`](../docs/design/upscaler-mwsr.md) (both in French).
 
+## Two modes
+
+| | Performance, the default | Quality, off by default |
+|---|---|---|
+| Passes | the upscale | the upscale, then a sharpening pass over the scaled picture |
+| The upscale's force on `kg` and `kl` | 1.15 up to ×1.33, then a straight line in ln(s) to 1.35 at ×2 | 1 up to ×1.33, then the same way to 1.35 at ×2 |
+| The pass's gain | | 0.3 up to ×1.33, 0.15 at ×1.5, 0 from ×2, straight lines in ln(s) between them |
+| For | an integrated GPU, a phone, a tablet, and a GPU whose name says nothing | a dedicated graphics card: NVIDIA GTX and RTX, AMD Radeon RX, Intel Arc, Apple M Pro, Max and Ultra |
+
+The pass moves each pixel away from the mean of the four pixels that touch it, by the gain, and holds it, channel by
+channel, within the range of itself and those four: it adds no overshoot of its own. It loads five texels from a texture
+of the output's size, which the upscale draws into first. That is what MoonlightWeb draws in each mode, and which one it
+takes on which GPU.
+
+On nine pictures at ×1.33 against the native picture, Quality scores LPIPS 0.0320, PSNR 34.42 dB and VMAF NEG 85.95,
+Performance 0.0339, 34.87 dB and 86.10: Quality looks closer, and Performance is a little closer pixel for pixel. In the
+tables below, at ×1.33, Quality's LPIPS is 0.1414 on the game picture and 0.0355 on text. The pass costs 0.047 ms per 1440p
+frame on an RTX 5060 Ti, 0.160 ms on an Apple M1 Pro and 1.06 ms on the Ryzen 9 9900X's integrated Radeon: that last one
+is why it is off by default.
+
+Where the pass has no gain, the two modes draw the same picture: at 1:1, on a reduction, from ×2 on, and on HDR, where the
+upscale keeps the force 1 and draws no pass (the pass was measured on SDR pictures only). A renderer that cannot draw the
+pass draws Performance: Quality's upscale without its pass is softer than both.
+
+**To turn Quality on:**
+
+| Version | How |
+|---|---|
+| JavaScript module | `mwsrUniforms(inW, inH, outW, outH, { mode: 'quality' })` for the upscale, then `MWSR_SHARPEN_WGSL` or `MWSR_SHARPEN_GLSL` with the gain `mwsrSharpen(inW, inH, outW, outH, { mode: 'quality' })`, where it is above 0 |
+| WGSL | `wgsl/mwsr-sharpen.wgsl`: entry points `vs` and `fs`; group 0, binding `0` the upscale's picture, `1` a sampler it does not read, `2` the uniform `(1 / outW, 1 / outH, gain, 0)` |
+| GLSL | `glsl/mwsr-sharpen.frag`, linked with `glsl/mwsr.vert`: `uTex` the upscale's picture, `uGain` the gain |
+| HLSL, C++ | `mwsr::constants()` with `Options::quality`, then `hlsl/mwsr-sharpen.hlsl` (`MwsrVS`, `MwsrSharpenPS`) with `mwsr::sharpenConstants()` at `b0` and the upscale's picture at `t0`, where `mwsr::sharpenGain()` is above 0. `example_d3d11 ... --quality` draws it. |
+| libplacebo, mpv | the parameter `MWSR_QUALITY` 1: `--glsl-shader-opts=MWSR_QUALITY=1` in mpv |
+| Metal | `mwsr_up` at `mwsr::constants()` with `Options::quality`, then `mwsr_sharpen` from `metal/mwsr-sharpen.metal`: the upscale's picture at `texture(0)`, `mwsr::sharpenConstants()` at `buffer(1)` |
+
 ## Next to FSR1, NIS and SGSR1
 
 FSR1, NIS and SGSR1 are the single-frame upscalers a game or a video player usually reaches for, and MoonlightWeb ships
@@ -73,7 +113,7 @@ a port of each beside MWSR. They spend their work in different places:
 - **SGSR1** (Snapdragon Game Super Resolution 1) runs one pass of 12 texels read in four gathers, skips the flat
   areas and finds edges on the green channel. It shares the best VMAF NEG on text at ×2 with NIS, and has the best MS-SSIM there.
 - **MWSR** runs one pass and decides per 2×2 quad: a flat quad keeps a single read, an edge gets a cubic and the detail
-  measured across it. It leaves a little overshoot on purpose, on 2 to 7 % of the pixels here, because a person's eye
+  measured across it. It leaves a little overshoot on purpose, on 2 to 9 % of the pixels here, because a person's eye
   preferred it, in a blind test against FSR1, to a harder bound. It has the best LPIPS on text at both scales and on the game
   picture at ×2, and the best VMAF NEG on the game picture and on text at ×1.33. FSR1 keeps the better FLIP on the game picture,
   and on games through a video encoder FSR1 leads most scores at ×1.5 and ×2. It is the fastest of the four on these GPUs, the
@@ -86,8 +126,8 @@ ports. Your picture stays on your device; measuring sends technical figures to t
 
 ![Four zooms of a 1080p frame upscaled to 1440p: the native frame, then MWSR, FSR1, NIS and SGSR1](docs/zoom.png)
 
-*1080p → 1440p, zoomed ×4 (nearest neighbour), drawn on the RTX 5060 Ti. Three crops of 0 A.D., then two bands of the
-lab's text chart.*
+*1080p → 1440p, zoomed ×4 (nearest neighbour), drawn on the RTX 5060 Ti, MWSR in its Quality mode. Three crops of 0 A.D.,
+then two bands of the lab's text chart.*
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/scores-dark.svg">
@@ -103,14 +143,14 @@ LPIPS (AlexNet, v0.1) says how far a picture looks from the native frame, and wa
 lower is closer. VMAF NEG is Netflix's VMAF without the credit plain VMAF gives to added sharpening, and judges a video stream's
 pictures: higher is closer. PSNR, SSIM and MS-SSIM measure the pixels' and the structure's distance: higher is closer. FLIP is
 NVIDIA's measure of what a viewer sees when flipping between two pictures: lower is closer. Overshoot: the share of pixels that
-leave the range of their four input texels by more than 2/255. Times: MWSR in 32-bit, the text MoonlightWeb runs, the others at their faster precision, each GPU's in one page. In
+leave the range of their four input texels by more than 2/255. MWSR: its Performance mode, the default. Times: MWSR in 32-bit, the text MoonlightWeb runs, the others at their faster precision, each GPU's in one page. In
 bold, the best of each score.
 
 **1080p → 1440p (×1.33), game**
 
 |  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | 0.1624 | **85.9** | **28.54** | **0.8792** | **0.9880** | 0.0360 | 6.6 % | 0.085 ms | 2.35 ms | 0.610 ms |
+| MWSR | 0.1551 | **85.6** | **28.46** | **0.8807** | **0.9879** | 0.0398 | 9.2 % | 0.085 ms | 2.35 ms | 0.610 ms |
 | FSR1 | **0.1401** | 84.8 | 28.38 | 0.8776 | 0.9878 | **0.0346** | 13.7 % | 0.326 ms | 6.34 ms (f16) | 1.99 ms (f16) |
 | NIS * | 0.1863 | 70.5 | 24.68 | 0.8162 | 0.9587 | 0.0997 | 42.6 % | 0.572 ms | 13.74 ms | 3.98 ms |
 | SGSR1 | 0.1838 | 83.1 | 27.77 | 0.8554 | 0.9833 | 0.0422 | 6.6 % | 0.146 ms | 2.97 ms (f16) | 0.958 ms |
@@ -120,7 +160,7 @@ bold, the best of each score.
 
 |  | LPIPS | VMAF NEG | PSNR | SSIM | MS-SSIM | FLIP | Overshoot | RTX 5060 Ti | Radeon iGPU (Ryzen 9 9900X) | Radeon 780M (938 MHz) |
 |---|---|---|---|---|---|---|---|---|---|---|
-| MWSR | **0.0385** | **66.4** | **22.59** | **0.9578** | **0.9915** | 0.0424 | 2.8 % | 0.081 ms | 1.52 ms | 0.418 ms |
+| MWSR | **0.0377** | **67.1** | **22.66** | **0.9593** | **0.9916** | 0.0437 | 3.2 % | 0.081 ms | 1.52 ms | 0.418 ms |
 | FSR1 | 0.0493 | 57.3 | 21.45 | 0.9422 | 0.9874 | **0.0416** | 0.2 % | 0.307 ms (f16) | 6.27 ms (f16) | 1.97 ms (f16) |
 | NIS * | 0.0414 | 62.2 | 22.05 | 0.9488 | 0.9893 | 0.0556 | 4.4 % | 0.443 ms | 10.75 ms | 3.36 ms |
 | SGSR1 | 0.0402 | 59.9 | 21.64 | 0.9463 | 0.9891 | 0.0500 | 2.7 % | 0.087 ms | 1.65 ms (f16) | 0.622 ms (f16) |
@@ -173,7 +213,8 @@ What each one does:
 
 </details>
 
-**How it was measured** (the times on 03/11/2026, the scores that night, the Radeon 780M's times and the phones on 04/11/2026):
+**How it was measured** (the times on 03/11/2026, the scores that night, the Radeon 780M's times and the phones on 04/11/2026,
+MWSR's scores again on 22/11/2026, in its Performance mode):
 - **The pictures.** The native frame is a 4K screenshot of 0 A.D. reduced to 2560×1440, or the lab's text chart drawn
   at 2560×1440. The input is that frame reduced to 1920×1080 or 1280×720. Both reductions are Lanczos-3 in linear
   light. Each upscaler draws the input back at 2560×1440.
@@ -202,7 +243,8 @@ What each one does:
     AMD's 16-bit path (`FsrEasuH`, `FsrRcasH`).
   - NIS: a per-fragment transcription of NVScaler, SDK 1.0.3, with its filter tables, at sharpness 0.5.
   - SGSR1: a port of `sgsr1.h` (mode 1, edge threshold 6/255, edge sharpness 1.5), in 32-bit and in half precision.
-  - MWSR: its defaults, in 32-bit and in 16-bit (`mwsr-up-f16.wgsl`).
+  - MWSR: its defaults, in 32-bit and in 16-bit (`mwsr-up-f16.wgsl`). A mode changes values in the uniform block, not
+    the work: the upscale's times hold for both modes, and Quality adds its pass.
 - **The precision.** MWSR is timed in 32-bit, the text MoonlightWeb runs. FSR1 and SGSR1 are timed at their faster precision on each GPU. Each 16-bit text is held to its
   32-bit one on that GPU: MWSR's by 2/255 at most in the lab's check, the others' on fewer than 0.05 % of the pixels by more than 4/255.
 - **To run it again**: `scripts/bench/scaler-lab/cmp_lab.py` for the scores, and `scaler_lab.py`, its `cells=` cases,
@@ -224,16 +266,17 @@ The 0 A.D. picture is © Wildfire Games; the screenshot is by PantheraLeo1359531
 | `wgsl/mwsr-up.wgsl` | The upscale, WebGPU (WGSL). Its parameters are `override` constants, set at pipeline creation. |
 | `wgsl/mwsr-up-f16.wgsl` | The same, its colour arithmetic in f16. Needs the `shader-f16` feature. It depends on the GPU: 11 to 15 % less time on the Ryzen 9 9900X's integrated Radeon, 7 to 9 % more on a Radeon 780M at 938 MHz. MoonlightWeb runs `mwsr-up.wgsl`. |
 | `wgsl/mwsr-down-1.wgsl`, `-4`, `-9`, `-16` | The reduction, with 1, 2×2, 3×3 or 4×4 samples. |
+| `wgsl/mwsr-sharpen.wgsl`, `glsl/mwsr-sharpen.frag`, `hlsl/mwsr-sharpen.hlsl`, `metal/mwsr-sharpen.metal` | The Quality mode's pass after the upscale, off by default: see [Two modes](#two-modes). |
 | `glsl/mwsr.vert` | The full-screen triangle every GLSL fragment text expects. |
 | `glsl/mwsr-up.frag` | The upscale, GLSL ES 3.00 (WebGL2, OpenGL ES 3.0). The parameters are constants at the top. |
 | `glsl/mwsr-down-4.frag`, `-9`, `-16` | The reduction, GLSL ES 3.00. |
 | `hlsl/mwsr-up.hlsl` | The upscale, HLSL, for Direct3D 11 (FXC, `ps_5_0`) and 12 (DXC, `ps_6_0`). Its parameters are `MWSR_*` defines. |
 | `hlsl/mwsr-up-half.hlsl` | The same, its colour arithmetic in `min16float`. |
 | `hlsl/mwsr-down-1.hlsl`, `-4`, `-9`, `-16` | The reduction, HLSL. |
-| `libplacebo/mwsr-up.hook` | The upscale as a libplacebo / mpv user shader: Vulkan through libplacebo, or mpv's `gpu-next`. One pass that works out its per-draw values from the input's and the output's sizes; `MWSR_HDR` and `MWSR_CHROMA444` are its parameters. No reduction. |
+| `libplacebo/mwsr-up.hook` | The upscale as a libplacebo / mpv user shader: Vulkan through libplacebo, or mpv's `gpu-next`. It works out its per-draw values from the input's and the output's sizes; `MWSR_HDR`, `MWSR_CHROMA444` and `MWSR_QUALITY` are its parameters, the last adding the Quality mode's pass. No reduction. |
 | `metal/mwsr-up.metal` | The upscale, Metal Shading Language: the fragment function `mwsr_up`, the constant buffer of `cpp/mwsr.h` at `buffer(1)`. No reduction. |
-| `cpp/mwsr.h` | The CPU side for a native renderer, C++17, header only: the mode for a scale and its shader file, the kernel's values by the law, the 96 bytes of the constant buffer, the defines to compile with. |
-| `cpp/example_d3d11.cpp` | A whole Direct3D 11 integration in one file, which also serves as a test: it reads a PNG, draws it at another size and writes a PNG. |
+| `cpp/mwsr.h` | The CPU side for a native renderer, C++17, header only: the mode for a scale and its shader file, the kernel's values by the law, the 96 bytes of the constant buffer, the defines to compile with, and the Quality pass's gain and 16 bytes. |
+| `cpp/example_d3d11.cpp` | A whole Direct3D 11 integration in one file, which also serves as a test: it reads a PNG, draws it at another size and writes a PNG, in Performance or, with `--quality`, Quality. |
 | `js/MwsrShader.js` | The JavaScript module the shaders come from: it writes the texts with any parameters, picks the mode for a scale and fills the uniform block. |
 | `generate.mjs` | Writes this folder from MoonlightWeb's own module (`node mwsr/generate.mjs`). |
 | `docs/` | The figures of [the comparison](#next-to-fsr1-nis-and-sgsr1): the zooms, then the two charts and the table, in light and dark (`scripts/bench/scaler-lab/mwsr_charts.py` writes the scores chart). |
@@ -242,19 +285,25 @@ Every shader here is generated from the module MoonlightWeb runs, so what you ta
 WGSL, GLSL and HLSL texts are twins, written from the same tables of constants. GLSL ES has no coarse derivative, so its
 vote falls on other quads: MoonlightWeb's lab holds the GLSL upscale to the WGSL one's quality against the ground truth,
 and its reduction to 45 dB of the WGSL one (with the vote out of both, the two are identical on every case). The HLSL one,
-drawn on WARP, against the WGSL one on SwiftShader:
+drawn on WARP, against the WGSL one on SwiftShader (22/11/2026, four pictures, 4:2:0 and 4:4:4):
 - **Bilinear filtering alone:** the two rasterisers differ by 1/255 at most.
-- **Upscales, 9 cases (03/11/2026):** a few quads near the vote's threshold go the other way, on 0.01 to 0.07 % of the
-  pixels past 1/255; PSNR 60 to 67 dB.
-- **Reductions, 9 pictures (03/11/2026):** the same, on 0.04 % of the pixels past 1/255 at most, 58/255 at most on text.
+- **Upscales in Performance, 8 cases:** a few quads near the vote's threshold go the other way, on 0.003 to 0.05 % of
+  the pixels past 1/255; PSNR 60 to 67.6 dB.
+- **Upscales in Quality, the 5 cases at ×1.33:** 0.17 to 1 % of the pixels past 1/255, PSNR 58.5 to 65.8 dB. These are
+  the upscale's few differing quads, which the pass sharpens: the HLSL pass alone, on the same picture, gives its formula
+  within 1/255.
+- **Reductions, 3 cases:** on 0.002 to 0.012 % of the pixels past 1/255; PSNR 60 to 63 dB.
 
-The C++ header gives the JavaScript module's modes and floats bit for bit.
+The C++ header gives the JavaScript module's law, constant buffer and Quality gain bit for bit, in both modes, SDR and HDR,
+at 13 sizes.
 
-The libplacebo and Metal texts are the HLSL upscale's twins too (06/11/2026):
-- **libplacebo:** through ffmpeg's libplacebo filter on lavapipe, Mesa's Vulkan on the CPU, from 1080p and 720p to
-  1440p on four pictures, it scores what the HLSL on WARP scores against the native frame, within 0.05 dB. Its PQ and
-  4:4:4 settings come through its parameters, as a renderer sets them. Not yet run on a GPU.
-- **Metal:** on an Apple M1 Pro (macOS 15.6), Junk Shop from 1080p 4:2:0 to 1440p, LPIPS 0.0154 and PSNR 38.87 dB,
+The libplacebo and Metal texts are the HLSL upscale's twins too:
+- **libplacebo** (22/11/2026): through ffmpeg's libplacebo filter on lavapipe, Mesa's Vulkan on the CPU, from 1080p and
+  720p to 1440p on four pictures, it scores what the HLSL on WARP scores against the native frame, within 0.09 dB in
+  both modes; its pass gives its formula within 1/255. The hook of 06/11/2026, within 0.05 dB then, is within 0.08 dB
+  on today's ffmpeg and Mesa. Its PQ and 4:4:4 settings come through its parameters, as a renderer sets them. Not yet run on a GPU.
+- **Metal** (06/11/2026, the upscale before the two modes; the Quality pass not yet run on a Mac): on an Apple M1 Pro
+  (macOS 15.6), Junk Shop from 1080p 4:2:0 to 1440p, LPIPS 0.0154 and PSNR 38.87 dB,
   against the browser's 0.0153 and 38.85 dB on the same input. On that Mac and that picture, Apple's MetalFX spatial
   scaler scored LPIPS 0.0463, PSNR 36.62 dB and VMAF NEG 88.39 (MWSR 90.50), in 0.91 ms per draw against MWSR's
   0.37 ms. One picture on one Mac, the times at the GPU's lowest-latency draws: a first reading, not a table.
@@ -429,13 +478,16 @@ read it through an `_UNORM_SRGB` view, write the output through one, and pass `s
 
 Parse `libplacebo/mwsr-up.hook` once with `pl_mpv_user_shader_parse()` and put it in `pl_render_params.hooks`. It
 hooks `MAIN`, the RGB picture before libplacebo scales it, draws it at the output's size when both axes grow, and
-stands aside at 1:1 and on a reduction, where libplacebo's own scalers draw. Its two parameters are set by name
+stands aside at 1:1 and on a reduction, where libplacebo's own scalers draw. Its three parameters are set by name
 through `hook->parameters[i].data->i`:
-- `MWSR_HDR` 1 on PQ frames: the bound then takes no margin. A stream that switches between SDR and HDR keeps two
-  hooks, one per setting.
+- `MWSR_HDR` 1 on PQ frames: the bound then takes no margin, the force starts from 1 and Quality draws no pass. A stream
+  that switches between SDR and HDR keeps two hooks, one per setting.
 - `MWSR_CHROMA444` 1 on a 4:4:4 stream.
+- `MWSR_QUALITY` 1 for the Quality mode, 0 (the default) for Performance. It is a define: set it before the hook is
+  compiled, like the other two.
 
-In mpv: `--vo=gpu-next --glsl-shaders=mwsr-up.hook`, and `--glsl-shader-opts=MWSR_HDR=1` on PQ content.
+In mpv: `--vo=gpu-next --glsl-shaders=mwsr-up.hook`, `--glsl-shader-opts=MWSR_HDR=1` on PQ content, and
+`MWSR_QUALITY=1` in the same option for Quality.
 
 ### Metal (MSL)
 
@@ -450,7 +502,8 @@ A decoder's YUV planes go to RGB first, at the stream's size, as on Direct3D.
 ### Per-frame values
 
 These are what the uniform block is made from. `mwsrUniforms(inW, inH, outW, outH, { kc, ft, kg, kr, kwc, kl, sfull,
-gaze, zone, hdr })` computes it all; a value you name replaces the law's.
+gaze, zone, hdr, mode })` computes it all; a value you name replaces the law's. `mode` is `'performance'`, the default,
+or `'quality'` (see [Two modes](#two-modes)).
 
 | Value | Default | What it does |
 |---|---|---|
@@ -464,13 +517,15 @@ gaze, zone, hdr })` computes it all; a value you name replaces the law's.
 | `gaze` | `0` | The gaze zone's weight, 0 to 1. Read only by a text built with `GAZE 1`, whose values no eye or score has judged yet on this kernel. |
 | `hdr` | `false` | The feed holds values past 1.0: `kl` 0 unless named, and a reduction does not sharpen. |
 
-**The law** (`mwsrLaw(inW, inH, outW, outH)`). The values follow the scale, and only it:
+**The law** (`mwsrLaw(inW, inH, outW, outH, { mode, hdr })`). The values follow the scale, and the mode sets where the
+force starts:
 
 ```
 s = min(outW / inW, outH / inH)                 // the scale, held in 1.07 .. 4
 x = ln(s)
 value = c0 + c1 x + c2 x^2
-force = 1 + 0.35 * clamp(ln(s / 1.3333) / ln(2 / 1.3333), 0, 1)
+base = 1.15 in Performance, 1 in Quality and on an HDR feed
+force = base + (1.35 - base) * clamp(ln(s / 1.3333) / ln(2 / 1.3333), 0, 1)
 kg = value(kg) * force
 kl = value(kl) * force
 ```
@@ -502,8 +557,9 @@ Straight lines in `s` between those rows. ×0.5, ×2/3 and ×0.75 were chosen by
 and not blind, by one person, against a reference that favours filters close to Lanczos-3; the ratios between them were
 not seen. An `hdr` feed takes a gain of 0: the pixels stay those of the average.
 
-**Example**, 1920×1080 drawn at 2560×1440:
-`[0.000520833, 0.000925926, 1.33333, 1.33333, 1920, 1080, 0.000396161, 0.000704286, 0.652221, 0.005, 0.510377, 0.1, 0.5, 0.5, 0.2, 0.45, 0.75, 0.005, 0.765566, 0, 0.256099, 1, 0, 0]`. Floats 12 to 19 are read only with `GAZE 1`.
+**Example**, 1920×1080 drawn at 2560×1440, in Performance:
+`[0.000520833, 0.000925926, 1.33333, 1.33333, 1920, 1080, 0.000396161, 0.000704286, 0.652221, 0.005, 0.586934, 0.1, 0.5, 0.5, 0.2, 0.45, 0.75, 0.005, 0.880401, 0, 0.294514, 1, 0, 0]`. Floats 12 to 19 are read only with `GAZE 1`.
+In Quality, floats 10, 18 and 20 are `0.510377`, `0.765566` and `0.256099`, and the pass's gain is `0.3`.
 
 ### Pipeline constants
 
@@ -522,7 +578,8 @@ prefixed `MWSR_`.
 
 | Case | Set | Why |
 |---|---|---|
-| A computer, a phone or a tablet | the defaults | They are MoonlightWeb's on all of them. |
+| An integrated GPU, a phone or a tablet | the defaults: Performance | MoonlightWeb's on them: the least work. |
+| A dedicated graphics card | Quality | MoonlightWeb's on one: closer to the native picture by LPIPS, for 0.05 ms on an RTX 5060 Ti. |
 | A 4:4:4 stream (desktop work, text) | `CHROMA444 1` | Colour borders of one luma, such as red text on green, get sharpened too. |
 | A softer picture | `kg` lower, `ft` higher | Less sharpening, and fewer pixels on the edge path. |
 | An HDR float input | `hdr: true` | No margin on the upscale's bound, no sharpening on a reduction. A reduction takes `LINEAR_LIGHT 3` if the input holds linear light. |

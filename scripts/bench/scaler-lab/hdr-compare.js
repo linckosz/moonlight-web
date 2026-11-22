@@ -52,7 +52,7 @@ async function show(c) {
   if (!res.ok) throw new Error("hdr-" + c.name + ".yuv: HTTP " + res.status + " (lancer hdr_check.py --keep une fois)");
   const planes = new Uint8Array(await res.arrayBuffer());
   for (const [i, r] of renderers.entries()) {
-    r.setMwsrTuning(sides[i].margin ? { kl: mwsrLaw(c.w, c.h, c.ow, c.oh).kl } : null);
+    r.setMwsrTuning(sides[i].margin ? { kl: mwsrLaw(c.w, c.h, c.ow, c.oh, { hdr: true }).kl } : null);
     r.setOutputSize(c.ow, c.oh);
     let frame;
     try {

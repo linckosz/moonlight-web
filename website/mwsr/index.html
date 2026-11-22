@@ -110,8 +110,8 @@
       <tbody>
         <tr><th scope="row">Any browser</th><td>WebGPU, WebGL2</td><td><code>wgsl/</code> <code>glsl/</code></td><td>MoonlightWeb's client. Measured on this page, and in the README on three GPUs and two phones.</td></tr>
         <tr><th scope="row">Windows</th><td>Direct3D 12</td><td><code>hlsl/</code> <code>cpp/</code></td><td>Moonlight-qt, in Auto (<a href="https://github.com/moonlight-stream/moonlight-qt/pull/1557" target="_blank" rel="noopener">pull request #1557</a>).</td></tr>
-        <tr><th scope="row">Windows</th><td>Direct3D 11</td><td><code>hlsl/</code> <code>cpp/</code></td><td>The example in <code>cpp/</code>. On WARP, the browser's picture, 60 to 67 dB apart.</td></tr>
-        <tr><th scope="row">Linux</th><td>Vulkan, through libplacebo</td><td><code>libplacebo/</code></td><td>In testing for Moonlight-qt. On Mesa's Vulkan on the CPU, the scores of Direct3D within 0.05 dB. Not yet on a GPU.</td></tr>
+        <tr><th scope="row">Windows</th><td>Direct3D 11</td><td><code>hlsl/</code> <code>cpp/</code></td><td>The example in <code>cpp/</code>. On WARP, the browser's picture, 60 to 68 dB apart in Performance.</td></tr>
+        <tr><th scope="row">Linux</th><td>Vulkan, through libplacebo</td><td><code>libplacebo/</code></td><td>In testing for Moonlight-qt. On Mesa's Vulkan on the CPU, the scores of Direct3D within 0.09 dB, in both modes. Not yet on a GPU.</td></tr>
         <tr><th scope="row">macOS</th><td>Vulkan, through MoltenVK</td><td><code>libplacebo/</code></td><td>In testing for Moonlight-qt. Not yet run.</td></tr>
         <tr><th scope="row">macOS</th><td>Metal</td><td><code>metal/</code></td><td>In testing for Moonlight-qt. On an M1 Pro, Junk Shop from 1080p to 1440p: LPIPS 0.0154, where Apple's MetalFX scores 0.0463. One picture on one Mac.</td></tr>
       </tbody>
@@ -261,13 +261,16 @@
     <p>MoonlightWeb runs it in the browser, on WebGPU or WebGL2. The
       <a href="https://github.com/linckosz/moonlight-web/tree/main/mwsr" target="_blank" rel="noopener">mwsr folder</a>
       gives it to any renderer under the MIT License: WGSL, GLSL ES 3.00 and HLSL texts, and a C++ header for
-      Direct3D 11 and 12, all written from the module the client runs.</p>
+      Direct3D 11 and 12, all written from the module the client runs. It gives both of the client's modes:
+      Performance by default, and Quality, its sharpening pass included, to turn on.</p>
     <h3>Measured on three GPUs</h3>
     <p class="small">The README's figures: its times from 03/11/2026, the Radeon 780M's from 04/11/2026, NIS's on the RTX and the iGPU from 11/11/2026 (after its port
       was written out without arrays), in Chrome's WebGPU on Windows 11, the input already in an 8-bit
       texture, on the 0 A.D. picture (game) and the text chart (text). The scores are the lab's, on SwiftShader at 4:4:4, by the definitions of the table above;
       the times per draw, MWSR in 32-bit, the text MoonlightWeb runs, the others at their faster precision, marked <em>half</em> when it is half precision (16-bit). The Ryzen 9 9900X's integrated Radeon ran at its own clock: read
-      its times as ratios. The Radeon 780M was held at 938 MHz, memory at 2800 MHz: a bench clock, not what a stream gets, as this GPU moves between 800 and 2800 MHz left to itself. NIS is MoonlightWeb's port (see the ports below). In bold, the best of each score.</p>
+      its times as ratios. The Radeon 780M was held at 938 MHz, memory at 2800 MHz: a bench clock, not what a stream gets, as this GPU moves between 800 and 2800 MHz left to itself. NIS is MoonlightWeb's port (see the ports below). In bold, the best of each score.
+      MWSR's figures are its Performance mode, the <code>mwsr/</code> shader's default, its scores measured again on
+      22/11/2026; the live table above draws both modes.</p>
     <p class="small">On phones (04/11/2026, the whole draw of a frame up to the GPU's end, one pass per case, on clocks nothing fixed):
       on an iPhone 13 Pro, in Safari and Chrome, MWSR adds 0.5 to 2.1 ms to a frame, upscaling or reducing, where FSR1 adds 2.8 to 5.4 ms.
       On a Realme with an entry-level Mali-G57, it adds 4 to 5 ms from half the screen's size (19 to 22 ms a frame, FSR1 44 ms) and
@@ -278,7 +281,7 @@
         <caption>1080p → 1440p (×1.33), game</caption>
         <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS</th><th scope="col">VMAF NEG</th><th scope="col">PSNR</th><th scope="col">SSIM</th><th scope="col">MS-SSIM</th><th scope="col">FLIP</th><th scope="col">Overshoot</th><th scope="col">RTX 5060 Ti</th><th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M (938 MHz)</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td>0.1624</td><td><strong>85.9</strong></td><td><strong>28.54</strong></td><td><strong>0.8792</strong></td><td><strong>0.9880</strong></td><td>0.0360</td><td>6.6 %</td><td>0.085 ms</td><td>2.35 ms</td><td>0.610 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td>0.1551</td><td><strong>85.6</strong></td><td><strong>28.46</strong></td><td><strong>0.8807</strong></td><td><strong>0.9879</strong></td><td>0.0398</td><td>9.2 %</td><td>0.085 ms</td><td>2.35 ms</td><td>0.610 ms</td></tr>
           <tr><th scope="row">FSR1</th><td><strong>0.1401</strong></td><td>84.8</td><td>28.38</td><td>0.8776</td><td>0.9878</td><td><strong>0.0346</strong></td><td>13.7 %</td><td>0.326 ms</td><td>6.34 ms (half)</td><td>1.99 ms (half)</td></tr>
           <tr><th scope="row">NIS</th><td>0.1863</td><td>70.5</td><td>24.68</td><td>0.8162</td><td>0.9587</td><td>0.0997</td><td>42.6 %</td><td>0.572 ms</td><td>13.74 ms</td><td>3.98 ms</td></tr>
           <tr><th scope="row">SGSR1</th><td>0.1838</td><td>83.1</td><td>27.77</td><td>0.8554</td><td>0.9833</td><td>0.0422</td><td>6.6 %</td><td>0.146 ms</td><td>2.97 ms (half)</td><td>0.958 ms</td></tr>
@@ -291,7 +294,7 @@
         <caption>1080p → 1440p (×1.33), text</caption>
         <thead><tr><th scope="col">Upscaler</th><th scope="col">LPIPS</th><th scope="col">VMAF NEG</th><th scope="col">PSNR</th><th scope="col">SSIM</th><th scope="col">MS-SSIM</th><th scope="col">FLIP</th><th scope="col">Overshoot</th><th scope="col">RTX 5060 Ti</th><th scope="col">Radeon iGPU (Ryzen 9 9900X)</th><th scope="col">Radeon 780M (938 MHz)</th></tr></thead>
         <tbody>
-          <tr><th scope="row">MWSR</th><td><strong>0.0385</strong></td><td><strong>66.4</strong></td><td><strong>22.59</strong></td><td><strong>0.9578</strong></td><td><strong>0.9915</strong></td><td>0.0424</td><td>2.8 %</td><td>0.081 ms</td><td>1.52 ms</td><td>0.418 ms</td></tr>
+          <tr><th scope="row">MWSR</th><td><strong>0.0377</strong></td><td><strong>67.1</strong></td><td><strong>22.66</strong></td><td><strong>0.9593</strong></td><td><strong>0.9916</strong></td><td>0.0437</td><td>3.2 %</td><td>0.081 ms</td><td>1.52 ms</td><td>0.418 ms</td></tr>
           <tr><th scope="row">FSR1</th><td>0.0493</td><td>57.3</td><td>21.45</td><td>0.9422</td><td>0.9874</td><td><strong>0.0416</strong></td><td>0.2 %</td><td>0.307 ms (half)</td><td>6.27 ms (half)</td><td>1.97 ms (half)</td></tr>
           <tr><th scope="row">NIS</th><td>0.0414</td><td>62.2</td><td>22.05</td><td>0.9488</td><td>0.9893</td><td>0.0556</td><td>4.4 %</td><td>0.443 ms</td><td>10.75 ms</td><td>3.36 ms</td></tr>
           <tr><th scope="row">SGSR1</th><td>0.0402</td><td>59.9</td><td>21.64</td><td>0.9463</td><td>0.9891</td><td>0.0500</td><td>2.7 %</td><td>0.087 ms</td><td>1.65 ms (half)</td><td>0.622 ms (half)</td></tr>
@@ -343,14 +346,15 @@
         then from ×0.5 to 1:1 a light sharpening where the block sees detail, gentler on a strong edge and none on HDR.
         FSR1, NIS and SGSR1 are made to enlarge (NIS from ×1 to ×2): below ×1 they run as they are, as the client runs
         them.</li>
-      <li><strong>MWSR Quality</strong> is the mode MoonlightWeb's client takes by itself on a computer with a dedicated
-        graphics card: MWSR, then a sharpening pass of the client over the scaled picture. The pass moves each pixel
-        away from the mean of its four neighbours by a gain (0.3 up to ×1.33, less above, none from ×2) and holds it
-        within the range of itself and those neighbours. It belongs to the client, not to the MIT shader in
-        <code>mwsr/</code>, and the row's time is the two passes'. Where the client draws no pass (×2, ×1 and below,
-        HDR), the row says <em>kernel alone</em> and is MWSR's row again. On an integrated GPU, a phone or a tablet the
-        client runs MWSR alone, its sharpness raised by 15 % up to ×1.33; the MWSR row here is the kernel at its own
-        law, as in the README.</li>
+      <li><strong>MWSR Performance</strong> and <strong>MWSR Quality</strong> are the two modes MoonlightWeb's client
+        picks between by itself. <strong>Performance</strong>, on an integrated GPU, a phone or a tablet: MWSR alone,
+        its sharpness raised by 15 % up to ×1.33 and by less up to ×2. <strong>Quality</strong>, on a computer with a
+        dedicated graphics card: MWSR without that raise, then a sharpening pass over the scaled picture. The pass moves
+        each pixel away from the mean of its four neighbours by a gain (0.3 up to ×1.33, less above, none from ×2) and
+        holds it within the range of itself and those neighbours. The <code>mwsr/</code> shader gives both under the
+        MIT License, Performance by default. The Quality row's time is the two passes'. Where Quality draws no pass
+        (×2, ×1 and below, HDR, where neither mode raises the sharpness), its row says <em>kernel alone</em>, and the
+        two rows draw the same picture.</li>
       <li><strong>The scores</strong> are computed in this tab when you press the button, each one as soon as it is ready. They leave it only at the end of a measure.
         LPIPS (AlexNet, v0.1) says how far a picture looks from the native frame to a human eye: it was made to judge
         upscalers and image restoration, and lower is closer. Its network runs on your GPU, and the page fetches its

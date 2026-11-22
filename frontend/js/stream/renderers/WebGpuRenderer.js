@@ -54,12 +54,13 @@
  * mwsr's two modes (MwsrShader's MWSR_MODES), each a pass of its own name so
  *   that the ladder steps from one to the other like between any two passes:
  *   'mwsr-q' is `quality`, the kernel into intermTex (rgba8unorm, output size)
- *   and a sharpening pass from there to the canvas (MWSR_SHARPEN_WGSL below,
- *   its gain by the scale: mwsrSharpen), on an SDR stream that is scaled
- *   up by less than ×2; any other frame takes the kernel's one pass. Its
- *   pipelines are built with the kernel's. 'mwsr' is the kernel alone: in the
- *   product's sessions (opts.mwsrMode 'performance') pushed by that mode's
- *   force, otherwise (the laboratory) by the law alone, as before the modes.
+ *   and a sharpening pass from there to the canvas (MwsrShader's
+ *   MWSR_SHARPEN_WGSL, its gain by the scale: mwsrSharpen), on an SDR stream
+ *   that is scaled up by less than ×2; any other frame takes the kernel's one
+ *   pass, by the default mode's force. Its pipelines are built with the
+ *   kernel's. 'mwsr' is the kernel alone, `performance`, the module's default:
+ *   the product's sessions name it (opts.mwsrMode), the laboratory's take it
+ *   by default.
  *
  * mwsr 2 and 3 (opts.deblock 'fixed' or 'qp': the debug menu's « MoonlightWeb
  *   2 » and « 3 », never 'auto'): the same kernel after a deblocking of the
@@ -116,6 +117,7 @@ import { VideoRenderer } from './VideoRenderer.js';
 import { nisConfig, nisCoefTexture, readNisSharpness, nisScaleInRange } from './NisTables.js';
 import { fitOutputSize, isIdentityScale } from './scaleRegime.js';
 import {
+    MWSR_SHARPEN_WGSL,
     MWSR_UNIFORM_FLOATS,
     mwsrClassOverrides,
     mwsrDownConstants,
@@ -1112,54 +1114,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32>{
 }
 `;
 
-// mwsr's `quality` mode: the pass after the kernel, a formula of our own: the
-// one of mwsr's reduction (MwsrShader's MWSR_DOWN_LAW) with one gain and no
-// margin, brought to the scaled picture. Each pixel moves away from the mean
-// of its cross, the four neighbours that touch it:
-//     R = c + gain (c - the cross's mean)
-// and is held, channel by channel, within the range of itself and that cross.
-// A flat neighbourhood moves nothing, and no value leaves what the
-// neighbourhood already shows: the pass draws no overshoot of its own.
-// The gain is a uniform (mwsrSharpen: it changes with the scale), and the five
-// texels are loaded, not sampled (intermTex and the canvas are the same size).
-// Measured on nine pictures at ×4/3 against the native picture (21/11/2026):
-// at the gain 0.3, LPIPS 0.0320, PSNR 34.42 dB and VMAF NEG 85.95, where the
-// kernel alone gives 0.0346, 35.18 and 86.45. A gain that changes with the
-// edge's strength, a bound widened to the 3×3 and a gain that falls on a lone
-// texel were measured too and left out: none did better.
-// Uniform: (1/outW, 1/outH, gain, _); the texel size is not read.
-const MWSR_SHARPEN_WGSL = /* wgsl */ `
-struct Sharpen { texel : vec2f, gain : f32, pad : f32, }
-@group(0) @binding(0) var input : texture_2d<f32>;
-@group(0) @binding(1) var sam : sampler;
-@group(0) @binding(2) var<uniform> u : Sharpen;
-
-@vertex
-fn vs(@builtin(vertex_index) vid : u32) -> @builtin(position) vec4f {
-    let uv = vec2f(f32((vid << 1u) & 2u), f32(vid & 2u));
-    return vec4f(uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);
-}
-
-fn at(p : vec2i, last : vec2i) -> vec3f {
-    return textureLoad(input, clamp(p, vec2i(0), last), 0).rgb;
-}
-
-@fragment
-fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
-    let last = vec2i(textureDimensions(input)) - vec2i(1);
-    let p = vec2i(pos.xy);
-    let b = at(p + vec2i(0, -1), last);
-    let d = at(p + vec2i(-1, 0), last);
-    let c = at(p, last);
-    let f = at(p + vec2i(1, 0), last);
-    let h = at(p + vec2i(0, 1), last);
-
-    let mean = 0.25 * (b + d + f + h);
-    let lo = min(c, min(min(b, d), min(f, h)));
-    let hi = max(c, max(max(b, d), max(f, h)));
-    return vec4f(clamp(c + u.gain * (c - mean), lo, hi), 1.0);
-}
-`;
+// mwsr's `quality` mode draws MwsrShader's MWSR_SHARPEN_WGSL after the kernel,
+// from intermTex to the canvas, the two of one size: the pass mwsr/ ships.
 
 export class WebGpuRenderer extends VideoRenderer {
     constructor() {
@@ -1176,7 +1132,7 @@ export class WebGpuRenderer extends VideoRenderer {
         this._yuv444 = false;
         /** The pass is 'mwsr-q', mwsr's `quality` mode (`_algo` stays 'mwsr': the same kernel). */
         this._mwsrQ = false;
-        /** opts.mwsrMode 'performance': 'mwsr' pushes the kernel by that mode; else the law alone. */
+        /** opts.mwsrMode 'performance': 'mwsr' names that mode; else the module's default, the same. */
         this._mwsrPerf = false;
         /** `quality`: the pass after the kernel, built with it; null where it cannot run. */
         this._mwsrSharpenPipeline = null;
@@ -1266,7 +1222,7 @@ export class WebGpuRenderer extends VideoRenderer {
               : 'sgsr';
         r._yuv444 = opts.yuv444 === true;
         // The product's sessions: 'mwsr' is the `performance` mode. Without it
-        // (the laboratory) 'mwsr' draws by the law alone.
+        // (the laboratory) 'mwsr' draws by the module's default, the same mode.
         r._mwsrPerf = opts.mwsrMode === 'performance';
         // mwsr 2 / 3: the deblocking before the kernel (the debug menu's).
         r._deblock = opts.deblock === 'fixed' || opts.deblock === 'qp' ? opts.deblock : null;
@@ -1391,11 +1347,12 @@ export class WebGpuRenderer extends VideoRenderer {
     /**
      * mwsr's mode (MwsrShader's MWSR_MODES) as this renderer draws it now:
      * 'quality' on the pass 'mwsr-q', 'performance' on 'mwsr' in a session of
-     * the product (opts.mwsrMode), null otherwise: the law alone.
+     * the product (opts.mwsrMode), null otherwise: the module's default,
+     * `performance` (its force starts from 1 on an HDR feed, mwsrUniforms' hdr).
      * @returns {'quality'|'performance'|null}
      */
     get mwsrMode() {
-        // An HDR stream keeps the law alone: neither mode was measured on one.
+        // An HDR stream takes no pass: neither mode was measured on one.
         if (this._algo !== 'mwsr' || !this._mwsrSharpenFits()) return null;
         return this._mwsrQ ? 'quality' : this._mwsrPerf ? 'performance' : null;
     }
@@ -1895,12 +1852,13 @@ export class WebGpuRenderer extends VideoRenderer {
      * picture, but the pass has not been checked on one yet).
      */
     _mwsrSharpenFits() {
-        return (
-            this._interFormat === 'rgba8unorm' &&
-            !this._hdr &&
-            !this._hdrYuv &&
-            !this._hdrExtTonemap
-        );
+        return this._interFormat === 'rgba8unorm' && !this._mwsrHdrStream();
+    }
+
+    // An HDR stream, tone-mapped on the way or not: neither mode was measured
+    // on one, so it takes no pass and its kernel the force 1.
+    _mwsrHdrStream() {
+        return !!(this._hdr || this._hdrYuv || this._hdrExtTonemap);
     }
 
     // `quality`: the pass and the kernel's pipeline into intermTex, built once
@@ -3482,8 +3440,13 @@ export class WebGpuRenderer extends VideoRenderer {
                         frame.timestamp,
                         reg.mode === 'up' ? Math.min(cw / inW, ch / inH) : 0,
                     );
-                // The mode this frame is drawn in (null: the law alone).
+                // The mode this frame is drawn in (null: the default, performance;
+                // where quality's pass cannot run on SDR, too). The kernel of an
+                // HDR stream keeps the force 1, the quality mode's, without its
+                // pass (a tone-mapped one is not `hdr` to the block: its bound
+                // keeps its margin).
                 const mode = this.mwsrMode;
+                const kernelMode = mode ?? (this._mwsrHdrStream() ? 'quality' : null);
                 const uniKey =
                     inW +
                     'x' +
@@ -3495,7 +3458,7 @@ export class WebGpuRenderer extends VideoRenderer {
                     '@' +
                     gaze +
                     (zoned ? 'z' : '') +
-                    (mode || '');
+                    (kernelMode || '');
                 // `quality`: the gain of the pass after the kernel at this
                 // scale, 0 where the kernel's one pass is the whole picture (a
                 // reduction, ×2 and beyond, a frame read with the host's zones).
@@ -3515,7 +3478,7 @@ export class WebGpuRenderer extends VideoRenderer {
                             gaze,
                             zone: this._mwsrZone || undefined,
                             hdr: this._hdrLinear,
-                            mode,
+                            mode: kernelMode,
                         }),
                     );
                 }

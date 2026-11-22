@@ -29,7 +29,9 @@
 // shader file (regime, shaderFile), the kernel's values for those sizes (law),
 // the 96 bytes of the constant buffer at register b0 (constants), and the
 // defines to compile the shader with (defines), each the twin of the JavaScript
-// module's function of that name.
+// module's function of that name; and for the quality mode, off by default,
+// the gain of its sharpening pass, hlsl/mwsr-sharpen.hlsl (sharpenGain, the
+// twin of mwsrSharpen()), and that pass's 16 bytes (sharpenConstants).
 // example_d3d11.cpp shows them at work.
 
 #pragma once
@@ -88,8 +90,8 @@ struct Zone {
 
 // The law's coefficients (mwsrLaw()), value = c0 + c1 x + c2 x^2, x = ln(scale),
 // in the order of kc, kg, kr, kl; the scales it holds at their ends; the force
-// of the sharpness on kg and kl, 1 at kForceFrom, kForceTop from kForceTo, a
-// straight line in x between them.
+// of the sharpness on kg and kl, the mode's up to kForceFrom, kForceTop from
+// kForceTo, a straight line in x between them.
 constexpr double kLaw[4][3] = {
     {0.6353583202388096, 0.021845681633595574, 0.12781268100437676},  // kc
     {-0.1288413863403059, 2.5844683855070816, -1.260092021482419},  // kg
@@ -99,6 +101,15 @@ constexpr double kLaw[4][3] = {
 constexpr double kLawScaleMin = 1.07, kLawScaleMax = 4.0;
 constexpr double kForceFrom = 1.3333333333333333, kForceTo = 2.0, kForceTop = 1.35;
 constexpr double kLawFt = 0.005, kLawKwc = 0.1;
+
+// The modes (MWSR_MODES): where the force starts from in the performance mode,
+// the default, the kernel alone; and in the quality mode, whose kernel is
+// followed by the sharpening pass. On an HDR feed it starts from 1 in both.
+constexpr double kForcePerformance = 1.15, kForceQuality = 1.0;
+
+// The quality mode's pass: its gain {scale, gain} at each point, held before
+// the first, a straight line in ln(scale) between two.
+constexpr double kSharpen[][2] = {{1.3333333333333333, 0.3}, {1.5, 0.15}, {2.0, 0.0}};
 
 // The scale from which the kernel's sharpening is whole.
 constexpr double kFullScale = 1.07;
@@ -164,18 +175,21 @@ inline std::string shaderFile(const Regime& r, bool half = false)
 }
 
 // The kernel's values for an input of inW x inH drawn at outW x outH (mwsrLaw()):
-// each a curve over the scale, the smaller axis.
+// each a curve over the scale, the smaller axis. quality: the quality mode's
+// kernel, else the performance mode's, the default; hdr: the feed holds values
+// past 1.0, the force starts from 1 in either.
 struct Law {
     double kc, ft, kg, kr, kwc, kl;
 };
 
-inline Law law(int inW, int inH, int outW, int outH)
+inline Law law(int inW, int inH, int outW, int outH, bool quality = false, bool hdr = false)
 {
     auto hold = [](double v, double lo, double hi) { return std::min(std::max(v, lo), hi); };
     const double s = hold(std::min(double(outW) / inW, double(outH) / inH), kLawScaleMin, kLawScaleMax);
     const double x = std::log(s);
     auto value = [&](int i) { return kLaw[i][0] + x * (kLaw[i][1] + x * kLaw[i][2]); };
-    const double force = 1.0 + (kForceTop - 1.0) * hold(std::log(s / kForceFrom) / std::log(kForceTo / kForceFrom), 0.0, 1.0);
+    const double base = hdr ? 1.0 : quality ? kForceQuality : kForcePerformance;
+    const double force = base + (kForceTop - base) * hold(std::log(s / kForceFrom) / std::log(kForceTo / kForceFrom), 0.0, 1.0);
     return {value(0), kLawFt, value(1) * force, value(2), kLawKwc, value(3) * force};
 }
 
@@ -213,12 +227,13 @@ struct Options {
     double gaze = 0.0;  // 0 to 1, read only with MWSR_GAZE 1
     Zone zone;
     bool hdr = false;  // the feed holds values past 1.0: the bound takes no margin, a reduction does not sharpen
+    bool quality = false;  // the quality mode: this kernel, then hlsl/mwsr-sharpen.hlsl at sharpenGain()
 };
 
 // The constant buffer for an input of inW x inH drawn at outW x outH (mwsrUniforms()).
 inline Constants constants(int inW, int inH, int outW, int outH, const Options& o = {})
 {
-    const Law l = law(inW, inH, outW, outH);
+    const Law l = law(inW, inH, outW, outH, o.quality, o.hdr);
     // a ring of no width would put the smoothstep's two edges together
     const double ring = std::max(o.zone.ring, 1e-3);
     Constants c{};
@@ -254,6 +269,45 @@ inline Constants constants(int inW, int inH, int outW, int outH, const Options& 
     c.kl = float(o.kl.value_or(down ? d.kl : o.hdr ? 0.0 : l.kl));
     c.zoneRef = down ? float(d.zref) : 1.0f;
     return c;
+}
+
+// The gain of the quality mode's pass after the kernel, for an input of
+// inW x inH drawn at outW x outH (mwsrSharpen()): 0, no pass to draw, in the
+// performance mode, on a reduction, at 1:1, from x2 on and on an HDR feed.
+inline double sharpenGain(int inW, int inH, int outW, int outH, bool quality = true, bool hdr = false)
+{
+    const double s = std::min(double(outW) / inW, double(outH) / inH);
+    if (!quality || hdr || !(s > 1.0))
+        return 0.0;
+    const double strength = std::min(std::max((s - 1.0) / (kFullScale - 1.0), 0.0), 1.0);
+    const int n = int(sizeof kSharpen / sizeof kSharpen[0]);
+    double v = kSharpen[0][1];
+    for (int i = 1; i < n; ++i) {
+        const double s0 = kSharpen[i - 1][0], v0 = kSharpen[i - 1][1];
+        const double s1 = kSharpen[i][0], v1 = kSharpen[i][1];
+        if (s >= s1) {
+            v = v1;
+            continue;
+        }
+        if (s > s0)
+            v = v0 + ((v1 - v0) * std::log(s / s0)) / std::log(s1 / s0);
+        break;
+    }
+    return v * strength;
+}
+
+// The pass's constant buffer, register b0 of hlsl/mwsr-sharpen.hlsl: the
+// texel size of the output, which it does not read, and the gain.
+struct SharpenConstants {
+    float texel[2];  // 1 / outW, 1 / outH
+    float gain;      // sharpenGain()
+    float pad;
+};
+static_assert(sizeof(SharpenConstants) == 16, "the pass's constant buffer is 4 floats");
+
+inline SharpenConstants sharpenConstants(int inW, int inH, int outW, int outH, bool hdr = false)
+{
+    return {{float(1.0 / outW), float(1.0 / outH)}, float(sharpenGain(inW, inH, outW, outH, true, hdr)), 0.0f};
 }
 
 // A define to compile a shader with: MWSR_<name>=<value>.

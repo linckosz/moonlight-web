@@ -80,7 +80,7 @@ const PICS = {
 const NAMES = {
   native: 'Native',
   input: 'Input',
-  mwsr: 'MWSR',
+  'mwsr-p': 'MWSR Performance',
   'mwsr-q': 'MWSR Quality',
   fsr1: 'FSR1',
   nis: 'NIS',
@@ -156,7 +156,7 @@ const HOME = {
   c444: false,
   view: 'ab',
   a: 'native',
-  b: 'mwsr',
+  b: 'mwsr-p',
   zoom: 1,
   center: [1610, 629], // in the picture's pixels, whatever the scale draws it at
 };
@@ -175,12 +175,16 @@ function fromHash() {
     return;
   }
   const pic = h.get('pic');
-  if (PICS[pic] && pic !== 'file') S.pic = pic;
+  if (Object.hasOwn(PICS, pic) && pic !== 'file') S.pic = pic;
   S.scale = (SCALES.find(([, k]) => k === h.get('scale')) || [4 / 3])[0];
   S.chroma = h.get('chroma') === '420' ? '420' : '444';
   S.c444 = h.get('c444') === '1' && S.chroma === '444';
   S.view = ['grid', 'ab', 'flip', 'wipe'].includes(h.get('view')) ? h.get('view') : 'grid';
-  for (const k of ['a', 'b']) if (NAMES[h.get(k)] && h.get(k) !== 'input') S[k] = h.get(k);
+  for (const k of ['a', 'b']) {
+    // a link from before the two modes names MWSR's row 'mwsr': the performance mode's took its place
+    const id = h.get(k) === 'mwsr' ? 'mwsr-p' : h.get(k);
+    if (Object.hasOwn(NAMES, id) && id !== 'input') S[k] = id;
+  }
   if (['1', '2', '4', '8'].includes(h.get('zoom'))) S.zoom = Number(h.get('zoom'));
   const x = Number(h.get('x'));
   const y = Number(h.get('y'));
@@ -1001,7 +1005,7 @@ function best(id) {
   const r = R[id];
   if (!r || r.t32 == null) return null;
   // MWSR shows its 32-bit text, the one the client runs: its 16-bit time goes with the report only
-  if (id === 'mwsr' || r.t16 == null) return { ms: r.t32, tag: '' };
+  if (id === 'mwsr-p' || r.t16 == null) return { ms: r.t32, tag: '' };
   const ms = Math.min(r.t16, r.t32);
   // what the row says under its name; nothing when the full precision is the faster
   const tag =
@@ -1051,14 +1055,14 @@ function renderTable() {
       time = `<span class="ms">${ms3(t.ms)}</span>` + (measuring ? '' : `<span class="bar" style="width:${w}"></span>`);
     }
     // under the name, what its time or its text is
-    const reduces = k.id === 'mwsr' && engine.mwsrMode() === 'down';
+    const reduces = k.id === 'mwsr-p' && engine.mwsrMode() === 'down';
     const alone = k.id === 'mwsr-q' && noPass;
-    const refused = k.id !== 'mwsr' && r.f16 === 'refused';
+    const refused = k.id !== 'mwsr-p' && r.f16 === 'refused';
     const said = reduces ? 'reduction' : alone ? 'kernel alone' : refused ? 'Half refused' : t ? t.tag : '';
     const why = reduces
       ? 'MWSR’s reduction, as the client runs it: bilinear samples over each pixel’s footprint, averaged in linear light, lightly sharpened from ×0.5 to 1:1'
       : alone
-        ? 'The quality mode adds its sharpening pass above 1:1 and below ×2, on SDR. Here the client draws MWSR alone: this row is MWSR’s again'
+        ? 'The quality mode adds its sharpening pass above 1:1 and below ×2, on SDR. Here it draws MWSR’s kernel alone: the same picture as Performance'
         : refused
           ? `Its 16-bit picture differs from its 32-bit one by more than 4/255 on ${pct(r.f16share)} of the pixels on this GPU: timed in 32-bit only`
           : t && t.both;

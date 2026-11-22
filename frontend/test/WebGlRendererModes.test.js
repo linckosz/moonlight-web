@@ -113,27 +113,29 @@ describe("WebGlRenderer — mwsr's two modes", () => {
         }
     });
 
-    it('pushes the kernel by the performance mode in a session of the product, not in quality', async () => {
+    it('pushes the kernel by the performance mode, the default, and draws it at the force 1 under the quality pass', async () => {
         const kernel = async (opts) => {
             const { r, calls } = await renderer(opts);
             await drawsOf(r, calls);
             return [Array.from(uniform(calls, 'uKernel')), Array.from(uniform(calls, 'uBound'))];
         };
-        const law = mwsrLaw(1280, 720, 1920, 1080);
+        const q = mwsrLaw(1280, 720, 1920, 1080, { mode: 'quality' });
         const pushed = mwsrLaw(1280, 720, 1920, 1080, { mode: 'performance' });
-        // the laboratory: the law alone. uKernel: kc, ft, kg, kwc; uBound: kl first
+        // the laboratory, without the product's option: the default, performance.
+        // uKernel: kc, ft, kg, kwc; uBound: kl first
         const [plain, plainBound] = await kernel({});
-        expect(plain[2]).toBeCloseTo(law.kg, 6);
-        // quality draws the kernel by the law, in the product's sessions too
-        expect(await kernel({ algo: 'gl-mwsr-q' })).toEqual([plain, plainBound]);
+        expect(plain[2]).toBeCloseTo(pushed.kg, 6);
+        expect(plainBound[0]).toBeCloseTo(pushed.kl, 6);
+        expect(await kernel({ mwsrMode: 'performance' })).toEqual([plain, plainBound]);
+        // quality draws the kernel at its own force, in the product's sessions too
+        const [quality, qualityBound] = await kernel({ algo: 'gl-mwsr-q' });
+        expect(quality[2]).toBeCloseTo(q.kg, 6);
+        expect(qualityBound[0]).toBeCloseTo(q.kl, 6);
         expect(await kernel({ algo: 'gl-mwsr-q', mwsrMode: 'performance' })).toEqual([
-            plain,
-            plainBound,
+            quality,
+            qualityBound,
         ]);
-        const [perf, perfBound] = await kernel({ mwsrMode: 'performance' });
-        expect(pushed.kg).toBeGreaterThan(law.kg);
-        expect(perf[2]).toBeCloseTo(pushed.kg, 6);
-        expect(perfBound[0]).toBeCloseTo(pushed.kl, 6);
+        expect(pushed.kg).toBeGreaterThan(q.kg);
     });
 
     it('draws quality in two passes: the kernel into the framebuffer, then the sharpening into the canvas', async () => {
@@ -185,7 +187,8 @@ describe("WebGlRenderer — mwsr's two modes", () => {
 
     it("steps between the two modes as the ladder does, without rebuilding the kernel's programs", async () => {
         const { r, calls } = await renderer({ algo: 'gl-mwsr-q', mwsrMode: 'performance' });
-        const law = mwsrLaw(1280, 720, 1920, 1080);
+        // the quality mode's kernel, the force 1
+        const law = mwsrLaw(1280, 720, 1920, 1080, { mode: 'quality' });
         const pushed = mwsrLaw(1280, 720, 1920, 1080, { mode: 'performance' });
         expect(await drawsOf(r, calls)).toHaveLength(2);
         expect(Array.from(uniform(calls, 'uKernel'))[2]).toBeCloseTo(law.kg, 6);
@@ -202,7 +205,7 @@ describe("WebGlRenderer — mwsr's two modes", () => {
         expect(Array.from(uniform(calls, 'uKernel'))[2]).toBeCloseTo(pushed.kg, 6);
         expect(r.lastDraw.path).toBe('gl-mwsr:frame');
 
-        // and back up: the pass again, the kernel by the law
+        // and back up: the pass again, the kernel at the force 1
         calls.length = 0;
         expect(r.setAlgo('gl-mwsr-q')).toBe(true);
         expect(programsBuilt(calls)).toBe(0);

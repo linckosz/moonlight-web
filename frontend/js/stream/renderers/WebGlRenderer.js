@@ -44,13 +44,13 @@
  *               regime, the one to run picked per frame by the frame and
  *               canvas sizes. Bilinear taps and screen derivatives only, no
  *               gather to emulate. The reduction averages in software light:
- *               a WebGL2 drawing buffer has no sRGB view. The kernel alone:
- *               pushed by the `performance` mode in the product's sessions
- *               (opts.mwsrMode), by the law alone otherwise.
+ *               a WebGL2 drawing buffer has no sRGB view. The kernel alone,
+ *               in the `performance` mode, the module's default: the
+ *               product's sessions name it (opts.mwsrMode).
  *   'gl-mwsr-q' — the same kernel in its `quality` mode (MwsrShader's
  *               MWSR_MODES): drawn into gl-fsr1's intermediate framebuffer,
  *               then a sharpening pass from there to the canvas
- *               (MWSR_SHARPEN_FS, the twin of WebGpuRenderer's text), where
+ *               (MwsrShader's MWSR_SHARPEN_GLSL, the WGSL text's twin), where
  *               the stream is scaled up by less than ×2. A pass of its own
  *               name, so that the ladder steps from it down to 'gl-mwsr'.
  *
@@ -73,6 +73,7 @@ import { VideoRenderer } from './VideoRenderer.js';
 import { nisConfig, nisCoefTexture, readNisSharpness, nisScaleInRange } from './NisTables.js';
 import { fitOutputSize, isIdentityScale } from './scaleRegime.js';
 import {
+    MWSR_SHARPEN_GLSL,
     mwsrClassOverrides,
     mwsrGlsl,
     mwsrRegime,
@@ -307,35 +308,9 @@ void main() {
 }
 `;
 
-// gl-mwsr's `quality` mode: the pass after the kernel, the GLSL twin of
-// WebGpuRenderer's MWSR_SHARPEN_WGSL (a formula of our own: each pixel moves
-// away from the mean of its cross by a gain, a uniform, and is held within the
-// range of itself and that cross). The five texels are fetched by the
-// fragment's own coordinates: the kernel drew this framebuffer texture pixel
-// for pixel, so no flip is needed, and the cross is symmetric.
-const MWSR_SHARPEN_FS = `#version 300 es
-precision highp float;
-uniform sampler2D uTex;
-uniform float uGain;
-out vec4 oColor;
-vec3 at(ivec2 p, ivec2 last) {
-    return texelFetch(uTex, clamp(p, ivec2(0), last), 0).rgb;
-}
-void main() {
-    ivec2 last = textureSize(uTex, 0) - 1;
-    ivec2 p = ivec2(gl_FragCoord.xy);
-    vec3 b = at(p + ivec2(0, -1), last);
-    vec3 d = at(p + ivec2(-1, 0), last);
-    vec3 c = at(p, last);
-    vec3 f = at(p + ivec2(1, 0), last);
-    vec3 h = at(p + ivec2(0, 1), last);
-
-    vec3 mean = 0.25 * (b + d + f + h);
-    vec3 lo = min(c, min(min(b, d), min(f, h)));
-    vec3 hi = max(c, max(max(b, d), max(f, h)));
-    oColor = vec4(clamp(c + uGain * (c - mean), lo, hi), 1.0);
-}
-`;
+// gl-mwsr's `quality` mode: the pass after the kernel, MwsrShader's
+// MWSR_SHARPEN_GLSL, the pass mwsr/ ships.
+const MWSR_SHARPEN_FS = MWSR_SHARPEN_GLSL;
 
 // SGSRv1 — Qualcomm (BSD-3-Clause), mode 1, green as luma. Same constants as
 // the WebGPU port (EdgeThreshold 6/255, EdgeSharpness 1.5).
@@ -749,7 +724,7 @@ export class WebGlRenderer extends VideoRenderer {
         this._mwsr = null;
         this._mwsrUni = null;
         this._mwsrUniKey = '';
-        /** opts.mwsrMode 'performance': 'gl-mwsr' pushes the kernel by that mode; else the law alone. */
+        /** opts.mwsrMode 'performance': 'gl-mwsr' names that mode; else the module's default, the same. */
         this._mwsrPerf = false;
         /** @type {{prog: WebGLProgram, u: Object}|null} `quality`: the pass after the kernel. */
         this._mwsrSharpen = null;
@@ -887,7 +862,7 @@ export class WebGlRenderer extends VideoRenderer {
         r._algo = WEBGL_ALGOS.includes(opts.algo) || opts.algo === 'off' ? opts.algo : 'gl-fsr1';
         r._yuv444 = opts.yuv444 === true;
         // The product's sessions: 'gl-mwsr' is the `performance` mode. Without
-        // it (the laboratory) 'gl-mwsr' draws by the law alone.
+        // it (the laboratory) 'gl-mwsr' draws by the module's default, the same mode.
         r._mwsrPerf = opts.mwsrMode === 'performance';
         // The gaze zone the caller wants (BrowserDetect.mwsrGazeWanted): the
         // kernel's programs take it, its weight follows the stream's motion.
@@ -963,7 +938,8 @@ export class WebGlRenderer extends VideoRenderer {
     /**
      * mwsr's mode (MwsrShader's MWSR_MODES) as this renderer draws it now:
      * 'quality' on the pass 'gl-mwsr-q', 'performance' on 'gl-mwsr' in a
-     * session of the product (opts.mwsrMode), null otherwise: the law alone.
+     * session of the product (opts.mwsrMode), null otherwise: the module's
+     * default, `performance`.
      * @returns {'quality'|'performance'|null}
      */
     get mwsrMode() {
@@ -1396,7 +1372,7 @@ export class WebGlRenderer extends VideoRenderer {
                 // The gaze zone's weight for this draw, 0 without a zone: it
                 // moves in steps of 1/64, so the block is remade rarely.
                 const gaze = this._mwsrGazeFor(inW * inH);
-                // The mode this frame is drawn in (null: the law alone).
+                // The mode this frame is drawn in (null: the default, performance).
                 const mode = this.mwsrMode;
                 const uniKey = inW + 'x' + inH + '>' + cw + 'x' + ch + '@' + gaze + (mode || '');
                 if (this._mwsrUniKey !== uniKey) {

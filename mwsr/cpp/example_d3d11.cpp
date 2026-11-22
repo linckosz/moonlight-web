@@ -25,12 +25,14 @@
 // software rasteriser of Direct3D, unless --hardware is given.
 //
 //     mwsr_d3d11 in.png outW outH out.png [--hlsl DIR] [--srgb] [--half] [--hardware]
-//                [--define NAME=VALUE]... [--ft T] [--kg S]
+//                [--quality] [--define NAME=VALUE]... [--ft T] [--kg S]
 //
 // --srgb reads the input and writes the output through sRGB views, the
 // reduction's exact path; --half takes the upscale whose blend runs in
-// min16float; --define sets a constant of the upscale over its default
-// (--define CHROMA444=1).
+// min16float; --quality draws the quality mode, the upscale at its own force
+// then the sharpening pass of hlsl/mwsr-sharpen.hlsl where its gain is above
+// 0 (without it, the performance mode, the default: the upscale alone);
+// --define sets a constant of the upscale over its default (--define CHROMA444=1).
 //
 // Build, in a Visual Studio developer prompt:
 //     cl /std:c++17 /EHsc /W4 /O2 example_d3d11.cpp d3d11.lib d3dcompiler.lib windowscodecs.lib ole32.lib
@@ -144,7 +146,7 @@ int main(int argc, char** argv)
 {
     if (argc < 5) {
         std::fprintf(stderr, "usage: mwsr_d3d11 in.png outW outH out.png [--hlsl DIR] [--srgb] [--half] [--hardware] "
-                             "[--define NAME=VALUE]... [--ft T] [--kg S]\n");
+                             "[--quality] [--define NAME=VALUE]... [--ft T] [--kg S]\n");
         return 2;
     }
     const std::string in = argv[1], out = argv[4];
@@ -163,6 +165,8 @@ int main(int argc, char** argv)
             half = true;
         else if (a == "--hardware")
             hardware = true;
+        else if (a == "--quality")
+            options.quality = true;
         else if (a == "--define" && i + 1 < argc) {
             const std::string d = argv[++i];
             const size_t eq = d.find('=');
@@ -257,9 +261,24 @@ int main(int argc, char** argv)
     check(device->CreateVertexShader(vsCode->GetBufferPointer(), vsCode->GetBufferSize(), nullptr, &vs), "no VS");
     check(device->CreatePixelShader(psCode->GetBufferPointer(), psCode->GetBufferSize(), nullptr, &ps), "no PS");
 
-    // 8. The draw: one full-screen triangle, no vertex buffer.
+    // 8. The quality mode's pass at this scale: its gain, 0 where it draws none
+    //    (the performance mode, a reduction, 1:1, x2 and beyond, HDR). Where
+    //    it draws one, the kernel draws into a texture of the output's size.
+    const double gain = mwsr::sharpenGain(inW, inH, outW, outH, options.quality, options.hdr);
+    ComPtr<ID3D11Texture2D> mid;
+    ComPtr<ID3D11RenderTargetView> midRtv;
+    ComPtr<ID3D11ShaderResourceView> midSrv;
+    if (gain > 0.0) {
+        D3D11_TEXTURE2D_DESC md = td;  // the output's
+        md.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        check(device->CreateTexture2D(&md, nullptr, &mid), "no texture for the pass");
+        check(device->CreateRenderTargetView(mid.Get(), &rv, &midRtv), "no view to draw the kernel into");
+        check(device->CreateShaderResourceView(mid.Get(), &sv, &midSrv), "no view for the pass to read");
+    }
+
+    // 9. The draw: one full-screen triangle, no vertex buffer.
     const D3D11_VIEWPORT vp = {0.0f, 0.0f, float(outW), float(outH), 0.0f, 1.0f};
-    ctx->OMSetRenderTargets(1, rtv.GetAddressOf(), nullptr);
+    ctx->OMSetRenderTargets(1, gain > 0.0 ? midRtv.GetAddressOf() : rtv.GetAddressOf(), nullptr);
     ctx->RSSetViewports(1, &vp);
     ctx->IASetInputLayout(nullptr);
     ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -270,7 +289,33 @@ int main(int argc, char** argv)
     ctx->PSSetConstantBuffers(0, 1, cb.GetAddressOf());
     ctx->Draw(3, 0);
 
-    // 9. Read the output back.
+    // 10. The quality mode: the pass from that texture to the output, its own
+    //     16 bytes at b0 and the kernel's picture at t0.
+    if (gain > 0.0) {
+        const std::string passFile = hlslDir + "/mwsr-sharpen.hlsl";
+        const ComPtr<ID3DBlob> pvsCode = compile(passFile, "MwsrVS", "vs_5_0", {});
+        const ComPtr<ID3DBlob> ppsCode = compile(passFile, "MwsrSharpenPS", "ps_5_0", {});
+        ComPtr<ID3D11VertexShader> pvs;
+        ComPtr<ID3D11PixelShader> pps;
+        check(device->CreateVertexShader(pvsCode->GetBufferPointer(), pvsCode->GetBufferSize(), nullptr, &pvs),
+              "no VS for the pass");
+        check(device->CreatePixelShader(ppsCode->GetBufferPointer(), ppsCode->GetBufferSize(), nullptr, &pps),
+              "no PS for the pass");
+        const mwsr::SharpenConstants sc = mwsr::sharpenConstants(inW, inH, outW, outH, options.hdr);
+        D3D11_BUFFER_DESC pbd = bd;
+        pbd.ByteWidth = sizeof sc;
+        const D3D11_SUBRESOURCE_DATA pinit = {&sc, 0, 0};
+        ComPtr<ID3D11Buffer> pcb;
+        check(device->CreateBuffer(&pbd, &pinit, &pcb), "no constant buffer for the pass");
+        ctx->OMSetRenderTargets(1, rtv.GetAddressOf(), nullptr);
+        ctx->VSSetShader(pvs.Get(), nullptr, 0);
+        ctx->PSSetShader(pps.Get(), nullptr, 0);
+        ctx->PSSetShaderResources(0, 1, midSrv.GetAddressOf());
+        ctx->PSSetConstantBuffers(0, 1, pcb.GetAddressOf());
+        ctx->Draw(3, 0);
+    }
+
+    // 11. Read the output back.
     td.Usage = D3D11_USAGE_STAGING;
     td.BindFlags = 0;
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -289,8 +334,10 @@ int main(int argc, char** argv)
     ctx->Unmap(staging.Get(), 0);
     writePng(wic.Get(), out, dst);
 
-    std::printf("%dx%d -> %dx%d, %s, %s%s", inW, inH, outW, outH, mwsr::shaderFile(reg, half).c_str(),
-                hardware ? "hardware" : "WARP", srgb ? ", sRGB views" : "");
+    std::printf("%dx%d -> %dx%d, %s, %s%s, %s mode", inW, inH, outW, outH, mwsr::shaderFile(reg, half).c_str(),
+                hardware ? "hardware" : "WARP", srgb ? ", sRGB views" : "", options.quality ? "quality" : "performance");
+    if (gain > 0.0)
+        std::printf(", mwsr-sharpen.hlsl at the gain %.4f", gain);
     for (const mwsr::Define& d : defines)
         std::printf(", %s=%s", d.name.c_str(), d.value.c_str());
     std::printf("\n");

@@ -28,12 +28,16 @@
 // (MAIN) when both axes grow, drawn at the output's size: libplacebo's own
 // scalers then have nothing left to do. Its per-draw values are worked out here
 // from the input's and the output's sizes, as cpp/mwsr.h's constants() does.
+// With MWSR_QUALITY 1, the quality mode: the kernel at its own force, then a
+// second pass, the sharpening of hlsl/mwsr-sharpen.hlsl at the gain
+// cpp/mwsr.h's sharpenGain() gives, which copies the picture as it is where
+// that gain is 0. MWSR_QUALITY 0, the default, is the performance mode.
 // In a libplacebo renderer: pl_mpv_user_shader_parse(), then the parameters
 // below. In mpv: --vo=gpu-next --glsl-shaders=mwsr-up.hook, with
-// --glsl-shader-opts=MWSR_HDR=1 on PQ content.
+// --glsl-shader-opts=MWSR_HDR=1 on PQ content, MWSR_QUALITY=1 for the quality mode.
 
 //!PARAM MWSR_HDR
-//!DESC 1 when the input holds PQ code values (HDR): the bound then takes no margin
+//!DESC 1 when the input holds PQ code values (HDR): the bound then takes no margin, the force starts from 1 and the quality mode draws no pass
 //!TYPE DEFINE
 //!MINIMUM 0
 //!MAXIMUM 1
@@ -41,6 +45,13 @@
 
 //!PARAM MWSR_CHROMA444
 //!DESC 1 for a 4:4:4 stream: the borders between two colours of one luma are sharpened too
+//!TYPE DEFINE
+//!MINIMUM 0
+//!MAXIMUM 1
+0
+
+//!PARAM MWSR_QUALITY
+//!DESC 1: the quality mode, the kernel then a sharpening pass (a dedicated GPU); 0: the performance mode, the kernel alone (an integrated GPU, a phone, a tablet)
 //!TYPE DEFINE
 //!MINIMUM 0
 //!MAXIMUM 1
@@ -77,7 +88,15 @@ vec4 hook() {
     float smin = min(scale.x, scale.y);
     float sl = clamp(smin, 1.07, 4.0);
     float x = log(sl);
-    float force = 1.0 + (1.35 - 1.0) * clamp(log(sl / 1.3333333333333333) / log(2.0 / 1.3333333333333333), 0.0, 1.0);
+    // where the force starts from: the quality mode's kernel, or the performance mode's, 1 on HDR
+#if MWSR_HDR
+    float base = 1.0;
+#elif MWSR_QUALITY
+    float base = 1.0;
+#else
+    float base = 1.15;
+#endif
+    float force = base + (1.35 - base) * clamp(log(sl / 1.3333333333333333) / log(2.0 / 1.3333333333333333), 0.0, 1.0);
     float strength = clamp((smin - 1.0) / (1.07 - 1.0), 0.0, 1.0);
     float kc = 0.6353583202388096 + x * (0.021845681633595574 + x * 0.12781268100437676);
     float kg = (-0.1288413863403059 + x * (2.5844683855070816 + x * -1.260092021482419)) * force * strength;
@@ -136,4 +155,65 @@ vec4 hook() {
     vec3 mx = max(rM, max(ra, rb));
     vec3 mg = (mx - mn) * kl;
     return vec4(clamp(R, max(mn - mg, vec3(0.0)), mx + mg), 1.0);
+}
+
+//!HOOK MAIN
+//!BIND HOOKED
+//!DESC MWSR quality pass
+//!WHEN MWSR_QUALITY
+
+// The gain at this scale (cpp/mwsr.h's sharpenGain()): 0 on a reduction, at
+// 1:1, from x2 on and on HDR, where the pass copies the picture.
+float mwsrGain() {
+#if MWSR_HDR
+    return 0.0;
+#else
+    vec2 scale = target_size / input_size;
+    float smin = min(scale.x, scale.y);
+    if (!(smin > 1.0)) {
+        return 0.0;
+    }
+    float strength = clamp((smin - 1.0) / (1.07 - 1.0), 0.0, 1.0);
+    const vec2 P[3] = vec2[3](vec2(1.3333333333333333, 0.3), vec2(1.5, 0.15), vec2(2.0, 0.0));
+    float v = P[0].y;
+    for (int i = 1; i < 3; i++) {
+        if (smin >= P[i].x) {
+            v = P[i].y;
+            continue;
+        }
+        if (smin > P[i - 1].x) {
+            v = P[i - 1].y + (P[i].y - P[i - 1].y) * log(smin / P[i - 1].x) / log(P[i].x / P[i - 1].x);
+        }
+        break;
+    }
+    return v * strength;
+#endif
+}
+
+// The kernel's picture as the other ports' pass reads it, from a target of 8
+// bits that holds 0 to 1: libplacebo keeps it in floats, where the kernel's
+// margin may pass 1.
+vec3 mwsrAt(ivec2 p, ivec2 last) {
+    return clamp((HOOKED_mul * texelFetch(HOOKED_raw, clamp(p, ivec2(0), last), 0)).rgb, 0.0, 1.0);
+}
+
+// hlsl/mwsr-sharpen.hlsl line for line: each pixel away from the mean of its
+// cross by the gain, held within the range of itself and that cross. At the
+// gain 0 the pass copies the picture as it is.
+vec4 hook() {
+    ivec2 last = ivec2(HOOKED_size) - 1;
+    ivec2 p = ivec2(HOOKED_pos * HOOKED_size);
+    float gain = mwsrGain();
+    if (!(gain > 0.0)) {
+        return vec4((HOOKED_mul * texelFetch(HOOKED_raw, clamp(p, ivec2(0), last), 0)).rgb, 1.0);
+    }
+    vec3 b = mwsrAt(p + ivec2(0, -1), last);
+    vec3 d = mwsrAt(p + ivec2(-1, 0), last);
+    vec3 c = mwsrAt(p, last);
+    vec3 f = mwsrAt(p + ivec2(1, 0), last);
+    vec3 h = mwsrAt(p + ivec2(0, 1), last);
+    vec3 mean = 0.25 * (b + d + f + h);
+    vec3 lo = min(c, min(min(b, d), min(f, h)));
+    vec3 hi = max(c, max(max(b, d), max(f, h)));
+    return vec4(clamp(c + gain * (c - mean), lo, hi), 1.0);
 }

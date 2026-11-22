@@ -46,21 +46,24 @@ describe('the mwsr/ folder', () => {
             expect(read(join(MWSR, path)).startsWith('#version 300 es\n'), path).toBe(true);
     });
 
-    it('carries one text per regime the renderers build, in each language, the C++ header, and the libplacebo and Metal upscales', () => {
+    it('carries one text per regime the renderers build, in each language, the C++ header, the libplacebo and Metal upscales, and the quality pass in each language', () => {
         expect(Object.keys(dist).sort()).toEqual(
             [
                 'cpp/mwsr.h',
                 'libplacebo/mwsr-up.hook',
                 'metal/mwsr-up.metal',
+                'metal/mwsr-sharpen.metal',
                 'glsl/mwsr-down-16.frag',
                 'glsl/mwsr-down-4.frag',
                 'glsl/mwsr-down-9.frag',
+                'glsl/mwsr-sharpen.frag',
                 'glsl/mwsr-up.frag',
                 'glsl/mwsr.vert',
                 'hlsl/mwsr-down-1.hlsl',
                 'hlsl/mwsr-down-16.hlsl',
                 'hlsl/mwsr-down-4.hlsl',
                 'hlsl/mwsr-down-9.hlsl',
+                'hlsl/mwsr-sharpen.hlsl',
                 'hlsl/mwsr-up-half.hlsl',
                 'hlsl/mwsr-up.hlsl',
                 'js/MwsrShader.js',
@@ -68,9 +71,18 @@ describe('the mwsr/ folder', () => {
                 'wgsl/mwsr-down-16.wgsl',
                 'wgsl/mwsr-down-4.wgsl',
                 'wgsl/mwsr-down-9.wgsl',
+                'wgsl/mwsr-sharpen.wgsl',
                 'wgsl/mwsr-up-f16.wgsl',
                 'wgsl/mwsr-up.wgsl',
             ].sort(),
         );
+    });
+
+    it('ships the performance mode by default and the quality pass off', () => {
+        const h = read(join(MWSR, 'cpp', 'mwsr.h'));
+        expect(h).toContain('bool quality = false;');
+        expect(h).toContain('inline Law law(int inW, int inH, int outW, int outH, bool quality = false, bool hdr = false)');
+        const hook = read(join(MWSR, 'libplacebo', 'mwsr-up.hook'));
+        expect(hook).toMatch(/\/\/!PARAM MWSR_QUALITY\n(\/\/![^\n]*\n)+0\n/);
     });
 });
