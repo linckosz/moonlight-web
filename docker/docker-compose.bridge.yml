@@ -32,7 +32,7 @@ services:
       # HTTP — the redirect to HTTPS, and the ACME http-01 challenge if you ever
       # turn Internet Access on. Drop it if you always type https:// yourself.
       - "80:8080/tcp"
-      # WebRTC media, one port per stream slot. See the warning above.
+      # WebRTC media: the port every stream shares, and a slot's own when it cannot. See the warning above.
       - "48550-48573:48550-48573/udp"
 
     volumes:

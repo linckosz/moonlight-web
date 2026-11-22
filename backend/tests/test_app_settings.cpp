@@ -119,55 +119,53 @@ void run_app_settings_tests()
     s.setPacketMarking(false);
     CHECK_EQ(s.packetMarking(), false);
     CHECK_EQ(s.iceTcpPassive(), true);          // listens while the checks run, since 0.4.1
-    CHECK_EQ(s.iceTcp443(), false);             // not until the shared ports are the default
     CHECK_EQ(s.debugIceDropUdp(), false);       // a bench switch, never on by itself
     CHECK_EQ(s.debugDevStandardPorts(), false); // and so is this one
     CHECK_EQ(s.debugIceMuxRefuse(), false);     // and this one
-    // The streams' shared ports: on by themselves only in a build compiled
-    // as the DEV edition. What the file says wins in both kinds of build,
-    // and what is not a boolean asks for nothing in either.
-    for (const bool devBuild : {false, true}) {
-        const auto absent =
-            AppSettings::iceUdpMuxChoice(QJsonValue(QJsonValue::Undefined), devBuild);
-        CHECK_EQ(absent.on, devBuild);
-        CHECK_EQ(absent.byDefault, devBuild);
-        const auto yes = AppSettings::iceUdpMuxChoice(QJsonValue(true), devBuild);
-        CHECK_EQ(yes.on, true);
-        CHECK_EQ(yes.byDefault, false);
-        const auto no = AppSettings::iceUdpMuxChoice(QJsonValue(false), devBuild);
-        CHECK_EQ(no.on, false);
-        CHECK_EQ(no.byDefault, false);
+    // The streams' shared ports and the router's TCP 443, on by default since
+    // 0.4.4 on the systems where a real stream on them has been seen. What the
+    // file says wins, and what is not a boolean asks for nothing.
+    for (const bool onByDefault : {false, true}) {
+        CHECK_EQ(AppSettings::iceUdpMuxChoice(QJsonValue(QJsonValue::Undefined), onByDefault),
+                 onByDefault);
+        CHECK_EQ(AppSettings::iceUdpMuxChoice(QJsonValue(true), onByDefault), true);
+        CHECK_EQ(AppSettings::iceUdpMuxChoice(QJsonValue(false), onByDefault), false);
         for (const QJsonValue& odd :
              {QJsonValue(QJsonValue::Null), QJsonValue(QStringLiteral("true")), QJsonValue(1)}) {
-            const auto other = AppSettings::iceUdpMuxChoice(odd, devBuild);
-            CHECK_EQ(other.on, false);
-            CHECK_EQ(other.byDefault, false);
+            CHECK_EQ(AppSettings::iceUdpMuxChoice(odd, onByDefault), false);
         }
     }
-    // This suite is not the DEV edition: off while the file says nothing,
-    // and the file is never given the key by the server itself.
-    CHECK_EQ(s.iceUdpMux(), false);
-    CHECK_EQ(s.iceUdpMuxByDefault(), false);
+#if defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
+    const bool sharedByDefault = true;
+#else
+    const bool sharedByDefault = false;
+#endif
+    // Nothing in the file yet (the seed has not run): the system's default,
+    // and reading never writes the keys.
+    CHECK_EQ(s.iceUdpMux(), sharedByDefault);
+    CHECK_EQ(s.iceTcp443(), sharedByDefault);
     {
         QFile f(s.m_FilePath);
         CHECK(f.open(QIODevice::ReadOnly));
         QJsonObject edited = QJsonDocument::fromJson(f.readAll()).object();
         f.close();
         CHECK(!edited.contains("ice_udp_mux"));
+        CHECK(!edited.contains("ice_tcp_443"));
         CHECK(!edited.contains("debug_ice_mux_refuse"));
         const QByteArray asFound = QJsonDocument(edited).toJson();
         for (const bool asked : {true, false}) {
             edited["ice_udp_mux"] = asked;
+            edited["ice_tcp_443"] = asked;
             CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
             f.write(QJsonDocument(edited).toJson());
             f.close();
             CHECK_EQ(s.iceUdpMux(), asked);
-            CHECK_EQ(s.iceUdpMuxByDefault(), false);
+            CHECK_EQ(s.iceTcp443(), asked);
         }
         CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
         f.write(asFound);
         f.close();
-        CHECK_EQ(s.iceUdpMux(), false);
+        CHECK_EQ(s.iceUdpMux(), sharedByDefault);
     }
     s.setHdrEnabled(true);
     CHECK_EQ(s.hdrEnabled(), true);
@@ -597,6 +595,35 @@ void run_app_settings_tests()
     s.seedDocumentedDefaults();
     s.audioTimeStretch(); // exercised (value documented as true by default)
     CHECK(s.readAll().contains("native_host_enabled"));
+
+    // The shared ports and TCP 443 are never seeded: absent after the seed,
+    // they follow the code's default, and the owner's word wins over it.
+    {
+        CHECK(!s.readAll().contains("ice_udp_mux"));
+        CHECK(!s.readAll().contains("ice_tcp_443"));
+        CHECK_EQ(s.iceUdpMux(), sharedByDefault);
+        CHECK_EQ(s.iceTcp443(), sharedByDefault);
+        QJsonObject obj = s.readAll();
+        for (const bool asked : {false, true}) {
+            obj["ice_udp_mux"] = asked;
+            obj["ice_tcp_443"] = asked;
+            s.writeAll(obj);
+            s.seedDocumentedDefaults();
+            CHECK_EQ(s.iceUdpMux(), asked);
+            CHECK_EQ(s.iceTcp443(), asked);
+        }
+        obj["ice_tcp_443"] = "yes";
+        s.writeAll(obj);
+        s.seedDocumentedDefaults();
+        CHECK(!s.iceTcp443()); // not a wish, and not taken back by a seed
+        CHECK(s.readAll().value("ice_tcp_443").isString());
+        obj.remove("ice_udp_mux");
+        obj.remove("ice_tcp_443");
+        s.writeAll(obj);
+        s.seedDocumentedDefaults();
+        CHECK(!s.readAll().contains("ice_udp_mux"));
+        CHECK(!s.readAll().contains("ice_tcp_443"));
+    }
 
     // keyboard_layout_fidelity: three values, "auto" by default. A boolean from
     // 0.4.0 or before cannot tell a choice from the seed (false since 19/09),

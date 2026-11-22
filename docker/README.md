@@ -163,7 +163,7 @@ publishing ports can help with the first one only:
   add your hosts by IP address instead — a one-time step, then everything else
   behaves normally.
 - **UPnP.** The router is found by SSDP multicast — same story. Without it,
-  Internet Access cannot open the per-session streaming port for you.
+  Internet Access cannot open the streams' ports on the router for you.
 
 Host networking removes all three at once, and there is nothing to gain from
 isolating a service whose whole job is to be reachable.
@@ -222,7 +222,7 @@ outside the LAN.
 | **80** | TCP | Recommended | Redirect to HTTPS, so `http://server` reaches the app instead of failing. |
 | **48550–48573** | UDP | **Always** (host firewall) | WebRTC media, audio and input. With `ice_udp_mux` off, each stream slot binds `48550 + slot`. With it on, every stream shares one port of 48550–48561 (48550 unless it is taken), and a stream that cannot share binds its own port further up the block (`48562 + slot` for the first twelve slots). Either way the port is bound with or without UPnP, so a host firewall can let the block through; with UPnP the router forwards a port to it (the shared one, or the slot's own). |
 | **48550–48573** | TCP | Networks that block UDP (host firewall) | The same ports in TCP: passive ICE-TCP listens on the port the stream's UDP socket holds. It is how a browser on a network that lets no UDP out reaches the stream. A stateful firewall lets UDP answers back in, but never a TCP connection from outside. |
-| **3478–3481**, **5349–5352** | UDP | With Internet Access (host firewall) | The conferencing ports. With `"ice_udp_mux": true` every stream shares one of them (the first that is free on the machine and on the router) and one port of the media block, so a browser on a network that lets only such ports out still streams over UDP. The rendezvous tunnel takes its own among the same eight. On the port the streams share, a datagram that belongs to no stream is dropped. |
+| **3478–3481**, **5349–5352** | UDP | With Internet Access (host firewall) | The conferencing ports. With `ice_udp_mux` (on by default) every stream shares one of them (the first that is free on the machine and on the router) and one port of the media block, so a browser on a network that lets only such ports out still streams over UDP. The rendezvous tunnel takes its own among the same eight. On the port the streams share, a datagram that belongs to no stream is dropped. |
 | **3478–3481**, **5349–5352**, **46000–46031** | TCP | Networks that block UDP, with Internet Access | The rendezvous tunnel's ports, taken in that order as browsers connect, and forwarded by UPnP. Passive ICE-TCP listens on them as on the media block. Nothing listens there between connections, and during one only a check signed for that connection is admitted. |
 | **47999** | UDP | Legacy Internet Access | Mapped alongside 80/443 only by an install that still holds a legacy `moonlightweb.top` sub-domain. |
 | *ephemeral* | UDP | Fallback | When the slot's port is already taken (a second instance on the same machine), the stream takes another free port of the block. Only when the whole block is taken does libdatachannel take whatever the kernel gives it, which a host firewall blocks. |

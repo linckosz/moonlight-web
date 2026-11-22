@@ -121,39 +121,28 @@ public:
     // false keeps every TCP port closed. Read when each connection is built.
     bool iceTcpPassive() const;
     // ── The UDP ports every stream shares ────────────────────────────────────
-    // JSON bool "ice_udp_mux", file-only, DEFAULT false and not seeded while
-    // the mux is a prototype (docs/design/ice-mux.md). With it the server binds
-    // the streams' UDP ports itself and keeps them, and every stream worker's
-    // ICE agent shares them; without it each stream binds a port of its own,
-    // as before. Read once, when the server starts.
-    // A build compiled as the DEV edition has it on when the file says
-    // nothing: that edition is where the shared ports are tried first. Only
-    // the default differs. A true or a false in the file is obeyed in every
-    // build, and a --dev run of the release build is not the DEV edition.
+    // JSON bool "ice_udp_mux", file-only, DEFAULT true since 0.4.4 on Windows,
+    // Linux and macOS, where a real stream on the shared ports has been seen;
+    // false elsewhere (docs/design/ice-mux.md). Not seeded: absent, it follows
+    // the code's default, which an update can still change. With it the
+    // server binds the streams' UDP ports itself and keeps them, and every
+    // stream worker's ICE agent shares them; false: each stream binds a port
+    // of its own, as in 0.4.3. Read once, when the server starts.
     bool iceUdpMux() const;
-    /// Whether iceUdpMux() is true with nothing in the file asking for it:
-    /// said once in the log when the server starts, with the way to turn it
-    /// off.
-    bool iceUdpMuxByDefault() const;
-    /// The rule of the two, free of the file and of the build: what
-    /// "ice_udp_mux" holds (undefined when the key is absent), in a build
-    /// compiled as the DEV edition or not. A value that is not a boolean
-    /// asks for nothing: off, in every build.
-    struct IceUdpMuxChoice
-    {
-        bool on = false;
-        bool byDefault = false;
-    };
-    static IceUdpMuxChoice iceUdpMuxChoice(const QJsonValue& stored, bool devBuild);
+    /// The rule of "ice_udp_mux" and "ice_tcp_443", free of the file and of
+    /// the system: what the key holds (undefined when it is absent) and the
+    /// default of this system. A value that is not a boolean asks for
+    /// nothing: off.
+    static bool iceUdpMuxChoice(const QJsonValue& stored, bool onByDefault);
     // ── TCP 443 on the router ────────────────────────────────────────────────
-    // JSON bool "ice_tcp_443", file-only, DEFAULT false and not seeded for as
-    // long as "ice_udp_mux" is not. With it, and with ice_udp_mux and
-    // ice_tcp_passive, the host asks its router to forward TCP 443 to the
-    // port its streams share, for a browser on a network that lets out
-    // nothing else: only when it can show, alone, that nobody has 443 and that
-    // it then leads here (network/Tcp443Guard). false: 443 is never asked
-    // for, and an entry this installation holds there is taken off. A host
-    // whose 443 is forwarded by hand has nothing to gain from it.
+    // JSON bool "ice_tcp_443", file-only, DEFAULT as "ice_udp_mux", and not
+    // seeded either. With it, and with ice_udp_mux and ice_tcp_passive, the host asks its
+    // router to forward TCP 443 to the port its streams share, for a browser
+    // on a network that lets out nothing else: only when it can show, alone,
+    // that nobody has 443 and that it then leads here (network/Tcp443Guard).
+    // false: 443 is never asked for, and an entry this installation holds
+    // there is taken off. A host whose 443 is forwarded by hand has nothing to
+    // gain from it.
     bool iceTcp443() const;
     // A DEBUG switch for a bench, never for a user: JSON bool "debug_ice_drop_udp",
     // DEFAULT false, typed into the file by hand. Nothing writes it, not even its

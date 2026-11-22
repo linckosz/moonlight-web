@@ -1,15 +1,13 @@
 # The ports every stream shares (ICE mux)
 
-Status: prototype, behind `"ice_udp_mux": true` in settings.json (default false,
-not seeded). UDP only. The rest of this note says what exists; the last section
-says what does not yet.
-
-A build compiled as the DEV edition, under Windows, Linux and macOS, has it on
-when the file says nothing: that edition is where the shared ports are tried
-before a release has them. Only the default differs: `"ice_udp_mux": false`
-turns it off there as anywhere, a value that is not a boolean asks for nothing,
-and a `--dev` run of the release build is not the DEV edition. Such a server
-says so in one line when it starts, with the port its streams share.
+Status: on by default since 0.4.4 under Windows, Linux and macOS, where a real
+stream on the shared ports has been seen, and off elsewhere unless
+settings.json says true. The key is not seeded: absent, it follows the code's
+default.
+`"ice_udp_mux": false` turns it off, and a value that is not a boolean asks for
+nothing. The server says in one line when it starts that the streams share
+ports, with the port and the way to turn it off. The rest of this note says
+what exists; the last section says what does not yet.
 
 ## Why
 
@@ -351,7 +349,7 @@ Some networks let out TCP 443 and nothing else. For a browser there, the host
 asks its router for one more entry, TCP only: the router's 443 towards the
 stream block's shared port, where the server listens (above). No socket of the
 host binds 443, and its HTTPS port is not involved. It is behind
-`"ice_tcp_443": true` in settings.json (default false, not seeded), needs the
+`"ice_tcp_443"` in settings.json (on by default as `ice_udp_mux` is, not seeded), needs the
 shared ports and `ice_tcp_passive`, UPnP and Internet Access, and is never
 asked for by a DEV identity.
 
@@ -471,8 +469,8 @@ is never handed, or taken, as the other's.
 Every one of these leaves the stream on a socket of its own, as without the
 mux:
 
-- `ice_udp_mux` false, or absent outside the DEV edition (Windows, Linux and
-  macOS);
+- `ice_udp_mux` false, or absent on a system other than Windows, Linux and
+  macOS;
 - no port of the stream block can be bound when the server starts;
 - a port that serves keeps failing to read (the reading thread leaves it alone,
   tries it again every second and says so once): streams that start meanwhile;

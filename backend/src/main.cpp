@@ -3623,15 +3623,12 @@ int main(int argc, char* argv[])
             IceMux::setShared(&g_IceMux);
             routerPorts.setStreamMux([&g_IceMux](uint16_t port) { return g_IceMux.holds(port); });
             muxRouter.attach(&muxPorts);
-            // The DEV edition's default, not a line of settings.json: said once,
-            // with the port and the way to turn it off.
-            if (appSettings.iceUdpMuxByDefault()) {
-                const QString line =
-                    QStringLiteral("[IceMux] on by the DEV edition's default: streams share UDP "
-                                   "port %1; \"ice_udp_mux\": false in settings.json turns it off")
-                        .arg(g_IceMux.port(IceMux::kBlock));
-                qInfo().noquote() << line;
-            }
+            // On by default since 0.4.4: said once, with the port and the way
+            // to turn it off.
+            qInfo().noquote() << QStringLiteral(
+                                     "[IceMux] on: streams share UDP port %1; \"ice_udp_mux\": "
+                                     "false in settings.json turns it off")
+                                     .arg(g_IceMux.port(IceMux::kBlock));
             // The bench key of a stream that refuses its shared ports
             // (streaming/MuxRefuse.h): never on unnoticed.
             if (appSettings.debugIceMuxRefuse())

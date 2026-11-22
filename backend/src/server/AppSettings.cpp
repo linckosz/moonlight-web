@@ -53,6 +53,18 @@ QString g_FileOverride;
 // a read that did not get the file's content is never written back. Per thread:
 // a read and the write it feeds run on the same one.
 thread_local bool t_LastReadIncomplete = false;
+
+// The systems where a real stream on the streams' shared ports has been seen
+// (Windows, Linux, macOS): there "ice_udp_mux" and "ice_tcp_443" are on by
+// default; elsewhere they stay off unless the file says true. Never seeded.
+bool sharedPortsSystem()
+{
+#if defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
+    return true;
+#else
+    return false;
+#endif
+}
 } // namespace
 
 AppSettings::AppSettings()
@@ -543,6 +555,9 @@ void AppSettings::seedDocumentedDefaults()
         obj["ice_tcp_passive"] = true;
         changed = true;
     }
+    // "ice_udp_mux" and "ice_tcp_443" are never seeded: absent, they follow
+    // the code's default (sharedPortsSystem()), which an update can still
+    // change; a value in the file is the owner's own.
     // The administrator's ceilings (AppSettings.h), none until one is written.
     if (!obj.contains("max_allowed_frame_rate")) {
         obj["max_allowed_frame_rate"] = 0;
@@ -1024,42 +1039,25 @@ bool AppSettings::iceTcpPassive() const
     return obj.value("ice_tcp_passive").toBool(true);
 }
 
-AppSettings::IceUdpMuxChoice AppSettings::iceUdpMuxChoice(const QJsonValue& stored, bool devBuild)
+bool AppSettings::iceUdpMuxChoice(const QJsonValue& stored, bool onByDefault)
 {
-    if (stored.isBool()) return {stored.toBool(), false};
-    // Nothing in the file: the build's default. Something that is not a
-    // boolean is no wish for a port.
-    if (stored.isUndefined()) return {devBuild, devBuild};
-    return {false, false};
-}
-
-// The DEV edition's default, on the systems where a real stream on the shared
-// ports has been seen: Windows, Linux and macOS.
-static bool muxOnByDefault()
-{
-#if defined(Q_OS_WIN) || defined(Q_OS_LINUX) || defined(Q_OS_MACOS)
-    return mw::edition::isDevBuild();
-#else
+    if (stored.isBool()) return stored.toBool();
+    // Nothing in the file: the default of this system. Something that is not
+    // a boolean is no wish for a port.
+    if (stored.isUndefined()) return onByDefault;
     return false;
-#endif
 }
 
 bool AppSettings::iceUdpMux() const
 {
     QJsonObject obj = readAll();
-    return iceUdpMuxChoice(obj.value("ice_udp_mux"), muxOnByDefault()).on;
-}
-
-bool AppSettings::iceUdpMuxByDefault() const
-{
-    QJsonObject obj = readAll();
-    return iceUdpMuxChoice(obj.value("ice_udp_mux"), muxOnByDefault()).byDefault;
+    return iceUdpMuxChoice(obj.value("ice_udp_mux"), sharedPortsSystem());
 }
 
 bool AppSettings::iceTcp443() const
 {
     QJsonObject obj = readAll();
-    return obj.value("ice_tcp_443").toBool(false);
+    return iceUdpMuxChoice(obj.value("ice_tcp_443"), sharedPortsSystem());
 }
 
 bool AppSettings::debugIceDropUdp() const
