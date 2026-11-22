@@ -64,16 +64,6 @@ bool refusedInName(char32_t c)
            c == 0xFFFD;
 }
 
-bool isCombiningMark(char32_t c)
-{
-    switch (QChar::category(c)) {
-    case QChar::Mark_NonSpacing:
-    case QChar::Mark_SpacingCombining:
-    case QChar::Mark_Enclosing: return true;
-    default: return false;
-    }
-}
-
 } // namespace
 
 QString appIconName(const QString& name)
@@ -84,21 +74,6 @@ QString appIconName(const QString& name)
     for (const uint c : points)
         if (refusedInName(char32_t(c))) return {};
     return name;
-}
-
-QString appIconShortName(const QString& name)
-{
-    const QString whole = appIconName(name);
-    const QList<uint> points = QStringView(whole).toUcs4();
-    if (points.size() <= kAppIconShortNameMax) return whole;
-    // Cut between two code points, never inside a surrogate pair, and never
-    // between a letter and the marks that follow it: such a letter goes with
-    // them rather than stand there without its accent.
-    qsizetype cut = kAppIconShortNameMax;
-    while (cut > 0 && isCombiningMark(char32_t(points.at(cut))))
-        --cut;
-    static_assert(sizeof(uint) == sizeof(char32_t));
-    return QString::fromUcs4(reinterpret_cast<const char32_t*>(points.constData()), cut).trimmed();
 }
 
 QString appIconNameAsked(const QString& queryValue)
@@ -121,7 +96,7 @@ QString shownMachineName(const QString& machineName, bool signedIn)
 QString AppIconNames::shown() const
 {
     const QString own = appIconName(shortName);
-    return own.isEmpty() ? appIconShortName(name) : own;
+    return own.isEmpty() ? appIconName(name) : own;
 }
 
 AppIconNames appIconNamesAsked(const QString& n, bool nRepeated, const QString& s, bool sRepeated)
@@ -188,8 +163,9 @@ QByteArray manifest(const QByteArray& json, const QString& title, const QString&
     // the machine or the edition either. Only the names the page that made it
     // wrote into the request, given back as they were, each once it holds as a
     // name (appIconName): labels, and the alias alone says what opens. The
-    // short name, the one under the icon, is the app's (I63SHORT); without one,
-    // the name cut short.
+    // short name is the one a phone proposes for the icon: the name whole
+    // (I63FULL), the phone cutting it under the icon itself; a short name of
+    // its own only for an icon made before, which still asks for one.
     if (!go.isEmpty()) {
         obj.remove(QStringLiteral("name"));
         obj.remove(QStringLiteral("short_name"));

@@ -136,8 +136,8 @@ export function appIconAddress(alias) {
  * here rather than asked of the host, so the alias is never in an address
  * that goes out: `go=` first in the fragment of where it opens, the application
  * named apart in its `id` (one icon per app), and no names but @p name, the
- * icon's, and @p shortName, the one under it (the app alone), each when it
- * holds as one (appIconName); without a short name, the name cut short. The
+ * icon's, and @p shortName, each when it holds as one (appIconName); without a
+ * short name, the short name is the name whole (I63FULL). The
  * same shape and rules as the host's own (server/HomeScreenShell.cpp
  * manifest). Anything but an alias: unchanged.
  */
@@ -156,16 +156,15 @@ export function manifestWithAppLink(manifest, alias, name = '', shortName = '') 
     delete out.short_name;
     const shown = appIconName(name);
     // A short name refused counts as none; it never stands for the name.
-    const under = appIconName(shortName) || appIconShortName(shown);
+    const under = appIconName(shortName) || shown;
     if (shown) out.name = shown;
     if (under) out.short_name = under;
     return out;
 }
 
-/** The longest name an icon is given, and its short name, in code points
- *  (server/HomeScreenShell.h kAppIconNameMax, kAppIconShortNameMax). */
+/** The longest name an icon is given, in code points
+ *  (server/HomeScreenShell.h kAppIconNameMax). */
 const NAME_MAX = 64;
-const SHORT_NAME_MAX = 12;
 
 /** What a name may not hold, refused whole: the host's own list
  *  (HomeScreenShell.cpp refusedInName). */
@@ -192,17 +191,6 @@ export function appIconName(name) {
     const points = Array.from(name, (ch) => ch.codePointAt(0));
     if (points.length > NAME_MAX || points.some(refusedInName)) return '';
     return name;
-}
-
-/** appIconName(@p name) cut to 12 code points, never between a letter and its
- *  marks (HomeScreenShell.h appIconShortName). */
-export function appIconShortName(name) {
-    const whole = appIconName(name);
-    const chars = Array.from(whole);
-    if (chars.length <= SHORT_NAME_MAX) return whole;
-    let cut = SHORT_NAME_MAX;
-    while (cut > 0 && /\p{M}/u.test(chars[cut])) cut -= 1;
-    return chars.slice(0, cut).join('').trim();
 }
 
 /**

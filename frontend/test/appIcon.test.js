@@ -211,9 +211,10 @@ describe('the manifest the worker’s cache holds', () => {
     it('is named after the icon when its name holds, and nothing otherwise', async () => {
         const { manifestWithAppLink } = await loadAt('/');
         const bare = manifestWithAppLink(machine, ALIAS);
-        const named = manifestWithAppLink(machine, ALIAS, 'DualRTX · Steam · MoonlightWeb');
-        expect(named.name).toBe('DualRTX · Steam · MoonlightWeb');
-        expect(named.short_name).toBe('DualRTX · St');
+        const named = manifestWithAppLink(machine, ALIAS, 'Steam - DualRTX - MoonlightWeb');
+        expect(named.name).toBe('Steam - DualRTX - MoonlightWeb');
+        // I63FULL: the name whole is the one a phone proposes, never cut here.
+        expect(named.short_name).toBe('Steam - DualRTX - MoonlightWeb');
         expect(named.start_url).toBe(bare.start_url);
         expect(named.id).toBe(bare.id);
         for (const hostile of [
@@ -230,10 +231,12 @@ describe('the manifest the worker’s cache holds', () => {
             expect(manifestWithAppLink(machine, ALIAS, hostile)).toEqual(bare);
     });
 
-    // I63SHORT, as the host does it (test_app_links.cpp, "the icon's short name").
-    it('puts the app alone under the icon, each name checked on its own', async () => {
+    // I63FULL, as the host does it (test_app_links.cpp, "the icon's short
+    // name"): the name whole, unless a short name of its own is given — the one
+    // an icon made before I63FULL still asks for.
+    it('proposes the name whole, or a short name given, each checked on its own', async () => {
         const { manifestWithAppLink } = await loadAt('/');
-        const name = 'DualRTX · Display 1 · MoonlightWeb';
+        const name = 'Display 1 - DualRTX - MoonlightWeb';
         const both = manifestWithAppLink(machine, ALIAS, name, 'Display 1');
         expect(both.name).toBe(name);
         expect(both.short_name).toBe('Display 1');
@@ -241,11 +244,13 @@ describe('the manifest the worker’s cache holds', () => {
             'abcdefghijklm',
         );
         expect(manifestWithAppLink(machine, ALIAS, name, 'Pokémon').short_name).toBe('Pokémon');
-        expect(manifestWithAppLink(machine, ALIAS, name).short_name).toBe('DualRTX · Di');
+        expect(manifestWithAppLink(machine, ALIAS, name).short_name).toBe(name);
+        const longest = '🎮'.repeat(64);
+        expect(manifestWithAppLink(machine, ALIAS, longest).short_name).toBe(longest);
         for (const bad of ['a‮b', 'a​b', 'a\u0000b', 'a�b', 'a\uD800b', 'a'.repeat(65), '  ']) {
             const badShort = manifestWithAppLink(machine, ALIAS, name, bad);
             expect(badShort.name).toBe(name);
-            expect(badShort.short_name).toBe('DualRTX · Di');
+            expect(badShort.short_name).toBe(name);
             const badName = manifestWithAppLink(machine, ALIAS, bad, 'Display 1');
             expect(badName).not.toHaveProperty('name');
             expect(badName.short_name).toBe('Display 1');
@@ -257,15 +262,12 @@ describe('the manifest the worker’s cache holds', () => {
         expect(manifestWithAppLink(machine, 'x7Kq2#k=AA', name, 'Display 1')).toBe(machine);
     });
 
-    it('checks a name as the host does: code points, and a letter kept with its marks', async () => {
-        const { appIconName, appIconShortName } = await loadAt('/');
+    it('checks a name as the host does: in code points', async () => {
+        const { appIconName } = await loadAt('/');
         const emoji = '🎮'.repeat(64);
         expect(appIconName('a'.repeat(64))).toBe('a'.repeat(64));
         expect(appIconName(emoji)).toBe(emoji);
         expect(appIconName(`${emoji}a`)).toBe('');
-        expect(appIconShortName(emoji)).toBe('🎮'.repeat(12));
-        expect(appIconShortName('abcdefghijkéxyz')).toBe('abcdefghijk');
-        expect(appIconShortName('abcdefghijkĺ')).toBe('abcdefghijk');
         expect(appIconName(null)).toBe('');
     });
 

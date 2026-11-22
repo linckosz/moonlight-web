@@ -108,7 +108,8 @@ describe('making a link’s icon through the introduction server', () => {
         // Named after the icon by the page itself (I63NAME): nothing asked.
         expect(store.held()).toEqual({
             name: 'Display 1 · PC',
-            short_name: 'Display 1 ·',
+            // I63FULL: the name whole is the one a phone proposes.
+            short_name: 'Display 1 · PC',
             start_url: `/${ID}#go=${ALIAS}&k=K_1`,
             id: `/${ID}?go=${ALIAS}`,
         });
@@ -122,12 +123,12 @@ describe('making a link’s icon through the introduction server', () => {
         expect(mark()).toMatchObject({ alias: ALIAS, title: 'Display 1 · PC' });
     });
 
-    it('puts the app alone under the icon through the tunnel too (I63SHORT)', async () => {
+    it('proposes the name whole through the tunnel too (I63FULL)', async () => {
         const store = workerCache();
-        await MoonlightApp._makeAppIcon(ALIAS, 'PC · Display 1 · MoonlightWeb', 'Display 1');
+        await MoonlightApp._makeAppIcon(ALIAS, 'Display 1 - PC - MoonlightWeb');
         expect(store.held()).toMatchObject({
-            name: 'PC · Display 1 · MoonlightWeb',
-            short_name: 'Display 1',
+            name: 'Display 1 - PC - MoonlightWeb',
+            short_name: 'Display 1 - PC - MoonlightWeb',
         });
         for (const [url] of fetch.mock.calls) expect(String(url)).not.toContain('Display');
     });
@@ -156,15 +157,13 @@ describe('making a link’s icon straight to the host', () => {
         expect(mark()).toMatchObject({ alias: ALIAS });
     });
 
-    it('sends the app alone as the short name, when it holds (I63SHORT)', async () => {
+    it('sends the name alone, no short name: the host proposes it whole (I63FULL)', async () => {
         vi.stubGlobal('fetch', vi.fn());
-        await MoonlightApp._makeAppIcon(ALIAS, 'PC · Display 1 · MoonlightWeb', 'Display 1');
+        await MoonlightApp._makeAppIcon(ALIAS, 'Display 1 - PC - MoonlightWeb');
         expect(open).toHaveBeenCalledWith(
-            `/?icon=${ALIAS}&n=PC%20%C2%B7%20Display%201%20%C2%B7%20MoonlightWeb&s=Display%201`,
+            `/?icon=${ALIAS}&n=Display%201%20-%20PC%20-%20MoonlightWeb`,
         );
-        open.mockClear();
-        await MoonlightApp._makeAppIcon(ALIAS, 'PC · Display 1', 'Display‮1');
-        expect(open).toHaveBeenCalledWith(`/?icon=${ALIAS}&n=PC%20%C2%B7%20Display%201`);
+        expect(String(open.mock.calls[0][0])).not.toContain('&s=');
     });
 
     it('sends no name that would not hold as one', async () => {

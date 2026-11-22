@@ -90,7 +90,7 @@ import { touchPadSettings } from './stream/TouchPadState.js';
 import { BackendClient, isLaunchKeyRefusal } from './api/BackendClient.js';
 import { Toast } from './ui/Toast.js';
 import { showAppLinkShortcut, closeAppLinkShortcut } from './ui/AppLinkShortcut.js';
-import { appIconName, appIconShortName as appIconShortTitle } from './ui/AppShortcutSheet.js';
+import { appIconName } from './ui/AppShortcutSheet.js';
 import { showAppLinkLoader, hideAppLinkLoader } from './ui/AppLinkLoader.js';
 import { DiscordLink } from './ui/DiscordLink.js';
 import * as RemoteNav from './ui/RemoteNav.js';
@@ -1830,7 +1830,7 @@ export const MoonlightApp = {
      * where there is nothing to prepare: no tunnel, or a shortcut. The console
      * says which of the first two it was.
      */
-    async _offerHomeScreenHandoff(appLink = null, appName = '', appShortName = '') {
+    async _offerHomeScreenHandoff(appLink = null, appName = '') {
         try {
             localStorage.removeItem(SIDE_KEYS_STORE);
         } catch {
@@ -1860,7 +1860,7 @@ export const MoonlightApp = {
             // link's icon is named after its app and its host, here as by the
             // page (_showAppIcon).
             const title = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-            if (go) manifest = manifestWithAppLink(manifest, go, appName, appShortName);
+            if (go) manifest = manifestWithAppLink(manifest, go, appName);
             else if (title && typeof manifest.name === 'string' && manifest.name)
                 title.setAttribute('content', manifest.name);
             // The bootstrap's cache, under the file's own name: what the worker
@@ -1973,7 +1973,7 @@ export const MoonlightApp = {
             }
             return;
         }
-        await this._makeAppIcon(alias, title, appIconShortTitle(app));
+        await this._makeAppIcon(alias, title);
     },
 
     /**
@@ -1983,14 +1983,14 @@ export const MoonlightApp = {
      * tab first: straight to the host on "/?icon=<alias>", whose shell names the
      * link's manifest; through the introduction server on its own address, once
      * the worker's cache holds that manifest — only the fragment changes, and
-     * the alias is in no request. @p title names the icon, @p shortTitle (the
-     * app alone) is the name under it.
+     * the alias is in no request. @p title names the icon, and is the name a
+     * phone proposes for it as well (I63FULL).
      */
-    async _makeAppIcon(alias, title, shortTitle = '') {
+    async _makeAppIcon(alias, title) {
         closeAppLinkShortcut({ reload: false });
         if (tunnelHostId()) {
             if (
-                (await this._offerHomeScreenHandoff(alias, title, shortTitle)) !== 'ready' ||
+                (await this._offerHomeScreenHandoff(alias, title)) !== 'ready' ||
                 !markAppIcon(alias, title)
             ) {
                 Toast.error(t('appLink.makeFailed'));
@@ -2019,15 +2019,11 @@ export const MoonlightApp = {
             return;
         }
         // The icon's names go with the request, for the host to give back in
-        // the manifest: it looks nothing up (server/HomeScreenShell.h). Each
-        // only when it holds as one.
+        // the manifest: it looks nothing up (server/HomeScreenShell.h). Only
+        // when it holds as one. The name alone: the host gives it back as the
+        // short name too (I63FULL).
         const name = heldAsIconName(title);
-        const shortName = heldAsIconName(shortTitle);
-        this._openAddress(
-            `/?icon=${alias}` +
-                (name ? `&n=${encodeURIComponent(name)}` : '') +
-                (shortName ? `&s=${encodeURIComponent(shortName)}` : ''),
-        );
+        this._openAddress(`/?icon=${alias}` + (name ? `&n=${encodeURIComponent(name)}` : ''));
     },
 
     /**

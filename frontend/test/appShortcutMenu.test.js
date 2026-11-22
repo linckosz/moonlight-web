@@ -35,7 +35,7 @@ import { HostListView } from '../js/ui/HostListView.js';
 import { Host } from '../js/models/Host.js';
 import { BackendClient } from '../js/api/BackendClient.js';
 import { Toast } from '../js/ui/Toast.js';
-import { appIconName, appIconShortName, pickAppForShortcut } from '../js/ui/AppShortcutSheet.js';
+import { appIconName, pickAppForShortcut } from '../js/ui/AppShortcutSheet.js';
 
 const HOST = {
     uuid: 'h1',
@@ -54,15 +54,17 @@ const sheet = () => document.querySelector('.app-shortcut-sheet');
 
 describe('the name of a link’s home-screen icon', () => {
     it.each([
+        // I63FULL: the app, then the machine, then MoonlightWeb.
         [
             'DualRTX — MoonlightWeb Host',
             'MoonlightWeb Virtual Display',
-            'DualRTX · Virtual Display · MoonlightWeb',
+            'Virtual Display - DualRTX - MoonlightWeb',
         ],
-        ['DualRTX — MoonlightWeb Host', 'Display 1', 'DualRTX · Display 1 · MoonlightWeb'],
-        ['Living room', 'Steam Big Picture', 'Living room · Steam Big Picture · MoonlightWeb'],
-        ['UM790Pro', 'MoonlightWeb', 'UM790Pro · MoonlightWeb · MoonlightWeb'],
-        ['', 'Desktop', 'Desktop · MoonlightWeb'],
+        ['DualRTX — MoonlightWeb Host', 'Display 1', 'Display 1 - DualRTX - MoonlightWeb'],
+        ['Living room', 'Steam Big Picture', 'Steam Big Picture - Living room - MoonlightWeb'],
+        ['UM790Pro', 'MoonlightWeb', 'MoonlightWeb - UM790Pro - MoonlightWeb'],
+        ['', 'Desktop', 'Desktop - MoonlightWeb'],
+        ['UM790Pro', '  ', 'UM790Pro - MoonlightWeb'],
     ])('%s / %s → %s', (host, app, name) => {
         expect(appIconName({ displayName: host }, { displayName: app })).toBe(name);
     });
@@ -70,16 +72,8 @@ describe('the name of a link’s home-screen icon', () => {
     it('keeps a name the user gave the machine as it is', () => {
         const host = new Host({ ...HOST, customName: 'Bureau — MoonlightWeb Host 2' });
         expect(appIconName(host, APPS[1])).toBe(
-            'Bureau — MoonlightWeb Host 2 · Display 1 · MoonlightWeb',
+            'Display 1 - Bureau — MoonlightWeb Host 2 - MoonlightWeb',
         );
-    });
-
-    // I63SHORT: under the icon, the app alone, as it reads in the name.
-    it('gives the app alone as the short name', () => {
-        expect(appIconShortName(APPS[0])).toBe('Virtual Display');
-        expect(appIconShortName(APPS[1])).toBe('Display 1');
-        expect(appIconShortName({ displayName: 'MoonlightWeb' })).toBe('MoonlightWeb');
-        expect(appIconShortName({ displayName: '  ' })).toBe('');
     });
 });
 
@@ -152,14 +146,14 @@ describe('the host’s ⋮ menu entry', () => {
         const options = [...sheet().querySelectorAll('option')].map((o) => o.textContent);
         expect(options).toEqual(['MoonlightWeb Virtual Display', 'Display 1', 'Steam Big Picture']);
         expect(sheet().querySelector('[data-name]').textContent).toBe(
-            'DualRTX · Virtual Display · MoonlightWeb',
+            'Virtual Display - DualRTX - MoonlightWeb',
         );
 
         const select = sheet().querySelector('select');
         select.value = '2';
         select.dispatchEvent(new Event('change'));
         expect(sheet().querySelector('[data-name]').textContent).toBe(
-            'DualRTX · Display 1 · MoonlightWeb',
+            'Display 1 - DualRTX - MoonlightWeb',
         );
         sheet().querySelector('[data-answer="yes"]').click();
         await made;

@@ -35,31 +35,25 @@ function machineName(host) {
     return name.endsWith(OWN_HOST_SUFFIX) ? name.slice(0, -OWN_HOST_SUFFIX.length).trim() : name;
 }
 
+/** The app's name as the icon gives it: one named after MoonlightWeb drops it,
+ *  since the icon's name ends with it anyway. */
+function appName(app) {
+    const full = String((app && app.displayName) || '').trim();
+    return full.replace(/^MoonlightWeb\s+/i, '').trim() || full;
+}
+
 /**
- * The name of a link's home-screen icon: the machine, then the app, then
- * MoonlightWeb — "DualRTX · Virtual Display · MoonlightWeb". The one under the
- * icon is appIconShortName's; an app named after MoonlightWeb drops it here,
- * since it ends the name anyway.
+ * The name of a link's home-screen icon: the app, then the machine, then
+ * MoonlightWeb — "Display 1 - DualRTX - MoonlightWeb" (I63FULL). It is also
+ * the name a phone proposes for the icon, and the phone cuts it under the icon
+ * itself: the app first is what stays in sight.
  *
  * @param {{ displayName?: string }} host
  * @param {{ displayName?: string }} app
  * @returns {string}
  */
 export function appIconName(host, app) {
-    return [machineName(host), appIconShortName(app), 'MoonlightWeb'].filter(Boolean).join(' · ');
-}
-
-/**
- * The name under a link's home-screen icon: the app alone — "Virtual Display"
- * (I63SHORT). A phone shows a short name there, and cut from the whole name it
- * read "DualRTX · Vi".
- *
- * @param {{ displayName?: string }} app
- * @returns {string}
- */
-export function appIconShortName(app) {
-    const full = String((app && app.displayName) || '').trim();
-    return full.replace(/^MoonlightWeb\s+/i, '').trim() || full;
+    return [appName(app), machineName(host), 'MoonlightWeb'].filter(Boolean).join(' - ');
 }
 
 /**

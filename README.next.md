@@ -101,7 +101,7 @@ From the in‑app overlay: **bitrate** (1–150 Mbps or auto), **resolution** (7
 
 **Settings → Start streams in fullscreen** (off by default) opens every stream in fullscreen. On an iPhone, Safari keeps its bars and the stream fills the page; added to the Home Screen, MoonlightWeb is fullscreen anyway.
 
-**One app, one tap.** A host’s menu offers **App shortcut…** (**Create home app** on a touch screen): pick an app or a display, then copy its link, or add the page to your Home Screen from the browser’s menu. The icon is named after the PC and the app, and opens that app straight away, with the same sign-in and the same questions as a tap on its card. The link names the app only after its `#`, so no server on the way learns which app is opened, and pairing the host again keeps it working. Not on a multi-seat host, in a booth, or for a guest.
+**One app, one tap.** A host’s menu offers **App shortcut…** (**Create home app** on a touch screen): pick an app or a display, then copy its link, or add the page to your Home Screen from the browser’s menu. The icon is named after the app and the PC, and opens that app straight away, with the same sign-in and the same questions as a tap on its card. The link names the app only after its `#`, so no server on the way learns which app is opened, and pairing the host again keeps it working. Not on a multi-seat host, in a booth, or for a guest.
 
 <div align="center">
 

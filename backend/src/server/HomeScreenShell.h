@@ -93,18 +93,17 @@ QByteArray shell(const QByteArray& html, const QString& title, const QByteArray&
  * "/manifest.webmanifest?go=<alias>&n=<name>&s=<short name>".
  *
  * Both answers depend on the request alone: the alias's shape, and the names
- * the page wrote — the host, the app and the edition as the icon's name, the
- * app alone as its short name, the one under the icon — given back as they
- * were. No store is asked, no session
+ * the page wrote — the app, the host and the edition as the icon's name, and
+ * as its short name too unless an icon made before asks for one of its own —
+ * given back as they were. No store is asked, no session
  * read, no host named, so they tell nobody whether an alias exists, nor what it
  * opens; whoever learns the name wrote it. Through the tunnel neither applies —
  * there the page writes that manifest into the service worker's cache, and no
  * alias ever travels in an address the introduction server could see.
  */
 
-/// The longest name an icon is given, and its short name, in code points.
+/// The longest name an icon is given, in code points.
 inline constexpr qsizetype kAppIconNameMax = 64;
-inline constexpr qsizetype kAppIconShortNameMax = 12;
 /// Past this many bytes, percent-encoded, a name is not read at all; and past
 /// this many for the two together, neither is.
 inline constexpr qsizetype kAppIconNameQueryMax = 512;
@@ -117,10 +116,6 @@ inline constexpr qsizetype kAppIconNamesQueryMax = 768;
 /// never cleaned.
 QString appIconName(const QString& name);
 
-/// appIconName(@p name) cut to kAppIconShortNameMax code points, between two
-/// code points and never between a letter and its marks.
-QString appIconShortName(const QString& name);
-
 /// The name a request's `n` asks for, from its value as HttpParser keeps it
 /// (QUrl::PrettyDecoded, a few escapes left in): decoded the rest of the way,
 /// or empty, unread, past kAppIconNameQueryMax bytes once encoded. Still to be
@@ -131,12 +126,12 @@ QString appIconNameAsked(const QString& queryValue);
 /// when it does not hold. A short name refused counts as none at all.
 struct AppIconNames
 {
-    QString name;      ///< n: the icon's name, "host · app · edition"
-    QString shortName; ///< s: the one under the icon, the app alone
+    QString name;      ///< n: the icon's name, "app - host - edition"
+    QString shortName; ///< s: only an icon made before I63FULL asks for one
 
-    /// The manifest's short_name: the short name when there is one, else the
-    /// name cut to kAppIconShortNameMax. Never the other way round: a short
-    /// name never stands for the name.
+    /// The manifest's short_name, the name a phone proposes for the icon: the
+    /// short name when there is one, else the name whole (I63FULL). Never the
+    /// other way round: a short name never stands for the name.
     QString shown() const;
 };
 

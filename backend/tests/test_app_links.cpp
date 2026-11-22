@@ -597,8 +597,8 @@ void run_app_links_tests()
             "icons": [ { "src": "assets/icon-192.png" }, { "src": "assets/icon-512.png" } ]
         })";
 
-        // In the manifest, as JSON: the name whole, the short name cut to 12
-        // code points; where it opens and its id the alias's alone (C6).
+        // In the manifest, as JSON: the name whole, and as the short name too,
+        // never cut (I63FULL); where it opens and its id the alias's alone (C6).
         const QJsonObject named =
             QJsonDocument::fromJson(hs::manifest(json, QString(), QString(), QString(), "", "",
                                                  alias, hs::AppIconNames{name, {}}))
@@ -607,7 +607,7 @@ void run_app_links_tests()
                                                                       QString(), "", "", alias))
                                      .object();
         CHECK_EQ(named["name"].toString(), name);
-        CHECK_EQ(named["short_name"].toString(), QString::fromUtf8("DualRTX \xC2\xB7 St"));
+        CHECK_EQ(named["short_name"].toString(), name);
         CHECK_EQ(named["start_url"].toString(), bare["start_url"].toString());
         CHECK_EQ(named["id"].toString(), bare["id"].toString());
         CHECK_EQ(named["scope"].toString(), bare["scope"].toString());
@@ -645,7 +645,6 @@ void run_app_links_tests()
         };
         for (const QString& hostile : refused) {
             CHECK(hs::appIconName(hostile).isEmpty());
-            CHECK(hs::appIconShortName(hostile).isEmpty());
             CHECK_EQ(hs::manifest(json, QString(), QString(), QString(), "", "", alias,
                                   hs::AppIconNames{hostile, {}}),
                      hs::manifest(json, QString(), QString(), QString(), "", "", alias));
@@ -659,8 +658,12 @@ void run_app_links_tests()
             emoji += QString::fromUtf8("\xF0\x9F\x8E\xAE");
         CHECK_EQ(hs::appIconName(emoji), emoji);
         CHECK_EQ(hs::appIconName(emoji + "a"), QString());
-        // Cut between two code points, never inside a pair.
-        CHECK_EQ(hs::appIconShortName(emoji), emoji.left(24));
+        // The longest name, whole as the short name too: nothing cuts it.
+        CHECK_EQ(QJsonDocument::fromJson(hs::manifest(json, QString(), QString(), QString(), "", "",
+                                                      alias, hs::AppIconNames{emoji, {}}))
+                     .object()["short_name"]
+                     .toString(),
+                 emoji);
 
         const QString script = QStringLiteral("<script>alert(\"x\")</script> & 'q'");
         const QByteArray scripted = hs::appIconShell(html, alias, hs::AppIconNames{script, {}});
@@ -674,14 +677,6 @@ void run_app_links_tests()
         CHECK_EQ(QJsonDocument::fromJson(scriptedJson).object()["name"].toString(), script);
         CHECK_EQ(QJsonDocument::fromJson(scriptedJson).object()["start_url"].toString(),
                  QStringLiteral("/#go=x7Kq2AbC90"));
-
-        // The short name never leaves a letter without the marks that follow
-        // it: "e" and its combining acute at the cut go together.
-        const QString marked =
-            QStringLiteral("abcdefghijk") + QStringLiteral("e") + QChar(0x0301) + "xyz";
-        CHECK_EQ(hs::appIconShortName(marked), QStringLiteral("abcdefghijk"));
-        CHECK_EQ(hs::appIconShortName(QStringLiteral("abcdefghijkl") + QChar(0x0301)),
-                 QStringLiteral("abcdefghijk"));
 
         // As the request carries it (C9): what HttpParser left encoded is
         // decoded here, %00 becomes a NUL that appIconName then refuses, and
@@ -705,14 +700,15 @@ void run_app_links_tests()
                  html);
     }
 
-    // I63SHORT: the name under the icon is the app's alone (s=), checked on its
-    // own as the name is (C1-C10). A short name refused counts as none: the
-    // name cut short then, as before. A short name never stands for the name.
-    SECTION("app links — the icon's short name, the app alone");
+    // I63FULL: the short name, the one a phone proposes for the icon, is the
+    // name whole. A short name of its own (s=) only for an icon made before,
+    // which still asks for one: checked on its own as the name is (C1-C10),
+    // and refused, it counts as none. A short name never stands for the name.
+    SECTION("app links — the icon's short name, the name whole");
     {
         namespace hs = mw::homescreen;
         const QString alias = QStringLiteral("x7Kq2AbC90");
-        const QString name = QString::fromUtf8("DualRTX \xC2\xB7 Display 1 \xC2\xB7 MoonlightWeb");
+        const QString name = QStringLiteral("Display 1 - DualRTX - MoonlightWeb");
         const QString app = QStringLiteral("Display 1");
         const QByteArray html = "<head>\n"
                                 "<title>MoonlightWeb</title>\n"
@@ -726,8 +722,8 @@ void run_app_links_tests()
                 .object();
         };
 
-        // Both: the name whole, the app alone under the icon, not cut — 13 code
-        // points and a combining mark kept as they are.
+        // Both (an icon made before I63FULL): the name whole, the short name
+        // given as it is, not cut — 13 code points and a combining mark kept.
         CHECK_EQ(made({name, app}, alias)["name"].toString(), name);
         CHECK_EQ(made({name, app}, alias)["short_name"].toString(), app);
         const QString thirteen = QStringLiteral("abcdefghijklm");
@@ -739,9 +735,10 @@ void run_app_links_tests()
                  made({}, alias)["start_url"].toString());
         CHECK_EQ(made({name, app}, alias)["id"].toString(), made({}, alias)["id"].toString());
 
-        // No short name, or one refused: the name cut short, as before.
-        CHECK_EQ(made({name, QString()}, alias)["short_name"].toString(),
-                 QString::fromUtf8("DualRTX \xC2\xB7 Di"));
+        // No short name, or one refused: the name whole, never cut (I63FULL).
+        CHECK_EQ(made({name, QString()}, alias)["short_name"].toString(), name);
+        const QString longer = QStringLiteral("Steam Big Picture - Living room - MoonlightWeb");
+        CHECK_EQ(made({longer, QString()}, alias)["short_name"].toString(), longer);
         // Each refused on its own, with no effect on the other.
         const QStringList hostile = {QStringLiteral("a") + QChar(0x202E) + "b",
                                      QStringLiteral("a") + QChar(0x200B) + "b",
@@ -753,7 +750,7 @@ void run_app_links_tests()
         for (const QString& bad : hostile) {
             const QJsonObject badShort = made({name, bad}, alias);
             CHECK_EQ(badShort["name"].toString(), name);
-            CHECK_EQ(badShort["short_name"].toString(), QString::fromUtf8("DualRTX \xC2\xB7 Di"));
+            CHECK_EQ(badShort["short_name"].toString(), name);
             const QJsonObject badName = made({bad, app}, alias);
             // The short name alone, and it never becomes the name.
             CHECK(!badName.contains("name"));
@@ -774,7 +771,11 @@ void run_app_links_tests()
         const QByteArray shell = hs::appIconShell(html, alias, hs::AppIconNames{name, app});
         CHECK(shell.contains(
             "href=\"/manifest.webmanifest?go=x7Kq2AbC90"
-            "&amp;n=DualRTX%20%C2%B7%20Display%201%20%C2%B7%20MoonlightWeb&amp;s=Display%201\""));
+            "&amp;n=Display%201%20-%20DualRTX%20-%20MoonlightWeb&amp;s=Display%201\""));
+        // The name alone, as a page asks for it since I63FULL: no s= written.
+        const QByteArray nameOnly = hs::appIconShell(html, alias, hs::AppIconNames{name, {}});
+        CHECK(nameOnly.contains("&amp;n=Display%201%20-%20DualRTX%20-%20MoonlightWeb\""));
+        CHECK(!nameOnly.contains("&amp;s="));
         CHECK(shell.contains("<title>MoonlightWeb</title>"));
         const QByteArray noShort =
             hs::appIconShell(html, alias, hs::AppIconNames{name, hostile.first()});
