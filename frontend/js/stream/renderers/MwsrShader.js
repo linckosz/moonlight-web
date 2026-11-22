@@ -937,6 +937,189 @@ ${downSharpenWgsl()}`
 `;
 }
 
+// The quad's slopes where the GPU takes dpdxCoarse per pixel (`quad: 'emulate'`,
+// chosen by the renderer's probe, mwsrQuadVerdict()): Chrome on a Mac does,
+// where Direct3D and WARP keep one slope per 2×2 quad. Inside a quad a fine
+// slope along x differs between its two rows; the second row takes back the
+// first's by its own slope along y, the row's parity told by the slope of the
+// parity itself, so the quad's alignment and the axis's direction need not be
+// known. On a GPU whose fine slopes are coarse already, the term is 0.
+const QUAD_WGSL = `
+fn mwsrSecondRow(pos : vec4f) -> bool {
+    let p = f32(u32(pos.y) & 1u);
+    return (dpdyFine(p) > 0.0) == (p > 0.5);
+}
+
+fn mwsrSecondCol(pos : vec4f) -> bool {
+    let p = f32(u32(pos.x) & 1u);
+    return (dpdxFine(p) > 0.0) == (p > 0.5);
+}
+
+fn mwsrQdx1(v : f32, pos : vec4f) -> f32 {
+    let d = dpdxFine(v);
+    return d - select(0.0, dpdyFine(d), mwsrSecondRow(pos));
+}
+
+fn mwsrQdy1(v : f32, pos : vec4f) -> f32 {
+    let d = dpdyFine(v);
+    return d - select(0.0, dpdxFine(d), mwsrSecondCol(pos));
+}
+
+fn mwsrQdx3(v : vec3f, pos : vec4f) -> vec3f {
+    let d = dpdxFine(v);
+    return d - select(vec3f(0.0), dpdyFine(d), mwsrSecondRow(pos));
+}
+
+fn mwsrQdy3(v : vec3f, pos : vec4f) -> vec3f {
+    let d = dpdyFine(v);
+    return d - select(vec3f(0.0), dpdxFine(d), mwsrSecondCol(pos));
+}
+`;
+
+// Each coarse derivative of the WGSL texts, and its emulation: the read rM
+// (vec3), its luma lM and the reduction's luma l (f32).
+const QUAD_WGSL_CALLS = [
+    ['dpdxCoarse(rM)', 'mwsrQdx3(rM, in.pos)'],
+    ['dpdyCoarse(rM)', 'mwsrQdy3(rM, in.pos)'],
+    ['dpdxCoarse(lM)', 'mwsrQdx1(lM, in.pos)'],
+    ['dpdyCoarse(lM)', 'mwsrQdy1(lM, in.pos)'],
+    ['dpdxCoarse(l)', 'mwsrQdx1(l, in.pos)'],
+    ['dpdyCoarse(l)', 'mwsrQdy1(l, in.pos)'],
+];
+
+// The same in GLSL, whose dFdx and dFdy are either: highp, from gl_FragCoord,
+// every derivative taken before the choice, in uniform control flow.
+const QUAD_GLSL = `
+bool mwsrSecondRow() {
+    highp float p = mod(floor(gl_FragCoord.y), 2.0);
+    return (dFdy(p) > 0.0) == (p > 0.5);
+}
+
+bool mwsrSecondCol() {
+    highp float p = mod(floor(gl_FragCoord.x), 2.0);
+    return (dFdx(p) > 0.0) == (p > 0.5);
+}
+
+highp float mwsrQdx(highp float v) {
+    highp float d = dFdx(v);
+    highp float dd = dFdy(d);
+    return d - (mwsrSecondRow() ? dd : 0.0);
+}
+
+highp float mwsrQdy(highp float v) {
+    highp float d = dFdy(v);
+    highp float dd = dFdx(d);
+    return d - (mwsrSecondCol() ? dd : 0.0);
+}
+
+highp vec3 mwsrQdx(highp vec3 v) {
+    highp vec3 d = dFdx(v);
+    highp vec3 dd = dFdy(d);
+    return d - (mwsrSecondRow() ? dd : vec3(0.0));
+}
+
+highp vec3 mwsrQdy(highp vec3 v) {
+    highp vec3 d = dFdy(v);
+    highp vec3 dd = dFdx(d);
+    return d - (mwsrSecondCol() ? dd : vec3(0.0));
+}
+`;
+
+const QUAD_GLSL_CALLS = [
+    ['dFdx(rM)', 'mwsrQdx(rM)'],
+    ['dFdy(rM)', 'mwsrQdy(rM)'],
+    ['dFdx(lM)', 'mwsrQdx(lM)'],
+    ['dFdy(lM)', 'mwsrQdy(lM)'],
+    ['dFdx(l)', 'mwsrQdx(l)'],
+    ['dFdy(l)', 'mwsrQdy(l)'],
+];
+
+/** The probe's side, in pixels: 8×8 quads. */
+export const MWSR_QUAD_PROBE_SIZE = 16;
+
+/**
+ * The probe's WGSL text (mwsrQuadVerdict()): v = x·y over the pixel grid, so
+ * that a fine slope along x is the row's y and along y the column's x, and a
+ * coarse one the same on both rows (columns) of a quad. Its four channels, in
+ * 1/255 so that an rgba8unorm target keeps them exactly: dpdxCoarse,
+ * dpdyCoarse, and the emulation's two (QUAD_WGSL).
+ */
+export const MWSR_QUAD_PROBE_WGSL = `${QUAD_WGSL}
+@vertex
+fn vs(@builtin(vertex_index) vid : u32) -> @builtin(position) vec4f {
+    let uv = vec2f(f32((vid << 1u) & 2u), f32(vid & 2u));
+    return vec4f(uv * vec2f(2.0, -2.0) + vec2f(-1.0, 1.0), 0.0, 1.0);
+}
+
+@fragment
+fn fs(@builtin(position) pos : vec4f) -> @location(0) vec4f {
+    let v = floor(pos.x) * floor(pos.y);
+    return vec4f(dpdxCoarse(v), dpdyCoarse(v), mwsrQdx1(v, pos), mwsrQdy1(v, pos)) / 255.0;
+}
+`;
+
+/** The probe in GLSL ES 3.00, for WebGlRenderer's full-screen triangle: dFdx, dFdy and QUAD_GLSL's. */
+export const MWSR_QUAD_PROBE_GLSL = `#version 300 es
+precision highp float;
+out vec4 oColor;
+${QUAD_GLSL}
+void main() {
+    highp float v = floor(gl_FragCoord.x) * floor(gl_FragCoord.y);
+    oColor = vec4(dFdx(v), dFdy(v), mwsrQdx(v), mwsrQdy(v)) / 255.0;
+}
+`;
+
+/**
+ * What the probe's picture says (MWSR_QUAD_PROBE_*): for the native slopes and
+ * for the emulation's, 'coarse' where every quad keeps one slope along x for
+ * its two rows and one along y for its two columns, 'fine' where none does,
+ * 'mixed' in between, 'none' where nothing was drawn. `quad`: 'emulate' only
+ * where the native slopes are fine and the emulation's coarse, else 'native'
+ * (the text as it was).
+ * @param {Uint8Array|Uint8ClampedArray} px RGBA8, row after row, `n` × `n`
+ * @param {number} [n]
+ * @returns {{native: string, emulated: string, quad: 'native'|'emulate'}}
+ */
+export function mwsrQuadVerdict(px, n = MWSR_QUAD_PROBE_SIZE) {
+    const at = (x, y, c) => px[(y * n + x) * 4 + c];
+    const judge = (cx, cy) => {
+        let same = 0;
+        let differ = 0;
+        let lit = 0;
+        for (let y = 0; y < n; y += 2)
+            for (let x = 0; x < n; x++) {
+                if (at(x, y, cx) === at(x, y + 1, cx)) same++;
+                else differ++;
+                if (at(x, y, cx) || at(x, y + 1, cx)) lit++;
+            }
+        for (let x = 0; x < n; x += 2)
+            for (let y = 0; y < n; y++) {
+                if (at(x, y, cy) === at(x + 1, y, cy)) same++;
+                else differ++;
+                if (at(x, y, cy) || at(x + 1, y, cy)) lit++;
+            }
+        if (!lit) return 'none';
+        return differ === 0 ? 'coarse' : same === 0 ? 'fine' : 'mixed';
+    };
+    const native = judge(0, 1);
+    const emulated = judge(2, 3);
+    return {
+        native,
+        emulated,
+        quad: native === 'fine' && emulated === 'coarse' ? 'emulate' : 'native',
+    };
+}
+
+// A fragment stage's text with its derivatives emulated: every call of the
+// table replaced, none of the native ones left, and the helpers before it; a
+// text that takes no slope (the reductions of 9 and 16 samples) as it was.
+function quadEmulated(fs, helpers, calls, left) {
+    let out = fs;
+    for (const [from, to] of calls) out = out.split(from).join(to);
+    if (left.test(out)) throw new Error('mwsr: a derivative left out of the quad emulation');
+    return out === fs ? fs : helpers + out;
+}
+
 /**
  * The WGSL text of one mode: a full-screen triangle (`vs`) and the fragment
  * stage (`fs`); bindings 0 sampler (linear, clamp to edge), 1 the feed, 2 the
@@ -944,7 +1127,7 @@ ${downSharpenWgsl()}`
  * only, so the samples may sit in the non-uniform branch; the derivatives are
  * taken before it, in uniform control flow, as WGSL requires.
  * @param {{feed?: 'tex'|'ext', half?: boolean, mode?: 'up'|'down', taps?: number, fine?: boolean,
- *          map?: boolean}} [opts]
+ *          map?: boolean, quad?: 'native'|'emulate'}} [opts]
  *   'tex' reads a texture_2d<f32>: the product's path, after its pass 0 (the
  *   external texture's two planes per sample made 'ext' lose to pass 0 +
  *   kernel on the RTX, the AMD iGPU and the M1 alike, P2.3; 'ext' stays for
@@ -954,7 +1137,11 @@ ${downSharpenWgsl()}`
  *   `mode` 'down' is the reduction with `taps` samples (1, 4, 9 or 16; see
  *   mwsrRegime()), which sharpens with 1 or 4 (MWSR_DOWN_LAW). `map`, the up mode only: the second text, which reads the
  *   native host's zones from binding 3 (a texture_2d<f32>, see UP_FS_MAP);
- *   without it the text is the same as before the zones, to the byte.
+ *   without it the text is the same as before the zones, to the byte. `quad`
+ *   'emulate' takes each slope of the vote from fine derivatives, one per 2×2
+ *   quad as dpdxCoarse means it (QUAD_WGSL), for a GPU whose dpdxCoarse is
+ *   per pixel (mwsrQuadVerdict()); 'native', the default, is the text as it
+ *   was, to the byte.
  * @returns {string}
  */
 export function mwsrWgsl({
@@ -964,15 +1151,21 @@ export function mwsrWgsl({
     taps = 4,
     fine = false,
     map = false,
+    quad = 'native',
 } = {}) {
+    if (quad !== 'native' && quad !== 'emulate') throw new Error('mwsr: quad ' + quad + '?');
+    const emulate = quad === 'emulate';
+    if (emulate && fine) throw new Error('mwsr: fine and an emulated quad, both?');
+    const q = (fs) =>
+        emulate ? quadEmulated(fs, QUAD_WGSL, QUAD_WGSL_CALLS, /dpd[xy](Coarse)?\(/) : fs;
     if (mode === 'up') {
         const fs = map ? UP_FS_MAP : UP_FS;
         return (
-            preamble(feed, half, map) + (fine ? fs.replace(/dpd([xy])Coarse/g, 'dpd$1Fine') : fs)
+            preamble(feed, half, map) + (fine ? fs.replace(/dpd([xy])Coarse/g, 'dpd$1Fine') : q(fs))
         );
     }
     if (map) throw new Error('mwsr: the zones are read by the up mode only');
-    if (mode === 'down') return preamble(feed, false) + downFs(taps);
+    if (mode === 'down') return preamble(feed, false) + q(downFs(taps));
     throw new Error('mwsr: mode ' + mode + '?');
 }
 
@@ -1202,12 +1395,19 @@ const vec3 LUMA = vec3(${wgslNumber('f32', lr)}, ${wgslNumber('f32', lg)}, ${wgs
  * No sRGB views on a WebGL2 drawing buffer: the reduction takes the software
  * light (MWSR_DOWN_TAPS, LINEAR_LIGHT 1). LINEAR_LIGHT 3 has no twin here:
  * WebGL2 draws no HDR feed.
- * @param {{mode?: 'up'|'down', taps?: number, overrides?: Object<string, number>}} [opts]
+ * `quad` 'emulate': the vote's slopes one per 2×2 quad from dFdx and dFdy,
+ * whichever way the GPU takes them (QUAD_GLSL), as mwsrWgsl()'s; 'native', the
+ * default, is the text as it was, to the byte.
+ * @param {{mode?: 'up'|'down', taps?: number, overrides?: Object<string, number>,
+ *          quad?: 'native'|'emulate'}} [opts]
  * @returns {string}
  */
-export function mwsrGlsl({ mode = 'up', taps = 4, overrides = {} } = {}) {
-    if (mode === 'up') return glslPreamble(overrides) + UP_GLSL;
-    if (mode === 'down') return glslPreamble(overrides) + downGlsl(taps);
+export function mwsrGlsl({ mode = 'up', taps = 4, overrides = {}, quad = 'native' } = {}) {
+    if (quad !== 'native' && quad !== 'emulate') throw new Error('mwsr: quad ' + quad + '?');
+    const q = (fs) =>
+        quad === 'emulate' ? quadEmulated(fs, QUAD_GLSL, QUAD_GLSL_CALLS, /dFd[xy]\(/) : fs;
+    if (mode === 'up') return glslPreamble(overrides) + q(UP_GLSL);
+    if (mode === 'down') return glslPreamble(overrides) + q(downGlsl(taps));
     throw new Error('mwsr: mode ' + mode + '?');
 }
 

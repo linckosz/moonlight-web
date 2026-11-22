@@ -618,6 +618,8 @@
         "algoQualGpu": "Qualité (FSR1 WebGPU)",
         "algoMwsrGl": "MoonlightWeb (mwsr WebGL2)",
         "algoMwsrGpu": "MoonlightWeb (mwsr WebGPU)",
+        "algoMwsrQGl": "MoonlightWeb Qualité (mwsr + passe de netteté WebGL2)",
+        "algoMwsrQGpu": "MoonlightWeb Qualité (mwsr + passe de netteté WebGPU)",
         "algoMwsrDbGpu": "MoonlightWeb 2 (mwsr + déblocage WebGPU)",
         "algoMwsrDbqGpu": "MoonlightWeb 3 (mwsr + déblocage selon le QP WebGPU)",
         "language": "Langue",

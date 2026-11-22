@@ -618,6 +618,8 @@
         "algoQualGpu": "画质（FSR1 WebGPU）",
         "algoMwsrGl": "MoonlightWeb（mwsr WebGL2）",
         "algoMwsrGpu": "MoonlightWeb（mwsr WebGPU）",
+        "algoMwsrQGl": "MoonlightWeb 质量（mwsr + 锐化通道 WebGL2）",
+        "algoMwsrQGpu": "MoonlightWeb 质量（mwsr + 锐化通道 WebGPU）",
         "algoMwsrDbGpu": "MoonlightWeb 2（mwsr + 去块 WebGPU）",
         "algoMwsrDbqGpu": "MoonlightWeb 3（mwsr + 按 QP 去块 WebGPU）",
         "language": "语言",

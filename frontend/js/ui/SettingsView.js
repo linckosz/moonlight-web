@@ -169,6 +169,11 @@ const ENHANCER_CHOICES = [
     // since v0.4.1 (BrowserDetect.pickAutoEnhancer).
     { value: 'gl-mwsr', key: 'settings.algoMwsrGl', gpu: false },
     { value: 'mwsr', key: 'settings.algoMwsrGpu', gpu: true },
+    // Its quality mode, the kernel then the sharpening pass, chosen by hand to
+    // be tried where the device would pick performance (Bruno, MWDBGQ,
+    // 22/11/2026); like the rest of this list, debug builds only.
+    { value: 'gl-mwsr-q', key: 'settings.algoMwsrQGl', gpu: false },
+    { value: 'mwsr-q', key: 'settings.algoMwsrQGpu', gpu: true },
     // Its versions 2 and 3, Bruno's of 25/10/2026 (upscaler-mwsr.md §14.7):
     // the same kernel after P8.0's deblocking, at a fixed strength or one set
     // per frame from the QP in its header. WebGPU only; like every entry here
@@ -176,6 +181,25 @@ const ENHANCER_CHOICES = [
     { value: 'mwsr-db', key: 'settings.algoMwsrDbGpu', gpu: true },
     { value: 'mwsr-dbq', key: 'settings.algoMwsrDbqGpu', gpu: true },
 ];
+
+/**
+ * A debug build, or debug mode (--debug, or Admin → Advanced), as the server's
+ * streaming settings say: the one signal the page and a launch both read.
+ */
+export function isDebugBuild(data) {
+    return !!data && (data.debug_build === true || data.debug_mode === true);
+}
+
+/**
+ * The upscaler a launch asks for (Bruno, MWRELALGO, 22/11/2026). A choice of
+ * the list above is a debug build's own: a release build launches 'auto'
+ * whatever is saved, a choice a debug build left behind included, and a debug
+ * build launches its choice when the list has it, 'auto' otherwise.
+ */
+export function launchEnhancerAlgo(saved, debugBuild) {
+    if (debugBuild !== true) return 'auto';
+    return ENHANCER_CHOICES.some((c) => c.value === saved) ? saved : 'auto';
+}
 
 export class SettingsView {
     constructor(container, onClose) {
@@ -652,7 +676,7 @@ export class SettingsView {
             const data = await BackendClient.getStreamingSettings();
             this._mediaTrackOnlyH264 = data.media_track_only_h264 === true;
             // A debug build, or debug mode (--debug, or Admin → Advanced).
-            this._debugBuild = data.debug_build === true || data.debug_mode === true;
+            this._debugBuild = isDebugBuild(data);
             // What the host can do, not a preference: always the server's.
             this._audioSourceSupported = data.audio_source_focused_supported === true;
             // The administrator's ceilings: what the controls below may offer.

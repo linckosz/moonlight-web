@@ -3415,3 +3415,29 @@ Une mesure entière sur Junk Shop à ×1,33 en 4:2:0, contre l'image native : LP
 - **Zoom** (13:16, RTX). Les colonnes Native, FSR1, NIS et SGSR1 de la figure sont les dessins du jour, au pixel près : même entrée, même GPU. Seule la colonne MWSR change, en Qualité. La carte de partage `og.png` est redessinée aussi. Son outil du 04/11 n'a pas été gardé, et aucun filtre n'en redonne les cases : les dix cases sont refaites à partir des dessins du jour (mêmes recadrages, agrandissement bicubique), MWSR en Qualité.
 
 **Pas fait.** Metal sur le M1 Pro (MWPPMETAL), la passe comprise. libplacebo sur un vrai GPU.
+
+## 2026-11-22 — J61, le vote prend ses pentes par bloc de 2×2, Metal et Chrome sur Mac compris
+
+**Metal, sur le M1 Pro de Léo** (macOS 15.6.1, outil hors écran, sans fenêtre). Le premier passage du texte Metal de `mwsr/` s'écartait de WARP de 40 à 53 dB. La cause est prouvée : le vote prend ses pentes une fois par bloc de 2×2 pixels (`ddx_coarse` en HLSL, `dpdxCoarse` en WGSL), alors que `dfdx` et `dfdy` de Metal sont pris pixel par pixel. Avec une émulation du bloc dans l'outil, l'écart disparaît. Correction dans `generate.mjs` (MWMETALCOARSE A) : le pixel en haut à gauche du bloc donne sa pente aux trois autres (`quad_broadcast`), comme `ddx_coarse` de WARP. Il faut le Metal Shading Language 2.1 ; en dessous, le texte s'arrête sur un `#error` qui le dit. Ensuite, contre WARP :
+- Performance à ×4/3, cinq cas : 0,011 à 0,17 % des pixels au-delà de 1/255, 61,9 à 64,2 dB ;
+- ×2, trois cas : 0,018 à 0,03 %, 61,5 à 66,1 dB ;
+- Qualité à ×4/3 : 0,21 à 0,8 %, 59,4 à 63 dB ; la passe seule rend celle du HLSL à 1/255 près.
+Le texte compile de MSL 2.1 à 3.2. Essayé sur ce seul Mac.
+
+**Chrome sur Mac prend aussi ses pentes pixel par pixel** (MACWEB). Sonde de Bruno sur son MacBook Air M3, Chrome 126 : FINE, 0 bloc sur 128 cohérent, sur les deux axes. Le vote y change pour des pixels du bloc. Contre l'image native, rien de mesuré en moins (texte ×4/3 : 21,39 dB contre 21,37).
+
+**Le client, MACFINE C.** Une sonde au démarrage du renderer (`mwsrQuadProbe.js`, 16×16, un dessin), avant que les pipelines soient faits. Elle ne choisit l'émulation que si les pentes natives sont pixel par pixel et que les pentes émulées sont bien celles du bloc. Le choix ne change plus ensuite. L'émulation refait la pente du bloc par une dérivée seconde, sans connaître l'alignement du bloc. Partout ailleurs (pentes du bloc, sonde en échec, sans réponse en 250 ms, contexte perdu), les textes restent les mêmes à l'octet. Une ligne `console.info` donne le verdict et la durée, sans nom de GPU. La sonde n'envoie rien. Comme toute ligne de la console, celle-ci ne va au journal client de l'hôte que si le serveur est en mode debug (`ClientLog.js`).
+
+Vérifié (22/11) :
+- sur DualRTX, tests ciblés 61/61, suite complète 3663/3663 sur un arbre LF ;
+- SwiftShader, huit cas : la sonde voit des pentes de bloc et garde les textes. L'émulation forcée y rend les octets du texte natif sur les huit cas : là où les pentes sont déjà celles du bloc, le terme ajouté vaut 0. Natif contre WARP : 60 à 67,6 dB.
+- Le M1 Pro de Léo, Chrome 157 sans fenêtre, Roblox ouvert (MACM1Q, 17:43). La sonde du client y voit des pentes pixel par pixel et choisit l'émulation, sur les huit cas. Contre WARP, sur ces huit cas (texte, 0 A.D., Gears, Junk Shop, à ×4/3 et ×2, 4:2:0 et 4:4:4) :
+  - le texte natif : 39,9 à 53,5 dB, de 1,2 à 18,6 % des pixels au-delà de 1/255 ;
+  - le texte émulé : 61,5 à 66,1 dB, de 0,011 à 0,17 %, comme le texte Metal corrigé.
+- La durée de la sonde du client, sur un appareil neuf comme au démarrage du renderer, sur ce M1 chargé par Roblox : 108,5 ms au tout premier dessin, sans cache de shaders (profil neuf) ; ensuite 1,8 à 4,9 ms, et 1 à 4,8 ms au second appel.
+
+**Le menu de debug** (MWDBGQ A) gagne « MoonlightWeb Qualité » en WebGL2 et en WebGPU. **Au lancement** (MWRELALGO A), un build release demande toujours 'auto' : un choix fait dans le menu d'un build de debug et resté enregistré ne passe plus dans un build release. C'était le cas pour toutes les entrées du menu.
+
+**Les deux modes en vrai** (MWLIVE) : ils ont tourné sur un stream réel, sur l'iPhone et sur la RTX. Aucun œil ne les a encore comparés.
+
+**Pas fait.** La durée de la sonde sur la RTX et sur le M3 de Bruno. WebGL sur un pilote qui prend `dFdx` pixel par pixel. L'émulation à l'œil sur un stream réel.

@@ -72,7 +72,7 @@ import { keepClientLogOff, refreshClientLog } from './util/ClientLog.js';
 import { HostListView } from './ui/HostListView.js';
 import { StreamView } from './ui/StreamView.js';
 import { lockLandscape } from './ui/StreamViewFullscreen.js';
-import { SettingsView } from './ui/SettingsView.js';
+import { SettingsView, isDebugBuild, launchEnhancerAlgo } from './ui/SettingsView.js';
 import { AdminView } from './ui/AdminView.js';
 import { LoginView } from './ui/LoginView.js';
 import { SetupView } from './ui/SetupView.js';
@@ -4197,12 +4197,15 @@ export const MoonlightApp = {
      * in the background after that. Never more than a second and a half.
      * The same answer says whether the host sees this browser on its own
      * network (`viewer_lan`), which the automatic bitrate follows; unread or
-     * from a server that does not say, the Internet rule.
+     * from a server that does not say, the Internet rule. It also says whether
+     * this is a debug build (isDebugBuild, as the settings page reads it);
+     * unread, a release build's launch.
      */
     async _readStreamLimits() {
         const read = BackendClient.getStreamingSettings()
             .then((data) => {
                 setStreamLimits(data);
+                this._debugBuild = isDebugBuild(data);
                 this._streamLimitsRead = true;
                 const lan = data && data.viewer_lan === true;
                 if (lan !== (this._viewerOnLan === true))
@@ -4589,7 +4592,12 @@ export const MoonlightApp = {
         // attempt always streams without enhancement.
         let videoEnhancement = streamingSettings.video_enhancement === 'on' ? 'on' : 'off';
         if (internalTransport === 'webrtc-media') videoEnhancement = 'off';
-        const videoEnhancementAlgo = streamingSettings.video_enhancement_algo || 'auto';
+        // The algorithm, named by hand in a debug build only: outside one, or
+        // saved by one and read by a release build, 'auto' (MWRELALGO).
+        const videoEnhancementAlgo = launchEnhancerAlgo(
+            streamingSettings.video_enhancement_algo,
+            this._debugBuild === true,
+        );
         // HDR: requires a WebGPU-capable browser and Sunshine negotiating HEVC
         // Main10 / AV1 10-bit. The decoder colorSpace is set accordingly.
         // A native session reports what it granted: it is asked for HDR whenever

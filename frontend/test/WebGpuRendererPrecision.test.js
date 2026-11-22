@@ -15,6 +15,12 @@
  */
 /* global setTimeout */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// The renderer's quad probe draws on the device it is handed: its own test
+// (mwsrQuadProbe.test.js) has it; here it answers 'native', the texts as they were.
+vi.mock('../js/stream/renderers/mwsrQuadProbe.js', () => ({
+    mwsrQuadProbeWebGpu: async () => 'native',
+    mwsrQuadProbeWebGl: () => 'native',
+}));
 import { WebGpuRenderer } from '../js/stream/renderers/WebGpuRenderer.js';
 
 const tick = () => new Promise((res) => setTimeout(res));

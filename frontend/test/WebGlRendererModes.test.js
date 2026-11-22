@@ -9,6 +9,13 @@
  */
 /* global console */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// The renderer's quad probe (its own test, mwsrQuadProbe.test.js): its answer
+// set by the test, 'native' unless told.
+const quadProbe = vi.hoisted(() => ({ answer: 'native' }));
+vi.mock('../js/stream/renderers/mwsrQuadProbe.js', () => ({
+    mwsrQuadProbeWebGpu: async () => quadProbe.answer,
+    mwsrQuadProbeWebGl: () => quadProbe.answer,
+}));
 import { WebGlRenderer, WEBGL_ALGOS } from '../js/stream/renderers/WebGlRenderer.js';
 import { mwsrLaw } from '../js/stream/renderers/MwsrShader.js';
 
@@ -234,5 +241,33 @@ describe("WebGlRenderer — mwsr's two modes", () => {
         expect(r.setAlgo('gl-fsr1')).toBe(true);
         expect(r._fbo).toBe(fbo);
         expect(r._intermTex).toBe(tex);
+    });
+    it("takes the vote's slopes per quad where the probe says the GPU takes them per pixel, and the texts as they were elsewhere", async () => {
+        try {
+            for (const answer of ['native', 'emulate']) {
+                quadProbe.answer = answer;
+                const { r } = await renderer({ mwsrMode: 'performance' });
+                expect(r._mwsrQuad).toBe(answer);
+                expect(r._mwsr.size, answer).toBeGreaterThan(1);
+                // The texts of the few-tap downscales take no slopes and stay as they are in both.
+                const texts = [...r._mwsr.values()].map(({ prog }) => prog.fs);
+                const slopes = /dFd[xy]\((rM|lM|l)\)/;
+                if (answer === 'native') {
+                    expect(
+                        texts.some((fs) => slopes.test(fs)),
+                        answer,
+                    ).toBe(true);
+                    for (const fs of texts) expect(fs.includes('mwsrQd'), answer).toBe(false);
+                } else {
+                    expect(
+                        texts.some((fs) => fs.includes('mwsrQd')),
+                        answer,
+                    ).toBe(true);
+                    for (const fs of texts) expect(slopes.test(fs), answer).toBe(false);
+                }
+            }
+        } finally {
+            quadProbe.answer = 'native';
+        }
     });
 });

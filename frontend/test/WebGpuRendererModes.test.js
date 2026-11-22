@@ -9,8 +9,15 @@
  */
 /* global console */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// The renderer's quad probe (its own test, mwsrQuadProbe.test.js): its answer
+// set by the test, 'native' unless told.
+const quadProbe = vi.hoisted(() => ({ answer: 'native' }));
+vi.mock('../js/stream/renderers/mwsrQuadProbe.js', () => ({
+    mwsrQuadProbeWebGpu: async () => quadProbe.answer,
+    mwsrQuadProbeWebGl: () => quadProbe.answer,
+}));
 import { WebGpuRenderer } from '../js/stream/renderers/WebGpuRenderer.js';
-import { MWSR_MODES, mwsrLaw } from '../js/stream/renderers/MwsrShader.js';
+import { MWSR_MODES, mwsrLaw, mwsrWgsl } from '../js/stream/renderers/MwsrShader.js';
 
 const CANVAS_VIEW = { canvas: true };
 
@@ -321,6 +328,37 @@ describe("WebGpuRenderer — mwsr's two modes", () => {
             expect(r.mwsrMode).toBeNull();
             expect(r.setAlgo('mwsr')).toBe(true);
             expect(r.mwsrMode).toBeNull();
+        }
+    });
+    it("takes the vote's slopes per quad where the probe says the GPU takes them per pixel, and the texts as they were elsewhere", async () => {
+        try {
+            for (const answer of ['native', 'emulate']) {
+                quadProbe.answer = answer;
+                const gpu = fakeGpu();
+                const r = await renderer(gpu, { mwsrMode: 'performance' });
+                const keys = [...r._mwsrPipelines.keys()];
+                expect(keys.length, answer).toBeGreaterThan(1);
+                for (const k of keys) expect(k.endsWith('~quad'), k).toBe(answer === 'emulate');
+                const up = r._mwsrPipelines.get(answer === 'emulate' ? 'up~quad' : 'up');
+                expect(up.code).toBe(mwsrWgsl({ feed: 'tex', mode: 'up', quad: answer }));
+                // The texts of the few-tap downscales take no slopes and stay as they are in both.
+                const codes = [...r._mwsrPipelines.values()].map((p) => p.code);
+                if (answer === 'native') {
+                    expect(
+                        codes.some((c) => c.includes('Coarse(')),
+                        answer,
+                    ).toBe(true);
+                    for (const c of codes) expect(c.includes('mwsrQd'), answer).toBe(false);
+                } else {
+                    expect(
+                        codes.some((c) => c.includes('mwsrQd')),
+                        answer,
+                    ).toBe(true);
+                    for (const c of codes) expect(c.includes('Coarse('), answer).toBe(false);
+                }
+            }
+        } finally {
+            quadProbe.answer = 'native';
         }
     });
 });

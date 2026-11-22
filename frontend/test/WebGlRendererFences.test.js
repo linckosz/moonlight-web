@@ -20,6 +20,12 @@
  */
 /* global console, performance */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// The renderer's quad probe draws on the device it is handed: its own test
+// (mwsrQuadProbe.test.js) has it; here it answers 'native', the texts as they were.
+vi.mock('../js/stream/renderers/mwsrQuadProbe.js', () => ({
+    mwsrQuadProbeWebGpu: async () => 'native',
+    mwsrQuadProbeWebGl: () => 'native',
+}));
 import { WebGlRenderer } from '../js/stream/renderers/WebGlRenderer.js';
 
 const SYNC_STATUS = 0x9114;

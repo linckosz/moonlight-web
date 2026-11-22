@@ -1922,6 +1922,7 @@ Décision de Bruno : MWSR a deux modes, et c'est l'appareil qui choisit. La case
 - **HDR.** Le noyau seul, à sa loi, comme avant. L'étude du 21/11 (J59) n'a trouvé aucune passe qui garde la couleur sur toutes ses images.
 - **À partir de ×2**, les deux modes dessinent la même image.
 - **L'overlay** nomme le mode : « MWSR Quality », « MWSR Performance », et « MWSR » seul en HDR.
+- **Le vote par bloc de 2×2** (décision de Bruno, 22/11/2026, MACFINE C). Le vote prend ses pentes une fois par bloc de 2×2 pixels (`dpdxCoarse` en WGSL, `ddx_coarse` en HLSL). Chrome sur Mac les prend pixel par pixel (sonde de Bruno sur un M3, Chrome 126 : FINE), et le texte Metal livré aussi (`dfdx`, M1 Pro). Le vote change alors pour des pixels du bloc ; la sortie s'écarte de celle de WARP de 40 à 53 dB, sans perte mesurée contre l'image native (texte ×4/3 : 21,39 dB contre 21,37). Le client sonde le GPU au démarrage du renderer (`mwsrQuadProbe.js`) et, là où les pentes sont prises pixel par pixel, dessine le texte `quad: 'emulate'` : la pente du bloc refaite par une dérivée seconde. Ailleurs, les textes restent les mêmes à l'octet. Le texte Metal de `mwsr/` prend la pente du bloc par `quad_broadcast`.
 
 Sur neuf images à ×4/3, contre l'image native (LPIPS, plus bas est plus proche ; PSNR et VMAF NEG, plus haut est plus proche) :
 

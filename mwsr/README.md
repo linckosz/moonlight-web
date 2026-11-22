@@ -394,6 +394,14 @@ pass.draw(3);
 Without the module, take `wgsl/mwsr-up.wgsl` as it is and write the 24 floats yourself (see
 [the values](#per-frame-values)).
 
+The vote takes its slopes once per 2×2 quad (`dpdxCoarse`, `dpdyCoarse`), and some browsers take those per pixel:
+Chrome 126 on an Apple M3 does (22/11/2026). `mwsrWgsl({ mode, taps, quad: 'emulate' })` then takes them per quad
+from `dpdxFine` and `dpdyFine`. MoonlightWeb draws that text where a probe at start (`MWSR_QUAD_PROBE_WGSL`, read by
+`mwsrQuadVerdict()`) finds the native slopes per pixel and the emulated ones per quad. The file in `wgsl/` is the
+native text. On an Apple M1 Pro (Chrome 157, 22/11/2026), the probe finds the slopes per pixel; on eight cases, the
+emulated text comes to 61.5 to 66.1 dB from the Direct3D text on WARP, the native one to 39.9 to 53.5 dB. Where the
+slopes are per quad already (SwiftShader), the emulated text draws the same bytes as the native one.
+
 ### WebGL2 and OpenGL ES 3.0 (GLSL)
 
 Link `glsl/mwsr.vert` with one fragment text. Uniforms: `uTex` (the input, on texture unit 0), then the block above
@@ -407,6 +415,10 @@ Draw with `gl.drawArrays(gl.TRIANGLES, 0, 3)`.
   or write the text with `mwsrGlsl({ mode, taps, overrides })` from the module.
 - There is no sRGB-view path here: the reduction uses the `LINEAR_LIGHT 1` grids, already baked into
   `mwsr-down-*.frag`.
+- GLSL has no coarse derivative: `dFdx` is per quad or per pixel, as the driver takes it.
+  `mwsrGlsl({ mode, taps, quad: 'emulate' })` takes the vote's slopes per quad on either, and
+  `MWSR_QUAD_PROBE_GLSL` tells which a GPU needs. The files in `glsl/` are the native texts. Not yet measured on a
+  driver that takes `dFdx` per pixel.
 
 ```js
 import { mwsrGlsl, mwsrUniforms } from './js/MwsrShader.js';

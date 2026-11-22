@@ -128,6 +128,7 @@ import {
     mwsrUniforms,
     mwsrWgsl,
 } from './MwsrShader.js';
+import { mwsrQuadProbeWebGpu } from './mwsrQuadProbe.js';
 import {
     DEBLOCK_DCT_WGSL,
     DEBLOCK_FIN_WGSL,
@@ -1134,6 +1135,12 @@ export class WebGpuRenderer extends VideoRenderer {
         this._mwsrQ = false;
         /** opts.mwsrMode 'performance': 'mwsr' names that mode; else the module's default, the same. */
         this._mwsrPerf = false;
+        /**
+         * The vote's slopes: 'emulate' where this GPU takes dpdxCoarse per pixel
+         * (mwsrQuadProbe.js, once, when the renderer is made), else 'native'.
+         * Kept through a recovered device: never changed under a running stream.
+         */
+        this._mwsrQuad = 'native';
         /** `quality`: the pass after the kernel, built with it; null where it cannot run. */
         this._mwsrSharpenPipeline = null;
         /** What its uniform block holds, and whether the last draw ran it. */
@@ -1205,9 +1212,12 @@ export class WebGpuRenderer extends VideoRenderer {
         const adapter = await navigator.gpu.requestAdapter();
         if (!adapter) throw new Error('WebGPU requestAdapter returned null');
         const device = await adapter.requestDevice();
+        // Before any pipeline: whether mwsr's vote needs its quad emulated here.
+        const quad = await mwsrQuadProbeWebGpu(device);
 
         const r = new WebGpuRenderer();
         r.canvas = canvas;
+        r._mwsrQuad = quad;
         r.videoCodec = opts.videoCodec;
         // 'off' = WebGPU pass-through (blit only, no upscaler); sgsr is the safe default.
         // 'mwsr-q' is mwsr in its `quality` mode: the same kernel, and a pass after it.
@@ -1803,7 +1813,11 @@ export class WebGpuRenderer extends VideoRenderer {
      */
     _mwsrPipeline(reg, map = false, interm = false) {
         if (this._format === this._interFormat) interm = false;
-        const key = mwsrRegimeKey(reg) + (map ? 'map' : '') + (interm ? '>interm' : '');
+        const key =
+            mwsrRegimeKey(reg) +
+            (map ? 'map' : '') +
+            (interm ? '>interm' : '') +
+            (this._mwsrQuad === 'emulate' ? '~quad' : '');
         let pipeline = this._mwsrPipelines.get(key);
         if (pipeline) return pipeline;
         const srgb = reg.mode === 'down' && this._srgbViews;
@@ -1813,6 +1827,7 @@ export class WebGpuRenderer extends VideoRenderer {
                 mode: reg.mode,
                 taps: reg.taps,
                 map,
+                quad: this._mwsrQuad,
             }),
         });
         pipeline = this._renderPipeline({

@@ -618,6 +618,8 @@
         "algoQualGpu": "Kalite (FSR1 WebGPU)",
         "algoMwsrGl": "MoonlightWeb (mwsr WebGL2)",
         "algoMwsrGpu": "MoonlightWeb (mwsr WebGPU)",
+        "algoMwsrQGl": "MoonlightWeb Kalite (mwsr + keskinleştirme geçişi WebGL2)",
+        "algoMwsrQGpu": "MoonlightWeb Kalite (mwsr + keskinleştirme geçişi WebGPU)",
         "algoMwsrDbGpu": "MoonlightWeb 2 (mwsr + engelleme giderme WebGPU)",
         "algoMwsrDbqGpu": "MoonlightWeb 3 (mwsr + QP engelleme giderme WebGPU)",
         "language": "Dil",

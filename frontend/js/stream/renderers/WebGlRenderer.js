@@ -82,6 +82,7 @@ import {
     mwsrSharpen,
     mwsrUniforms,
 } from './MwsrShader.js';
+import { mwsrQuadProbeWebGl } from './mwsrQuadProbe.js';
 import { GazeZone } from '../GazeZone.js';
 import { IS_HANDHELD } from '../../util/BrowserDetect.js';
 
@@ -724,6 +725,13 @@ export class WebGlRenderer extends VideoRenderer {
         this._mwsr = null;
         this._mwsrUni = null;
         this._mwsrUniKey = '';
+        /**
+         * The vote's slopes: 'emulate' where this GPU takes dFdx per pixel
+         * (mwsrQuadProbe.js), else 'native'; null until mwsr's programs are
+         * first built, then kept, through a lost context too.
+         * @type {'native'|'emulate'|null}
+         */
+        this._mwsrQuad = null;
         /** opts.mwsrMode 'performance': 'gl-mwsr' names that mode; else the module's default, the same. */
         this._mwsrPerf = false;
         /** @type {{prog: WebGLProgram, u: Object}|null} `quality`: the pass after the kernel. */
@@ -1157,6 +1165,8 @@ export class WebGlRenderer extends VideoRenderer {
                 this._buildInterm();
             }
             if (this._mwsr) return;
+            // Before the first of them, once: whether the vote's quad is emulated.
+            if (this._mwsrQuad === null) this._mwsrQuad = mwsrQuadProbeWebGl(gl, VS);
             // One program per regime, all built here so that nothing compiles
             // while the stream runs; the overrides baked into each text.
             const programs = new Map();
@@ -1172,15 +1182,23 @@ export class WebGlRenderer extends VideoRenderer {
                         : { R_DOWN: reg.rDown, LINEAR_LIGHT: reg.linearLight };
                 programs.set(
                     mwsrRegimeKey(reg),
-                    this._program(mwsrGlsl({ mode: reg.mode, taps: reg.taps, overrides }), [
-                        'uTex',
-                        'uTexelScale',
-                        'uDimsAcross',
-                        'uKernel',
-                        'uZone',
-                        'uZoneBonus',
-                        'uBound',
-                    ]),
+                    this._program(
+                        mwsrGlsl({
+                            mode: reg.mode,
+                            taps: reg.taps,
+                            overrides,
+                            quad: this._mwsrQuad,
+                        }),
+                        [
+                            'uTex',
+                            'uTexelScale',
+                            'uDimsAcross',
+                            'uKernel',
+                            'uZone',
+                            'uZoneBonus',
+                            'uBound',
+                        ],
+                    ),
                 );
             }
             this._mwsr = programs;
