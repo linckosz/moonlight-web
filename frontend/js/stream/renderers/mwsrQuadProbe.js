@@ -64,6 +64,10 @@ export async function mwsrQuadProbeWebGpu(device, { timeoutMs = MWSR_QUAD_PROBE_
         device.pushErrorScope('out-of-memory');
         device.pushErrorScope('validation');
         let scoped = 2;
+        // A throw while drawing is held until the scopes are popped: a scope's
+        // error, when there is one, is the one the probe fails with.
+        let drawFailed = false;
+        let drawError;
         try {
             tex = device.createTexture({
                 size: [N, N],
@@ -98,12 +102,15 @@ export async function mwsrQuadProbeWebGpu(device, { timeoutMs = MWSR_QUAD_PROBE_
             // rows of 256 bytes, the copy's alignment: 16 pixels of 4 bytes, padded
             enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: 256 }, [N, N]);
             device.queue.submit([enc.finish()]);
-        } finally {
-            const errors = [];
-            while (scoped-- > 0) errors.push(device.popErrorScope());
-            const found = (await Promise.all(errors)).filter(Boolean);
-            if (found.length) throw new Error('the probe drew with an error: ' + found[0].message);
+        } catch (e) {
+            drawFailed = true;
+            drawError = e;
         }
+        const errors = [];
+        while (scoped-- > 0) errors.push(device.popErrorScope());
+        const found = (await Promise.all(errors)).filter(Boolean);
+        if (found.length) throw new Error('the probe drew with an error: ' + found[0].message);
+        if (drawFailed) throw drawError;
         await buf.mapAsync(GPUMapMode.READ);
         const rows = new Uint8Array(buf.getMappedRange());
         const px = new Uint8Array(N * N * 4);
