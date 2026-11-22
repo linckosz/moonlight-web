@@ -113,7 +113,7 @@
         <tr><th scope="row">Windows</th><td>Direct3D 11</td><td><code>hlsl/</code> <code>cpp/</code></td><td>The example in <code>cpp/</code>. On WARP, the browser's picture, 60 to 68 dB apart in Performance.</td></tr>
         <tr><th scope="row">Linux</th><td>Vulkan, through libplacebo</td><td><code>libplacebo/</code></td><td>In testing for Moonlight-qt. On Mesa's Vulkan on the CPU, the scores of Direct3D within 0.09 dB, in both modes. Not yet on a GPU.</td></tr>
         <tr><th scope="row">macOS</th><td>Vulkan, through MoltenVK</td><td><code>libplacebo/</code></td><td>In testing for Moonlight-qt. Not yet run.</td></tr>
-        <tr><th scope="row">macOS</th><td>Metal</td><td><code>metal/</code></td><td>In testing for Moonlight-qt. On an M1 Pro, Junk Shop from 1080p to 1440p: LPIPS 0.0154, where Apple's MetalFX scores 0.0463. One picture on one Mac.</td></tr>
+        <tr><th scope="row">macOS</th><td>Metal</td><td><code>metal/</code></td><td>In testing for Moonlight-qt. On an M1 Pro, 59 to 66 dB apart from the Direct3D text on WARP, in both modes (22/11/2026).</td></tr>
       </tbody>
     </table>
   </section>
@@ -423,7 +423,7 @@
       ×2, against 5.3 to 6.7 ms for FSR1 — half the cost, as on the Radeon 780M at 60 Hz, 1.32 against 2.49 ms — and
       3.2 against 4.5 ms at ×3.</p>
     <p class="small">FSR and FidelityFX are trademarks of Advanced Micro Devices, NVIDIA is a trademark of NVIDIA
-      Corporation, Snapdragon is a trademark of Qualcomm, and Apple, Metal and MetalFX are trademarks of Apple. MoonlightWeb made this comparison with its own ports,
+      Corporation, Snapdragon is a trademark of Qualcomm, and Apple and Metal are trademarks of Apple. MoonlightWeb made this comparison with its own ports,
       and none of these companies made or endorsed it. The ports keep their vendors' notices (MIT for FSR1 and NIS,
       BSD-3-Clause for SGSR1) in <a href="/mwsr/kernels.js">kernels.js</a>. The scores' code keeps its own: FLIP
       (BSD-3-Clause) in <a href="/mwsr/scores.js">scores.js</a>, libvmaf and its model (BSD-2-Clause-Patent) in

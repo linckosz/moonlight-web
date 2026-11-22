@@ -654,12 +654,26 @@ function mslText() {
 // constants, cpp/mwsr.h's constants(), at buffer(1). Its vertex stage hands it a
 // float4 position and a float2 texCoords, v down from the picture's top. Build
 // it with the preprocessor macro MWSR_CHROMA444 1 for a 4:4:4 stream.
+//
+// The vote reads its slopes once per 2x2 quad, as HLSL's ddx_coarse and
+// WGSL's dpdxCoarse do: Metal's dfdx and dfdy are taken per pixel, so the
+// quad's top-left lane hands its own to the other three (quad_broadcast).
+// That needs Metal Shading Language 2.1 and a GPU with quad-scoped permute
+// operations: MTLGPUFamilyApple4 (A11) and later, or MTLGPUFamilyMac2.
 #include <metal_stdlib>
 using namespace metal;
+
+#if __METAL_VERSION__ < 210
+#error "mwsr-up.metal needs Metal Shading Language 2.1 for quad_broadcast"
+#endif
 
 #ifndef MWSR_CHROMA444
 #define MWSR_CHROMA444 0
 #endif
+
+// The slopes of the quad, as ddx_coarse and ddy_coarse: those of its top-left pixel
+template <typename T> static T mwsrDx(T v) { return quad_broadcast(dfdx(v), ushort(0)); }
+template <typename T> static T mwsrDy(T v) { return quad_broadcast(dfdy(v), ushort(0)); }
 
 // What the vertex stage hands the fragment stage
 struct Vertex
@@ -714,12 +728,12 @@ fragment float4 mwsr_up(Vertex v [[ stage_in ]],
     float2 p12 = (f0 + 0.5 + (t * t * (3.0 - 2.0 * t) + ku * s) / w12) * c.texel;
     float3 rM = mwsrS(tex, p12);
     // the slope per input texel along the texture's own axes, whichever way the target's rows run
-    float2 dir = sign(float2(dfdx(uv.x), dfdy(uv.y))) * c.scale;
+    float2 dir = sign(float2(mwsrDx(uv.x), mwsrDy(uv.y))) * c.scale;
     float2 gM;
     bool isFlat;
 #if MWSR_CHROMA444
-    float3 dx = dfdx(rM) * dir.x;
-    float3 dy = dfdy(rM) * dir.y;
+    float3 dx = mwsrDx(rM) * dir.x;
+    float3 dy = mwsrDy(rM) * dir.y;
     float3 m = abs(dx) + abs(dy);
     bool rg = m.g > m.r;
     bool b = m.b > max(m.r, m.g);
@@ -727,7 +741,7 @@ fragment float4 mwsr_up(Vertex v [[ stage_in ]],
     isFlat = max(m.r, max(m.g, m.b)) < c.ft;
 #else
     float lM = dot(rM, MWSR_LUMA);
-    gM = float2(dfdx(lM), dfdy(lM)) * dir;
+    gM = float2(mwsrDx(lM), mwsrDy(lM)) * dir;
     isFlat = abs(gM.x) + abs(gM.y) < c.ft;
 #endif
     if (isFlat) {

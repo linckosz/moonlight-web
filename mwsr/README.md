@@ -302,11 +302,12 @@ The libplacebo and Metal texts are the HLSL upscale's twins too:
   720p to 1440p on four pictures, it scores what the HLSL on WARP scores against the native frame, within 0.09 dB in
   both modes; its pass gives its formula within 1/255. The hook of 06/11/2026, within 0.05 dB then, is within 0.08 dB
   on today's ffmpeg and Mesa. Its PQ and 4:4:4 settings come through its parameters, as a renderer sets them. Not yet run on a GPU.
-- **Metal** (06/11/2026, the upscale before the two modes; the Quality pass not yet run on a Mac): on an Apple M1 Pro
-  (macOS 15.6), Junk Shop from 1080p 4:2:0 to 1440p, LPIPS 0.0154 and PSNR 38.87 dB,
-  against the browser's 0.0153 and 38.85 dB on the same input. On that Mac and that picture, Apple's MetalFX spatial
-  scaler scored LPIPS 0.0463, PSNR 36.62 dB and VMAF NEG 88.39 (MWSR 90.50), in 0.91 ms per draw against MWSR's
-  0.37 ms. One picture on one Mac, the times at the GPU's lowest-latency draws: a first reading, not a table.
+- **Metal** (22/11/2026): on an Apple M1 Pro (macOS 15.6.1), the texts compiled by `newLibraryWithSource:` and drawn
+  against the HLSL on WARP, on the same inputs as above. Performance at ×1.33, 5 cases: 0.011 to 0.17 % of the
+  pixels past 1/255, PSNR 61.9 to 64.2 dB; at ×2, 3 cases: 0.018 to 0.03 %, PSNR 61.5 to 66.1 dB. Quality at ×1.33,
+  5 cases: 0.21 to 0.8 %, PSNR 59.4 to 63 dB; the Metal pass alone gives the HLSL pass within 1/255. The upscale
+  compiles from Metal Shading Language 2.1 to 3.2, and stops on its `#error` at 2.0. Until 22/11/2026 it took its
+  slopes per pixel (`dfdx`) where the HLSL takes them per quad, 40 to 53 dB from WARP.
 
 ## Integrating
 
@@ -496,6 +497,11 @@ stream, and build a pipeline from your vertex function and `mwsr_up`. The vertex
 [[position]]` and `float2 texCoords`, v down from the picture's top. Bind the RGB input at `texture(0)` and the 96 bytes
 of `mwsr::constants()` at `buffer(1)` (`setFragmentBytes:`), with `hdr` set on PQ frames, then draw the output's region.
 A decoder's YUV planes go to RGB first, at the stream's size, as on Direct3D.
+
+The upscale reads its vote's slopes once per 2×2 quad, as Direct3D and WebGPU do, with `quad_broadcast`: it needs Metal
+Shading Language 2.1 or later, which `newLibraryWithSource:` takes by default, and a GPU of `MTLGPUFamilyApple4` or
+later, or of `MTLGPUFamilyMac2` (`supportsFamily:`), the families whose quad-scoped permute operations Apple's feature set
+tables list; tried on an Apple M1 Pro only. Below 2.1 the text does not compile and says why.
 
 ## Parameters
 
