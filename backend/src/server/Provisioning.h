@@ -67,6 +67,11 @@ void setStepStatus(const QString& step, const QString& state);
 /// opened it.
 QString stepStatus(const QString& step);
 
+/// Whether one of the steps ("install", "pairing", "arecord") is "running", in
+/// a status file written less than @p maxAgeSecs ago: a step left "running" by
+/// a run that crashed does not count for ever.
+bool anyStepRunning(qint64 maxAgeSecs = 30 * 60);
+
 /// Publish a top-level informational key in the same status file (e.g.
 /// "admin_url" with the real HTTPS port/domain, read by the installer's
 /// post-install "open admin page" action).

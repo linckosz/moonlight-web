@@ -27,6 +27,7 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QFileInfo>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
@@ -72,6 +73,17 @@ QString stepStatus(const QString& step)
     const QJsonObject root = QJsonDocument::fromJson(f.readAll()).object();
     f.close();
     return root.value(QStringLiteral("steps")).toObject().value(step).toString();
+}
+
+bool anyStepRunning(qint64 maxAgeSecs)
+{
+    const QFileInfo status(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
+                           QStringLiteral("/provisioning.status.json"));
+    if (!status.exists() || status.lastModified().secsTo(QDateTime::currentDateTime()) > maxAgeSecs)
+        return false;
+    for (const char* step : {"install", "pairing", "arecord"})
+        if (stepStatus(QLatin1String(step)) == QLatin1String("running")) return true;
+    return false;
 }
 
 // Publish a top-level informational key (e.g. the resolved admin URL) in the

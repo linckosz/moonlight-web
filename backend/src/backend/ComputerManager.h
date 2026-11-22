@@ -108,6 +108,9 @@ public:
     // (PairingOwners): only it is shown the PIN and may submit; another gets 409
     // pairing_in_progress until it is left alone for PairingOwners::kIdleMs or
     // its session goes. @p admin may replace someone else's that no chain runs.
+    /// A GameStream pairing runs with a host: a restart of the server for a
+    /// setting waits until none does (SharedPortsRestart).
+    bool pairingUnderWay() const { return !m_ActivePairings.isEmpty(); }
     std::pair<int, QJsonObject> handleStartPairing(const QString& uuid, const QString& sessionId,
                                                    bool admin);
     void handleSubmitPin(const QString& uuid, const QString& sessionId, ResponseCallback respond);

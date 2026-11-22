@@ -227,7 +227,8 @@ bool writePairRequestInternet(const HttpRequest& req, const QJsonObject& body,
     return true;
 }
 
-void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, PairRequestDeps deps)
+std::function<bool()> registerPairRequestRoutes(RestRouter& router, AuthManager& authManager,
+                                                PairRequestDeps deps)
 {
     const auto c = std::make_shared<Context>(authManager, std::move(deps));
 
@@ -501,4 +502,6 @@ void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, Pai
         obj["status"] = "ok";
         return HttpResponse::json(obj);
     });
+
+    return [c]() { return c->book.waiting(c->deps.now ? c->deps.now() : 0) > 0; };
 }

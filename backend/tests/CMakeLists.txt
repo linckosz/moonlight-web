@@ -58,6 +58,8 @@ add_executable(run_tests
     test_input_crypto.cpp
     test_rest_router.cpp
     test_app_settings.cpp
+    test_router_switches.cpp
+    test_server_restart.cpp
     test_launcher_detect.cpp
     test_host_app_image.cpp
     test_log_archive.cpp
@@ -268,6 +270,9 @@ add_executable(run_tests
     ${_src}/src/server/ConnectionHistory.cpp
     ${_src}/src/server/routes/LanHttpRoutes.cpp
     ${_src}/src/server/SessionPool.cpp
+    # A server restarting itself, and the box applied by a restart (UI443).
+    ${_src}/src/server/ServerRestart.cpp
+    ${_src}/src/server/SharedPortsRestart.cpp
     # Who started a stream, as the server knows it (issue #68).
     ${_src}/src/server/StreamOwner.cpp
     # The single-tab control channel: the port it lands on when its own is taken.

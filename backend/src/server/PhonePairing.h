@@ -272,6 +272,15 @@ public:
 
     /// Requests held, in any state.
     int pending() const { return static_cast<int>(m_requests.size()); }
+    /// Requests neither paired nor expired at @p now: a pairing someone may
+    /// still be in the middle of.
+    int waiting(qint64 now) const
+    {
+        int n = 0;
+        for (const Request& r : m_requests)
+            if (live(r, now)) ++n;
+        return n;
+    }
 
 private:
     void purge(qint64 now);

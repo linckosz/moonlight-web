@@ -96,6 +96,13 @@ bool SessionPool::inUse(int index) const
     return !s.worker.isNull() || !s.clientUniqueId.isEmpty() || !s.sessionToken.isEmpty();
 }
 
+bool SessionPool::anyInUse() const
+{
+    for (int i = 0; i < m_Slots.size(); ++i)
+        if (inUse(i)) return true;
+    return false;
+}
+
 void SessionPool::setOnSlotCreated(std::function<void(int)> fn)
 {
     m_OnSlotCreated = std::move(fn);

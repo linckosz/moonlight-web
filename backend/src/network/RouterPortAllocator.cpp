@@ -722,7 +722,10 @@ void RouterPortAllocator::consider443()
     // The router may be asked while UPnP and Internet Access are on. Off, an
     // entry that is held is taken back, as every hole is, and nothing else.
     const bool ask = enabled();
-    now.wanted = ask && !mw::portidentity::devPorts() && m_Settings->iceUdpMux() &&
+    // The shared ports as they run (setStreamMux), not as the file now asks:
+    // the box of the shared ports takes effect at the next start, router
+    // included; the box of 443 at once.
+    now.wanted = ask && !mw::portidentity::devPorts() && static_cast<bool>(m_MuxHolds) &&
                  m_Settings->iceTcpPassive() && m_Settings->iceTcp443();
     if (m_PublicAddress) now.publicAddress = m_PublicAddress();
     // Where it would lead: the shared block port, once the router forwards it
@@ -1069,6 +1072,11 @@ void RouterPortAllocator::releaseMuxPort(int which)
     Logger::info(QStringLiteral("[UPNP] %1: released %2")
                      .arg(purposeName(Purpose::Mux, which))
                      .arg(claim.external));
+}
+
+void RouterPortAllocator::tcp443SwitchChanged()
+{
+    consider443();
 }
 
 void RouterPortAllocator::switchChanged()

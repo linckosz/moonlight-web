@@ -72,7 +72,11 @@ struct PairRequestDeps
 /// Register /api/auth/pair-request…: a device paired from the QR code it shows,
 /// approved by this host's administrator (server/PhonePairing.h has the
 /// protocol and what each side may do).
-void registerPairRequestRoutes(RestRouter& router, AuthManager& authManager, PairRequestDeps deps);
+/// Returns whether a request is still waiting (neither paired nor expired):
+/// a restart of the server for a setting waits until none is
+/// (server/SharedPortsRestart.h).
+std::function<bool()> registerPairRequestRoutes(RestRouter& router, AuthManager& authManager,
+                                                PairRequestDeps deps);
 
 /// POST /api/admin/settings's `pair_request_internet` (the admin page's box for
 /// QR code requests from the internet), written for the administrator alone,

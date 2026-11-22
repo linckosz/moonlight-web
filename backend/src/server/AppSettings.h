@@ -25,6 +25,8 @@
 #include <QJsonObject>
 #include <QJsonValue>
 
+#include <optional>
+
 #include "../streaming/StreamConfig.h"
 
 // Persistent settings stored in QStandardPaths::AppDataLocation/settings.json,
@@ -121,28 +123,52 @@ public:
     // false keeps every TCP port closed. Read when each connection is built.
     bool iceTcpPassive() const;
     // ── The UDP ports every stream shares ────────────────────────────────────
-    // JSON bool "ice_udp_mux", file-only, DEFAULT true since 0.4.4 on Windows,
-    // Linux and macOS, where a real stream on the shared ports has been seen;
-    // false elsewhere (docs/design/ice-mux.md). Not seeded: absent, it follows
-    // the code's default, which an update can still change. With it the
+    // JSON bool "ice_udp_mux", DEFAULT true since 0.4.4 on Windows, Linux and
+    // macOS, where a real stream on the shared ports has been seen; false
+    // elsewhere (docs/design/ice-mux.md). Not seeded: absent, it follows the
+    // code's default, which an update can still change. The admin page's box
+    // "One shared port for streams" writes it (setRouterSwitches). With it the
     // server binds the streams' UDP ports itself and keeps them, and every
     // stream worker's ICE agent shares them; false: each stream binds a port
-    // of its own, as in 0.4.3. Read once, when the server starts.
+    // of its own, as in 0.4.3. Read once, when the server starts, holes
+    // included: a write of the box is applied by a restart of the server
+    // (server/SharedPortsRestart.h).
     bool iceUdpMux() const;
+    /// Whether "ice_udp_mux" and "ice_tcp_443" are on when the file does not
+    /// name them, on this system.
+    static bool sharedPortsByDefault();
+    /// The three switches of the router the admin page writes: each one that
+    /// is set is written, the others are left as they are.
+    struct RouterSwitches
+    {
+        std::optional<bool> upnp;
+        /// The box "One shared port for streams" ticked or not
+        std::optional<bool> sharedPorts;
+        /// The box "Also through TCP 443" ticked or not
+        std::optional<bool> tcp443;
+    };
+    /// One read and one write of the file for all of them. A ticked box of
+    /// the shared ports takes its key out of the file when this system's
+    /// default is on, so that the key stays unseeded; an unticked one writes
+    /// false.
+    void setRouterSwitches(const RouterSwitches& switches);
+    /// The rule of setRouterSwitches, on @p obj, free of the file.
+    static void applyRouterSwitches(QJsonObject& obj, const RouterSwitches& switches,
+                                    bool onByDefault);
     /// The rule of "ice_udp_mux" and "ice_tcp_443", free of the file and of
     /// the system: what the key holds (undefined when it is absent) and the
     /// default of this system. A value that is not a boolean asks for
     /// nothing: off.
     static bool iceUdpMuxChoice(const QJsonValue& stored, bool onByDefault);
     // ── TCP 443 on the router ────────────────────────────────────────────────
-    // JSON bool "ice_tcp_443", file-only, DEFAULT as "ice_udp_mux", and not
-    // seeded either. With it, and with ice_udp_mux and ice_tcp_passive, the host asks its
-    // router to forward TCP 443 to the port its streams share, for a browser
-    // on a network that lets out nothing else: only when it can show, alone,
-    // that nobody has 443 and that it then leads here (network/Tcp443Guard).
-    // false: 443 is never asked for, and an entry this installation holds
-    // there is taken off. A host whose 443 is forwarded by hand has nothing to
-    // gain from it.
+    // JSON bool "ice_tcp_443", DEFAULT as "ice_udp_mux", and not seeded
+    // either; written by the admin page's box "Also through TCP 443", read at
+    // every look of the router's 443 (no restart). With it, and with ice_udp_mux and
+    // ice_tcp_passive, the host asks its router to forward TCP 443 to the port its streams share,
+    // for a browser on a network that lets out nothing else: only when it can show, alone, that
+    // nobody has 443 and that it then leads here (network/Tcp443Guard). false: 443 is never asked
+    // for, and an entry this installation holds there is taken off. A host whose 443 is forwarded
+    // by hand has nothing to gain from it.
     bool iceTcp443() const;
     // A DEBUG switch for a bench, never for a user: JSON bool "debug_ice_drop_udp",
     // DEFAULT false, typed into the file by hand. Nothing writes it, not even its

@@ -26,7 +26,12 @@
 #include "server/AuthManager.h"
 #include "server/Provisioning.h"
 #include "server/RememberMeWrite.h"
+#include "server/RouterSwitchesWrite.h"
+#include "server/ServerRestart.h"
+#include "server/SharedPortsRestart.h"
+#include "network/IceMux.h"
 #include "network/InternetAccessManager.h"
+#include "network/PortIdentity.h"
 #include "network/RouterPortAllocator.h"
 #include "network/Tcp443Guard.h"
 #include "backend/ComputerManager.h"
@@ -72,11 +77,6 @@
 #include <QTimer>
 
 #include <memory>
-
-// Exit code the restart endpoint leaves with so the service supervisor treats it
-// as "come back": NSSM's `AppExit Default Restart` respawns on any code it hasn't
-// been told to Exit on, and only 0 is mapped to a real stop (install-service.bat).
-static constexpr int kServiceRestartExitCode = 79;
 
 // Whether the admin's picture-chain choice means anything on this machine: a
 // Windows host that offers itself, with a GPU whose encoder has a D3D12 route —
@@ -986,24 +986,11 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     server.router()->post("/api/system/restart", [](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 
-        const bool supervised = !qEnvironmentVariableIsEmpty("MW_SERVICE");
-        if (!supervised) {
-            QString appPath = QCoreApplication::applicationFilePath();
-            QStringList args = QCoreApplication::arguments();
-            if (!args.isEmpty()) args.removeFirst(); // argv[0]; startDetached re-adds it
-            mw::startDetached(appPath, args);
-        }
-        Logger::info(QStringLiteral("[System] Restart requested over loopback (%1)")
-                         .arg(supervised ? QStringLiteral("supervisor respawn")
-                                         : QStringLiteral("self relaunch")));
-        // From here nothing new starts in this process (common/QuitSignals.h).
-        mw::beginQuit();
-
-        // Delay the exit so the HTTP response flushes over TLS before the socket
-        // dies under it — otherwise the caller sees a transport error, not a 200.
-        QTimer::singleShot(300, qApp, [supervised]() {
-            QCoreApplication::exit(supervised ? kServiceRestartExitCode : 0);
-        });
+        // A fresh copy that waits for this process to be gone, or the
+        // supervisor's respawn (server/ServerRestart.h). The exit is delayed so
+        // that this answer flushes over TLS before its socket dies.
+        if (!mw::restart::now(QStringLiteral("asked over loopback")))
+            return HttpResponse::error(500, "The server could not start a new copy of itself");
 
         QJsonObject obj;
         obj["status"] = "restarting";
@@ -1154,6 +1141,20 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["remember_me_days"] = authManager.rememberMeDays();
         obj["remember_me_days_default"] = AppSettings::kRememberMeDaysDefault;
         obj["remember_me_days_acknowledged"] = appSettings.rememberMeDaysAcknowledged();
+        // The two boxes of the router's ports (admin > Internet): what the file
+        // asks, as resolved, and whether the shared ports run in this process.
+        // "One shared port for streams" takes effect at the next start; "Also
+        // through TCP 443" at once, and only while the shared ports run. No
+        // address and no port in any of them.
+        obj["ice_udp_mux"] = appSettings.iceUdpMux();
+        obj["ice_tcp_443"] = appSettings.iceTcp443();
+        obj["shared_ports_running"] = IceMux::shared() != nullptr;
+        // A restart that applies the box waits for the streams and pairings.
+        obj["restart_pending"] =
+            SharedPortsRestart::shared() && SharedPortsRestart::shared()->pending();
+        // Never on a DEV identity (its ports are not the router's 443's), nor
+        // without TCP passive: the box would do nothing there.
+        obj["tcp443_applies"] = !mw::portidentity::devPorts() && appSettings.iceTcpPassive();
         return HttpResponse::json(obj);
     });
 
@@ -1167,6 +1168,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         QJsonObject body = doc.object();
         bool hadChange = false;
         QJsonObject obj;
+
+        // ── The two boxes of admin > Internet: checked before anything is
+        // written (RouterSwitchesWrite.h), written last (below): a value that
+        // is not a boolean refuses the whole body.
+        if (const QString why = mw::routerswitches::adminRefused(body); !why.isEmpty())
+            return HttpResponse::error(400, why);
 
         // ── How long a remembered device stays signed in (issue #60) ─────
         // First, so a refused body changes nothing (RememberMeWrite.h).
@@ -1348,6 +1355,31 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             hadChange = true;
         }
 
+        // ── The two boxes of admin > Internet ────────────────────────────
+        // Last, after every refusal of the body, so that a body refused above
+        // writes none of them and asks for no restart. The box of 443 applies
+        // at once (its guard looks again); the box of the shared ports at the
+        // next start, router included: nothing here touches what runs.
+        if (const auto boxes = mw::routerswitches::adminWrite(body, appSettings, obj);
+            boxes.any()) {
+            if (boxes.tcp443) {
+                if (RouterPortAllocator* ports = internetAccess.routerPorts())
+                    ports->tcp443SwitchChanged();
+            }
+            // The shared ports: by a restart, now or once nothing would be cut
+            // (server/SharedPortsRestart.h). Asked last of all: "now" makes
+            // this answer the last of this process; the page reconnects.
+            if (boxes.sharedPorts) {
+                if (SharedPortsRestart* restart = SharedPortsRestart::shared()) {
+                    restart->asked();
+                    obj["restart"] = mw::quitting()       ? QStringLiteral("now")
+                                     : restart->pending() ? QStringLiteral("after_streams")
+                                                          : QStringLiteral("none");
+                }
+            }
+            hadChange = true;
+        }
+
         if (!hadChange) return HttpResponse::error(400, "No supported settings provided");
 
         return HttpResponse::json(obj);
@@ -1478,6 +1510,12 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
 
         QJsonObject obj;
         bool hadChange = false;
+
+        // UPnP: a value that is not a boolean refuses the whole body, and so
+        // does a box of admin > Internet, written by POST /api/admin/settings
+        // alone (RouterSwitchesWrite.h).
+        if (const QString why = mw::routerswitches::streamingRefused(body); !why.isEmpty())
+            return HttpResponse::error(400, why);
 
         // First, so that a bad value refuses the whole request before any of
         // its other keys is written. Refused rather than stored: a typo saved
@@ -1673,12 +1711,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             hadChange = true;
         }
 
-        if (body.contains("upnp_enabled")) {
-            bool enabled = body["upnp_enabled"].toBool();
-            appSettings.setUpnpEnabled(enabled);
+        // UPnP, applied at once.
+        if (mw::routerswitches::streamingWrite(body, appSettings, obj)) {
             if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
-            obj["upnp_enabled"] = enabled;
-            obj["status"] = "saved";
             hadChange = true;
         }
 

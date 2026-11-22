@@ -80,6 +80,8 @@
 #include "common/RunFlags.h"
 #include "server/CertManager.h"
 #include "server/Provisioning.h"
+#include "server/ServerRestart.h"
+#include "server/SharedPortsRestart.h"
 #include "server/HostKeyVault.h"
 #include "server/FirstRunLink.h"
 #include "server/HttpServer.h"
@@ -2442,9 +2444,28 @@ int main(int argc, char* argv[])
                    "diagnostics, and the browsers' pipeline diagnostics");
     parser.addOption(verboseOption);
 
+    // Internal: given by a server that restarts itself to the copy it starts
+    // (server/ServerRestart.h): wait for that process to be gone before the
+    // single-instance lock and the ports. Never passed further.
+    QCommandLineOption afterPidOption("after-pid", "Internal: wait for this server process to end",
+                                      "pid");
+    afterPidOption.setFlags(QCommandLineOption::HiddenFromHelp);
+    parser.addOption(afterPidOption);
+
     parser.process(app);
     mw::run::setDebugFromCli(parser.isSet(debugOption));
     mw::run::setVerboseFromCli(parser.isSet(verboseOption));
+    // What a restart of this server starts again: the allowlist of
+    // mw::restart::relaunchArguments, its paths made absolute (a relaunched
+    // copy may not start where this one did).
+    mw::restart::setRelaunchArguments(mw::restart::relaunchArguments(
+        [&parser](const QString& name) { return parser.isSet(name); },
+        [&parser](const QString& name) {
+            const QString value = parser.value(name);
+            if (name == QLatin1String("config") || name == QLatin1String("log"))
+                return QFileInfo(value).absoluteFilePath();
+            return value;
+        }));
 
     // Before anything builds an AppSettings — every branch below reads it.
     if (parser.isSet(configOption)) {
@@ -2641,6 +2662,19 @@ int main(int argc, char* argv[])
 
     quint16 httpPort = appSettings.httpPort(devMode ? kDevHttpPort : 80);
     if (parser.isSet("port")) httpPort = parser.value("port").toUShort();
+
+    // ── The server this one replaces (a restart) ─────────────────────────────
+    // Before the lock and the ports, which it still holds while it exits.
+    if (parser.isSet(afterPidOption)) {
+        qint64 pid = 0;
+        if (!mw::restart::parsePid(parser.value(afterPidOption), &pid))
+            Logger::warning(QStringLiteral("--after-pid: not a process number, ignored"));
+        else if (mw::restart::waitForPredecessor(pid, 20000))
+            Logger::info(QStringLiteral("[System] The server this one replaces has exited"));
+        else
+            Logger::info(QStringLiteral("[System] No earlier server to wait for, or it did not "
+                                        "exit in 20 s: starting all the same"));
+    }
 
     // ── Single instance ──────────────────────────────────────────────────────
     // The app has no window: launching it again (Desktop shortcut / Apps /
@@ -8651,7 +8685,7 @@ int main(int argc, char* argv[])
         }
         return subnets;
     };
-    registerPairRequestRoutes(
+    const std::function<bool()> qrPairingWaiting = registerPairRequestRoutes(
         *server.router(), authManager,
         {[&appSettings]() { return appSettings.hostSigningPublicKey(); },
          &HttpServer::sessionTokenFromRequest,
@@ -8945,6 +8979,26 @@ int main(int argc, char* argv[])
                 QStringLiteral("[System] Signals keep their default action: %1").arg(why));
     }
 #endif
+
+    // The admin page's box "One shared port for streams" is applied by a
+    // restart, once nothing it would cut runs (server/SharedPortsRestart.h).
+    SharedPortsRestart sharedPortsRestart(SharedPortsRestart::Probes{
+        [&appSettings]() { return appSettings.iceUdpMux(); },
+        []() { return IceMux::shared() != nullptr; },
+        [&g_Pool, &computerManager, &qrPairingWaiting, &lanHttpBook, &selfUpdater]() {
+            return g_Pool.anyInUse() || computerManager.pairingUnderWay() || qrPairingWaiting() ||
+                   lanHttpBook.pending(QDateTime::currentSecsSinceEpoch()) > 0 ||
+                   Provisioning::anyStepRunning() || selfUpdater.busy() || mw::quitting();
+        },
+        []() {
+            return mw::restart::now(
+                QStringLiteral("to apply \"One shared port for streams\", no stream running"));
+        }});
+    SharedPortsRestart::setShared(&sharedPortsRestart);
+    struct SharedPortsRestartForgotten
+    {
+        ~SharedPortsRestartForgotten() { SharedPortsRestart::setShared(nullptr); }
+    } sharedPortsRestartForgotten;
 
     const int exitCode = app.exec();
     mw::beginQuit();

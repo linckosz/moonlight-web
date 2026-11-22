@@ -292,6 +292,15 @@ export class AdminView {
             this._hostLayout = admin.keyboard_host_layout === true;
             this._autostartSupported = admin.autostart_supported === true;
             this._autostartEnabled = admin.autostart_enabled === true;
+            // The two boxes of the router's ports: what the file asks, and
+            // whether the shared ports run in this process. The first box is
+            // applied by a restart of the server (restart_pending while it
+            // waits for the streams); the second at once, while they run.
+            this._sharedPorts = admin.ice_udp_mux !== false;
+            this._tcp443 = admin.ice_tcp_443 !== false;
+            this._sharedPortsRunning = admin.shared_ports_running === true;
+            this._tcp443Applies = admin.tcp443_applies === true;
+            this._sharedPortsRestartPending = admin.restart_pending === true;
             // Two values, not one: what was chosen (often nothing) and what the
             // PC is called. The field shows the first and offers the second as
             // its placeholder, so an empty box reads as "this machine's own
@@ -724,6 +733,57 @@ export class AdminView {
         return prefix;
     }
 
+    // "One shared port for streams" and "Also through TCP 443" (settings.json
+    // ice_udp_mux, ice_tcp_443). The second only while the shared ports run
+    // and where it can apply (not a DEV identity): hidden otherwise, its stored
+    // value kept. Both read-only for a view that may not write them.
+    _renderRouterPortBoxes() {
+        const disabled = this._isLocalhost() ? '' : 'disabled';
+        const show443 = this._sharedPortsRunning && this._tcp443Applies;
+        return `
+                    <div class="settings-field" id="router-port-boxes">
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-shared-ports" ${disabled}
+                                   ${this._sharedPorts ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.sharedPortsBox')}</span>
+                        </label>
+                        ${
+                            this._sharedPortsRestartPending
+                                ? `<p class="settings-hint" id="shared-ports-waiting">${t('admin.sharedPortsRestartWaiting')}</p>`
+                                : ''
+                        }
+                        ${
+                            show443
+                                ? `
+                        <label class="settings-checkbox-label">
+                            <input type="checkbox" id="chk-tcp443" ${disabled}
+                                   ${this._tcp443 ? 'checked' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.tcp443Box')}</span>
+                        </label>`
+                                : ''
+                        }
+                    </div>`;
+    }
+
+    // After a restart the server asked for itself: the page waits for it to
+    // answer again, then loads what the new process says.
+    async _reconnectAfterRestart() {
+        // The old process answers a little longer (its exit is delayed): wait
+        // for it to go first, then for the new one.
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        for (let tries = 0; tries < 60; ++tries) {
+            try {
+                await BackendClient.getAuthStatus();
+                await this._loadState();
+                this.render();
+                this.bindEvents();
+                return;
+            } catch {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+            }
+        }
+    }
+
     _isLocalhost() {
         // The host's word (/api/auth/status), never this page's address: true
         // for the host machine's own browser, whichever address it came by, and
@@ -1001,6 +1061,8 @@ export class AdminView {
                             <span class="settings-checkbox-text consent-highlight">${t('admin.enableInternet')}</span>
                         </label>
                     </div>
+
+                    ${this._renderRouterPortBoxes()}
 
                     ${
                         this._activating
@@ -1684,6 +1746,44 @@ export class AdminView {
         }
 
         // Internet Access checkbox toggle
+        // ── The router's ports: the shared port (by a restart) and 443 ──────
+        const sharedChk = this.container.querySelector('#chk-shared-ports');
+        if (sharedChk) {
+            sharedChk.addEventListener('change', async () => {
+                const on = sharedChk.checked;
+                try {
+                    const reply = await BackendClient.saveAdminSettings({ ice_udp_mux: on });
+                    this._sharedPorts = on;
+                    this._sharedPortsRestartPending = reply?.restart === 'after_streams';
+                    if (reply?.restart === 'now') {
+                        Toast.info(t('admin.sharedPortsRestarting'));
+                        this._reconnectAfterRestart();
+                        return;
+                    }
+                    this.render();
+                    this.bindEvents();
+                } catch (err) {
+                    console.error('[Admin] Failed to save the shared ports box:', err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                    sharedChk.checked = !on; // revert
+                }
+            });
+        }
+        const tcp443Chk = this.container.querySelector('#chk-tcp443');
+        if (tcp443Chk) {
+            tcp443Chk.addEventListener('change', async () => {
+                const on = tcp443Chk.checked;
+                try {
+                    await BackendClient.saveAdminSettings({ ice_tcp_443: on });
+                    this._tcp443 = on;
+                } catch (err) {
+                    console.error('[Admin] Failed to save the TCP 443 box:', err);
+                    Toast.error(t('admin.saveFailed', { message: err.message }));
+                    tcp443Chk.checked = !on; // revert
+                }
+            });
+        }
+
         const internetChk = this.container.querySelector('#chk-internet-enable');
         if (internetChk) {
             internetChk.addEventListener('change', async () => {
