@@ -86,14 +86,20 @@ void testPublicPortOfAHostCandidate()
 void testTheCopyOnTcp443()
 {
     using mw::ice::has443Copy;
-    // The passive TCP candidate on the very port the router's 443 leads to,
-    // and no other: not another shared port, not an active candidate (never
-    // dialled), not a UDP one, and none when 443 leads nowhere.
-    CHECK(has443Copy(true, 48550, 48550));
-    CHECK(!has443Copy(true, 3478, 48550));
-    CHECK(!has443Copy(false, 48550, 48550));
-    CHECK(!has443Copy(true, 48550, 0));
-    CHECK(!has443Copy(true, 0, 0));
+    // A passive TCP candidate, when the router's 443 leads to one of this
+    // stream's shared TCP ports, whatever the candidate's own port: the agent
+    // offers passive TCP on its first shared port alone (a conferencing port
+    // when the host holds one), and 443 leads to the block's port.
+    const std::vector<uint16_t> both = {3478, 48551};
+    CHECK(has443Copy(true, 48551, both));
+    CHECK(has443Copy(true, 3478, both));
+    CHECK(has443Copy(true, 48550, {48550}));
+    // Not when 443 leads to a port this stream does not hold, nor nowhere,
+    // nor for an active candidate (never dialled) or a UDP one.
+    CHECK(!has443Copy(true, 48550, both));
+    CHECK(!has443Copy(true, 48551, {}));
+    CHECK(!has443Copy(true, 0, both));
+    CHECK(!has443Copy(false, 48551, both));
     CHECK_EQ(mw::ice::kTcp443, uint16_t(443));
 
     // Below the copy on the port's own number, and below every other
@@ -254,6 +260,45 @@ void testOwnHoleAndPortsNotForwarded()
                                         by443)
               .by443);
     CHECK(!mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::Udp, 48597), by443)
+               .by443);
+
+    // A host that holds a conferencing port: its passive TCP candidate is on
+    // 3478 (the agent's first shared port), the router's 443 leads to the
+    // block's 48551. The 3478 candidate is copied on 3478 and on 443 (the
+    // geste 6 of the 22nd: no 443 copy at all before).
+    CandidateView conferencing = sharedHole(false);
+    conferencing.udpHoles = {3478, 48551};
+    conferencing.tcpHoles = {3478, 48551};
+    conferencing.tcp443LeadsTo = 48551;
+    const auto first = mw::ice::hostCandidateVerdict(
+        cand(Kind::Private, true, Transport::TcpPassive, 3478), conferencing);
+    CHECK(!first.asIs);
+    CHECK_EQ(first.publicPort, uint16_t(3478));
+    CHECK(first.by443);
+    // An active one still never is, nor a UDP one
+    CHECK(!mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::TcpActive, 9),
+                                         conferencing)
+               .by443);
+    CHECK(!mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::Udp, 3478),
+                                         conferencing)
+               .by443);
+    // 443 said to lead to a port this stream does not hold: no copy, whatever
+    // the view was told
+    CandidateView elsewhere = conferencing;
+    elsewhere.tcp443LeadsTo = 48597;
+    CHECK(!mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::TcpPassive, 3478),
+                                         elsewhere)
+               .by443);
+    // A stream on its own hole: never a copy on 443
+    CandidateView onItsOwn = conferencing;
+    onItsOwn.onSharedPorts = false;
+    onItsOwn.ownHole = 46100;
+    CHECK(!mw::ice::hostCandidateVerdict(cand(Kind::Private, true, Transport::TcpPassive, 48550),
+                                         onItsOwn)
+               .by443);
+    // An IPv6 candidate needs no NAT hole and gets no 443 copy
+    CHECK(!mw::ice::hostCandidateVerdict(cand(Kind::Public, false, Transport::TcpPassive, 3478),
+                                         conferencing)
                .by443);
 }
 

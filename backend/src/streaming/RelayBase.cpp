@@ -283,9 +283,13 @@ void RelayBase::emitLocalCandidate(const rtc::Candidate& candidate, const char* 
         qInfo() << logTag << "Host candidate copied at the public address on port"
                 << verdict.publicPort << "(" << transport << ") priority" << priority
                 << (m_EmitLanCandidate ? "(+ LAN)" : "");
-        // The router's TCP 443 leads to this very port: the same listener,
-        // reached by the one port some networks let out. Below every other
-        // candidate: a browser that gets through any other way never ends on it.
+        // The router's TCP 443 leads to one of this stream's shared TCP ports
+        // (the first passive candidate copies it, whatever its own port: the
+        // agent offers passive TCP on its first shared port alone): the
+        // server's listener there, reached by the one port some networks let
+        // out. At m_PublicIP, the router's public IPv4 (iceMuxPublic), never a
+        // LAN address; one copy in all. Below every other candidate: a browser
+        // that gets through any other way never ends on it.
         if (verdict.by443 &&
             firstPublicCopy(mw::ice::publicCopyKey(local.transport, mw::ice::kTcp443))) {
             rtc::Candidate other = candidate;

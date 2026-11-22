@@ -966,9 +966,57 @@ typedef struct front {
 	atomic(int) refused; // offers it did not take: the socket stayed ours
 	atomic(int) held;    // nothing is accepted for now: what is dialled waits at the listener
 	atomic(int) patient; // an offer the agent has no room for is made again, for a while
+	atomic(int) forge;    // the frame's signature changed, its fingerprint made again
+	atomic(int) forged;   // frames so changed
+	atomic(int) misroute; // offered to `other` instead, whoever the frame is for
+	juice_agent_t *other;
+	char last[1024]; // the last frame offered to `agent` (set before `taken` or `refused` moves)
+	int last_len;
 	atomic(int) stop;
 	thread_t thread;
 } front_t;
+
+// The test's own CRC-32 (IEEE, reflected), for STUN's FINGERPRINT: CRC-32 of the message up to
+// the attribute, XOR 0x5354554E (RFC 8489 14.7). Nothing of it is in libjuice's build.
+static uint32_t test_crc32(const unsigned char *data, size_t size) {
+	uint32_t crc = 0xFFFFFFFFu;
+	for (size_t i = 0; i < size; ++i) {
+		crc ^= data[i];
+		for (int bit = 0; bit < 8; ++bit)
+			crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+	}
+	return ~crc;
+}
+
+// The frame's MESSAGE-INTEGRITY changed (one byte of its HMAC), and its FINGERPRINT made again
+// over the changed message: a check every byte of which a parser takes, the signature alone
+// not fitting the password. False when the frame has not both attributes, in that order.
+static bool forge_integrity(unsigned char *frame, int size) {
+	if (size < 20)
+		return false;
+	int integrity = -1;
+	for (int at = 20; at + 4 <= size;) {
+		const int type = (frame[at] << 8) | frame[at + 1];
+		const int length = (frame[at + 2] << 8) | frame[at + 3];
+		if (at + 4 + length > size)
+			return false;
+		if (type == 0x0008 && length == 20)
+			integrity = at + 4;
+		if (type == 0x8028 && length == 4) {
+			if (integrity < 0)
+				return false;
+			frame[integrity] ^= 0x55;
+			const uint32_t fingerprint = test_crc32(frame, (size_t)at) ^ 0x5354554Eu;
+			frame[at + 4] = (unsigned char)(fingerprint >> 24);
+			frame[at + 5] = (unsigned char)(fingerprint >> 16);
+			frame[at + 6] = (unsigned char)(fingerprint >> 8);
+			frame[at + 7] = (unsigned char)fingerprint;
+			return true;
+		}
+		at += 4 + ((length + 3) & ~3);
+	}
+	return false;
+}
 
 static bool read_all(socket_t sock, char *buffer, int size) {
 	for (int have = 0; have < size;) {
@@ -1012,9 +1060,16 @@ static thread_return_t THREAD_CALL front_run(void *arg) {
 		}
 		if (atomic_load(&f->spoil))
 			frame[10] ^= 0x55; // in the transaction: the check's own signature no longer fits
+		if (atomic_load(&f->forge) && forge_integrity((unsigned char *)frame, ntohs(header)))
+			atomic_store(&f->forged, atomic_load(&f->forged) + 1);
+		juice_agent_t *to = atomic_load(&f->misroute) ? f->other : f->agent;
+		if (to == f->agent) {
+			memcpy(f->last, frame, ntohs(header));
+			f->last_len = ntohs(header);
+		}
 		int result = JUICE_ERR_FAILED;
 		for (int attempt = 0; attempt < (atomic_load(&f->patient) ? 400 : 1); ++attempt) {
-			result = juice_tcp_passive_offer(f->agent, (uintptr_t)sock, frame, ntohs(header));
+			result = juice_tcp_passive_offer(to, (uintptr_t)sock, frame, ntohs(header));
 			if (result != JUICE_ERR_FAILED || atomic_load(&f->stop))
 				break;
 			sleep_ms(5);
@@ -1063,23 +1118,25 @@ static int port_of(socket_t sock) {
 	return ntohs(sin.sin_port);
 }
 
-// The holder with nothing getting in by UDP, and the front on its first port. A port the system
-// gave in UDP may be refused in TCP (Windows keeps whole blocks for one protocol): another is
-// drawn then.
-static bool tcp_only_start(holder_t *h, front_t *f) {
+// The holder with nothing getting in by UDP, and the front on its port `via` (a second host,
+// `ufrag_b`, if not NULL). A port the system gave in UDP may be refused in TCP (Windows keeps
+// whole blocks for one protocol): another is drawn then.
+static bool tcp_only_start_at(holder_t *h, front_t *f, int via_listened, const char *ufrag_b) {
 	memset(f, 0, sizeof(*f));
 	for (int attempt = 0; attempt < 20; ++attempt) {
-		if (!holder_start(h, "hostAAAA", NULL))
+		if (!holder_start(h, "hostAAAA", ufrag_b))
 			return false;
 		for (int via = 0; via < PORTS; ++via)
 			atomic_store(&h->blocked[via], 1);
-		f->listener = tcp_loopback_listener(h->port[0]);
+		f->listener = tcp_loopback_listener(h->port[via_listened]);
 		if (f->listener != INVALID_SOCKET)
 			return true;
 		holder_stop(h);
 	}
 	return false;
 }
+
+static bool tcp_only_start(holder_t *h, front_t *f) { return tcp_only_start_at(h, f, 0, NULL); }
 
 static void tcp_only_stop(holder_t *h, front_t *f) {
 	atomic_store(&f->stop, 1);
@@ -1088,24 +1145,30 @@ static void tcp_only_stop(holder_t *h, front_t *f) {
 	holder_stop(h);
 }
 
-// The host on the holder's ports, told TCP is accepted for it; the peer hears of its passive TCP
-// candidates alone and dials them.
-static void connect_tcp_pair(holder_t *h, front_t *f, end_t *host, end_t *peer, bool told) {
+// The host `index` on the holder's ports, told TCP is accepted for it; the peer hears of its
+// passive TCP candidates alone and dials them, under `told_port` instead of their own if above
+// 0 (the server's copy on the router's 443, which leads to another of the shared ports). The
+// front is started for it, unless `start_front` is false (the caller starts it).
+static void connect_tcp_pair_at(holder_t *h, front_t *f, end_t *host, end_t *peer, bool told,
+                                int index, int told_port, bool start_front) {
 	memset(host, 0, sizeof(*host));
 	memset(peer, 0, sizeof(*peer));
 	make_agent(host, NULL);
 	make_agent(peer, "127.0.0.1");
 	host->peer = peer;
 	host->passive_only = true;
+	host->told_port = told_port;
 	juice_set_ice_tcp_mode(host->agent, JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE);
 	juice_set_ice_tcp_mode(peer->agent, JUICE_ICE_TCP_MODE_ACTIVE);
 
-	juice_set_local_ice_attributes(host->agent, h->ufrag[0], PASSWORD);
-	juice_shared_sockets_t shared = shared_of(h, 0);
+	juice_set_local_ice_attributes(host->agent, h->ufrag[index], PASSWORD);
+	juice_shared_sockets_t shared = shared_of(h, index);
 	shared.tcp = told;
 	CHECK(juice_set_shared_sockets(host->agent, &shared) == JUICE_ERR_SUCCESS);
-	f->agent = host->agent;
-	CHECK(thread_init(&f->thread, front_run, f) == 0);
+	if (start_front) {
+		f->agent = host->agent;
+		CHECK(thread_init(&f->thread, front_run, f) == 0);
+	}
 
 	char sdp[JUICE_MAX_SDP_STRING_LEN];
 	juice_get_local_description(host->agent, sdp, sizeof(sdp));
@@ -1115,6 +1178,10 @@ static void connect_tcp_pair(holder_t *h, front_t *f, end_t *host, end_t *peer, 
 
 	CHECK(juice_gather_candidates(host->agent) == 0);
 	juice_gather_candidates(peer->agent);
+}
+
+static void connect_tcp_pair(holder_t *h, front_t *f, end_t *host, end_t *peer, bool told) {
+	connect_tcp_pair_at(h, f, host, peer, told, 0, 0, true);
 }
 
 static bool reached(atomic(int) *counter, int count, int ms) {
@@ -1538,6 +1605,136 @@ static void test_tcp_listener_and_offers_at_once(bool offered) {
 #endif
 }
 
+// The router's TCP 443 leads to the block's port, the second shared one, while the agent offers
+// its passive TCP candidate on its first shared port alone (a conferencing port, when the host
+// holds one): the peer dials the copy, on the second port, where the server's listener takes
+// the connection and offers it to the agent.
+static void test_tcp_offered_on_another_port(void) {
+	printf("TCP on a shared port: dialled on another shared port than the candidate's, as by 443\n");
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start_at(&h, &front, 1, NULL));
+	end_t host, peer;
+	connect_tcp_pair_at(&h, &front, &host, &peer, true, 0, h.port[1], true);
+	CHECK(wait_state(host.agent, JUICE_STATE_COMPLETED, 10000));
+	CHECK(wait_state(peer.agent, JUICE_STATE_COMPLETED, 5000));
+	// The candidate the agent gave was on its first port; the connection came in on the second
+	CHECK(atomic_load(&host.tcp_port) == h.port[0]);
+	CHECK(atomic_load(&front.taken) >= 1);
+	CHECK(atomic_load(&front.refused) == 0);
+	char local[JUICE_MAX_CANDIDATE_SDP_STRING_LEN], remote[JUICE_MAX_CANDIDATE_SDP_STRING_LEN];
+	CHECK(juice_get_selected_candidates(host.agent, local, sizeof(local), remote,
+	                                    sizeof(remote)) == 0);
+	CHECK(strstr(local, "tcptype passive") != NULL);
+	CHECK(selected_local_port(host.agent) == h.port[1]);
+	exchange(&host, &peer, "to the host, by the other port", "to the peer, by the other port");
+	destroy_agent(&host);
+	destroy_agent(&peer);
+	tcp_only_stop(&h, &front);
+}
+
+// The same way in, a check changed on its way (one byte of its transaction): its FINGERPRINT no
+// longer fits, it is closed at the agent's gate, and nothing of it reaches the agent's user.
+static void test_tcp_offer_gate_on_another_port(void) {
+	printf("TCP on another shared port: a check changed on its way, its fingerprint no longer "
+	       "fitting, opens nothing\n");
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start_at(&h, &front, 1, NULL));
+	atomic_store(&front.spoil, 1);
+	end_t host, peer;
+	connect_tcp_pair_at(&h, &front, &host, &peer, true, 0, h.port[1], true);
+	CHECK(reached(&front.taken, 1, 5000));
+	sleep_ms(1500);
+	CHECK(juice_get_state(host.agent) != JUICE_STATE_COMPLETED);
+	CHECK(juice_get_state(host.agent) != JUICE_STATE_CONNECTED);
+	CHECK(juice_get_state(peer.agent) != JUICE_STATE_COMPLETED);
+	CHECK(juice_send(peer.agent, "let in?", 7) != 0 || !got(&host, 1, NULL, 500));
+	CHECK(got(&host, 0, NULL, 0));
+	destroy_agent(&host);
+	destroy_agent(&peer);
+	tcp_only_stop(&h, &front);
+}
+
+// The same way in, a check that every parser takes: the peer's own fragment, a FINGERPRINT that
+// fits, a MESSAGE-INTEGRITY that does not fit the agent's password. Closed at the agent's gate
+// by the signature ("STUN integrity check failed"), and nothing of it reaches the agent's user.
+static void test_tcp_offer_integrity_on_another_port(void) {
+	printf("TCP on another shared port: a check whose signature does not fit the password, its "
+	       "fingerprint made again, opens nothing\n");
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start_at(&h, &front, 1, NULL));
+	atomic_store(&front.forge, 1);
+	end_t host, peer;
+	connect_tcp_pair_at(&h, &front, &host, &peer, true, 0, h.port[1], true);
+	CHECK(reached(&front.taken, 1, 5000));
+	CHECK(atomic_load(&front.forged) >= 1);
+	sleep_ms(1500);
+	CHECK(juice_get_state(host.agent) != JUICE_STATE_COMPLETED);
+	CHECK(juice_get_state(host.agent) != JUICE_STATE_CONNECTED);
+	CHECK(juice_get_state(peer.agent) != JUICE_STATE_COMPLETED);
+	CHECK(got(&host, 0, NULL, 0));
+	destroy_agent(&host);
+	destroy_agent(&peer);
+	tcp_only_stop(&h, &front);
+}
+
+// Two hosts on the same shared ports. B's session runs by the second port. Then B's own first
+// check, sent again on a new connection to that port, is offered to A, whose checks still run:
+// A's gate never lets it in (the fragment and the signature are B's), and B goes on.
+static void test_tcp_other_agents_check(void) {
+	printf("TCP on another shared port: another agent's check is never let in\n");
+	holder_t h;
+	front_t front;
+	CHECK(tcp_only_start_at(&h, &front, 1, "hostBBBB"));
+	end_t a, pa, b, pb;
+	// A: its peer dials A's candidate as it is, on the first port, where nothing listens in TCP
+	connect_tcp_pair_at(&h, &front, &a, &pa, true, 0, -1, false);
+	// B: its peer dials the second port, the front's
+	connect_tcp_pair_at(&h, &front, &b, &pb, true, 1, h.port[1], false);
+	front.agent = b.agent;
+	front.other = a.agent;
+	CHECK(thread_init(&front.thread, front_run, &front) == 0);
+	CHECK(wait_state(b.agent, JUICE_STATE_COMPLETED, 10000));
+	CHECK(wait_state(pb.agent, JUICE_STATE_COMPLETED, 5000));
+	CHECK(reached(&front.taken, 1, 1000));
+	exchange(&b, &pb, "to B", "to B's peer");
+
+	// B's first check again, on a new connection, offered to A
+	char frame[sizeof(front.last)];
+	const int len = front.last_len;
+	CHECK(len >= 20 && len <= (int)sizeof(frame));
+	memcpy(frame, front.last, len);
+	atomic_store(&front.misroute, 1);
+	const int offered = atomic_load(&front.taken) + atomic_load(&front.refused);
+	socket_t sock = tcp_loopback_dial(front.listener);
+	CHECK(sock != INVALID_SOCKET);
+	uint16_t header = htons((uint16_t)len);
+	CHECK(send(sock, (const char *)&header, 2, 0) == 2);
+	CHECK(send(sock, frame, len, 0) == len);
+	for (int t = 0; t < 3000 && atomic_load(&front.taken) + atomic_load(&front.refused) == offered;
+	     t += 20)
+		sleep_ms(20);
+	CHECK(atomic_load(&front.taken) + atomic_load(&front.refused) == offered + 1);
+	sleep_ms(1000);
+	// Never A's: no session, nothing given to its user
+	CHECK(juice_get_state(a.agent) != JUICE_STATE_COMPLETED);
+	CHECK(juice_get_state(a.agent) != JUICE_STATE_CONNECTED);
+	CHECK(got(&a, 0, NULL, 0));
+	closesocket(sock);
+	// ...and B is none the worse for it
+	CHECK(juice_get_state(b.agent) == JUICE_STATE_COMPLETED);
+	CHECK(juice_send(pb.agent, "B still there", 13) == 0);
+	CHECK(got(&b, 2, "B still there", 2000));
+
+	destroy_agent(&a);
+	destroy_agent(&pa);
+	destroy_agent(&b);
+	destroy_agent(&pb);
+	tcp_only_stop(&h, &front);
+}
+
 int ice_mux_tests(void) {
 	test_header();
 	test_via_is_part_of_an_address();
@@ -1552,6 +1749,10 @@ int ice_mux_tests(void) {
 	test_class_per_datagram();
 	test_tcp_offered();
 	test_tcp_offer_gate();
+	test_tcp_offered_on_another_port();
+	test_tcp_offer_gate_on_another_port();
+	test_tcp_offer_integrity_on_another_port();
+	test_tcp_other_agents_check();
 	test_tcp_offer_refusals();
 	test_tcp_offers_from_another_thread();
 	test_tcp_offered_to_a_listener();

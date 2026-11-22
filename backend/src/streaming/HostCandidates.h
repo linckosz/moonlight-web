@@ -65,7 +65,8 @@ struct CandidateView
     uint16_t ownHole = 0;
     std::vector<uint16_t> udpHoles;
     std::vector<uint16_t> tcpHoles;
-    /// The shared port the router's TCP 443 leads to, 0 for none
+    /// The shared port the router's TCP 443 leads to, 0 for none; a copy on
+    /// 443 only when it is one of `tcpHoles`
     uint16_t tcp443LeadsTo = 0;
     /// setSuppressIPv6Candidates()
     bool suppressIpv6 = false;
@@ -138,8 +139,10 @@ inline CandidateVerdict hostCandidateVerdict(const LocalCandidate& c, const Cand
                 return out;
             }
             out.why = Why::Copied;
-            out.by443 =
-                has443Copy(c.transport == Transport::TcpPassive, out.publicPort, v.tcp443LeadsTo);
+            // Checked here against this stream's own TCP ports, whatever the
+            // view was told: 443 leading anywhere else gives no copy
+            out.by443 = v.onSharedPorts && has443Copy(c.transport == Transport::TcpPassive,
+                                                      v.tcp443LeadsTo, v.tcpHoles);
             return out;
         }
         // IPv6 needs no NAT hole: only the gate below applies

@@ -81,13 +81,21 @@ inline constexpr uint32_t lastResortPriority(uint32_t priority)
     return (kLastResortTypePreference << 24) | (priority & 0x00FFFFFFu);
 }
 
-/// Whether a candidate that has its copy at the public address on
-/// `publicPort` has a second one on TCP 443: a passive TCP candidate, on the
-/// very port the router's 443 leads to (`leadsTo`, 0 for none). An active one
-/// is never dialled, and a UDP one has nothing on 443.
-inline constexpr bool has443Copy(bool tcpPassive, uint16_t publicPort, uint16_t leadsTo)
+/// Whether a passive TCP candidate that has its copy at the public address
+/// also has one on TCP 443: when the router's 443 leads to one of the shared
+/// TCP ports this stream holds (`leadsTo`, 0 for none; `tcpPorts`, the ports
+/// the router forwards in TCP to this stream). Whatever port the candidate
+/// itself is on: the agent offers its passive candidates on its first shared
+/// port alone, and a connection that comes in by 443 on another of its ports
+/// is taken by the server's listener there and handed to the agent by its
+/// fragment, which checks it as any other. The caller keeps it to one copy.
+/// An active candidate is never dialled, and a UDP one has nothing on 443.
+inline bool has443Copy(bool tcpPassive, uint16_t leadsTo, const std::vector<uint16_t>& tcpPorts)
 {
-    return tcpPassive && leadsTo != 0 && publicPort == leadsTo;
+    if (!tcpPassive || leadsTo == 0) return false;
+    for (const uint16_t port : tcpPorts)
+        if (port == leadsTo) return true;
+    return false;
 }
 
 /// The candidate line (RFC 8839: "candidate:<foundation> <component>
