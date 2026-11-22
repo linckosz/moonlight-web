@@ -104,6 +104,7 @@ void run_audio_interleave_tests();
 void run_audio_focus_target_tests();
 void run_cursor_blend_tests();
 void run_frame_fit_tests();
+void run_display_away_tests();
 void run_painted_pointer_tests();
 void run_output_match_tests();
 void run_display_rotation_tests();
@@ -210,6 +211,7 @@ int main(int argc, char** argv)
     RUN(audio_focus_target);
     RUN(cursor_blend);
     RUN(frame_fit);
+    RUN(display_away);
     RUN(painted_pointer);
     RUN(output_match);
     RUN(display_rotation);

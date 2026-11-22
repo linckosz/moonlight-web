@@ -108,6 +108,7 @@ add_executable(run_tests
     test_single_session_hosts.cpp
     test_stream_ends.cpp
     test_relay_graph_watch.cpp
+    test_display_away_answer.cpp
     test_host_lag_tracker.cpp
     test_tunnel_frame.cpp
     test_tunnel_peer_policy.cpp

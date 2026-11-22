@@ -15,6 +15,7 @@
  * this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "DisplayAway.h"
 #include "DisplayTurn.h"
 #include "FrameFit.h"
 #include "MacDisplays.h"
@@ -427,7 +428,16 @@ public:
             m_Config.height = frame.height;
         }
 
-        if (!openCapture(m_Config.width, m_Config.height, error)) return false;
+        if (!openCapture(m_Config.width, m_Config.height, error)) {
+            // A dark panel or a screen saver, said so (DisplayAway.h): what the
+            // viewer reads instead of ScreenCaptureKit's timeout alone.
+            const platform::away::AwayState away = readAwayState();
+            if (platform::away::known(away))
+                log::info("[native] the display is away at the start: " +
+                          platform::away::logReason(away));
+            error = platform::away::startError(away, error);
+            return false;
+        }
         if (m_Audio && !m_Capture->audioActive()) {
             // The stream took no audio tap (macOS 12). Nothing will ever push,
             // so the sink would tick out pure silence for the whole session.
@@ -872,6 +882,37 @@ private:
                                          kIOPMUserActiveLocal, &m_Wake);
     }
 
+    /// Why the display is away, as far as macOS says (DisplayAway.h). Read
+    /// only, on whichever thread asks, and cheap enough for a failure path:
+    /// nothing here changes the lock, the screen saver, the password or the
+    /// privacy settings, and nothing types or clicks — wakeDisplay() stays
+    /// the one thing a session does to the panel. A value read a moment late
+    /// changes only the words of a message.
+    platform::away::AwayState readAwayState() const
+    {
+        platform::away::AwayState s;
+        s.asleep = CGDisplayIsAsleep(m_Display.displayId);
+        @autoreleasepool {
+            // By bundle id only: the engine of the classic screen savers, and
+            // the host of the legacy ones (macOS 14 and later). No other
+            // process is looked into.
+            for (NSString* bundle in
+                 @[ @"com.apple.ScreenSaver.Engine", @"com.apple.ScreenSaver.legacyScreenSaver" ])
+                if ([NSRunningApplication runningApplicationsWithBundleIdentifier:bundle].count > 0)
+                    s.screenSaver = true;
+        }
+        // Not a documented key, read the way MacProbe reads the console one;
+        // absent means not locked.
+        if (CFDictionaryRef session = CGSessionCopyCurrentDictionary()) {
+            const CFTypeRef locked =
+                CFDictionaryGetValue(session, CFSTR("CGSSessionScreenIsLocked"));
+            if (locked && CFGetTypeID(locked) == CFBooleanGetTypeID())
+                s.locked = CFBooleanGetValue(static_cast<CFBooleanRef>(locked));
+            CFRelease(session);
+        }
+        return s;
+    }
+
     /// The engine, not the compositor, draws the pointer: composite mode with
     /// a size asked for it (the small screen). Read on the capture thread.
     bool selfDrawn() const { return m_CompositeCursor.load() && m_CursorFramePx.load() > 0; }
@@ -968,9 +1009,13 @@ private:
                           "x" + std::to_string(frame.height));
             if (openCapture(frame.width, frame.height, error)) break;
             failures++;
-            if (failures == 1)
-                log::info("[native] display is away (reconfiguring, or off), waiting for it: " +
-                          error);
+            if (failures == 1) {
+                const platform::away::AwayState away = readAwayState();
+                log::info("[native] display is away (" +
+                          (platform::away::known(away) ? platform::away::logReason(away)
+                                                       : std::string("reconfiguring, or off")) +
+                          "), waiting for it: " + error);
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(restartRetryDelayMs(failures)));
         }
         if (failures > 0)

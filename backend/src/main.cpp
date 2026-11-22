@@ -141,6 +141,7 @@
 #include "backend/streambackend/NativeHostBackend.h"
 #include "Limelight.h" // SCM_* codec-support masks
 #include "streaming/DataChannelRelay.h"
+#include "streaming/DisplayAwayAnswer.h"
 #include "streaming/MediaTrackRelay.h"
 #include "streaming/StreamRelay.h"
 #include "streaming/TransportPriorities.h"
@@ -7839,6 +7840,10 @@ int main(int argc, char* argv[])
                     if (hostUuid == NativeHostBackend::hostUuid())
                         historyBegin(streamId, historyLine, QString(), shareManager.name(slot));
                 }
+                // A guest — invitation or booth — is not told why a Mac's
+                // display is away (that it is locked says its owner is away):
+                // a neutral sentence instead, the reason left to the log.
+                if (!ok) DisplayAwayAnswer::forGuest(bodyObj);
                 respond(HttpResponse::json(bodyObj, ok ? 200 : code));
             });
 

@@ -638,6 +638,7 @@ if(MW_BUILD_TESTS)
         tests/test_audio_focus_target.cpp
         tests/test_cursor_blend.cpp
         tests/test_frame_fit.cpp
+        tests/test_display_away.cpp
         tests/test_painted_pointer.cpp
         tests/test_output_match.cpp
         tests/test_display_rotation.cpp

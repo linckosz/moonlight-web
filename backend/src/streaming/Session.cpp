@@ -20,6 +20,7 @@
 #include "HostAudioSink.h"
 #include "MicUplink.h"
 #include "DataChannelRelay.h"
+#include "DisplayAwayAnswer.h"
 #include "MediaTrackRelay.h"
 #include "SignalingServer.h"
 #include "StreamRelay.h"
@@ -1439,7 +1440,9 @@ void StreamSession::onShimConnectionFailed(const QString& error)
     // Best-effort quit via HTTPS
     quit();
 
-    m_Respond(HttpResponse::error(502, error));
+    // A Mac's display away comes tagged: the tag goes into "code"
+    // (DisplayAwayAnswer.h), every other failure answers as it always has.
+    m_Respond(HttpResponse::json(DisplayAwayAnswer::startFailure(error, 502), 502));
     emit sessionFailed(error);
     deleteLater();
 }
