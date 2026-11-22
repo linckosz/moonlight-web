@@ -660,7 +660,9 @@ void run_lan_http_tests()
         CHECK(route("GET", "/manifest.webmanifest"));
         // ...never the ones an icon is made from: its way in is not the direct
         // one (HttpServer::staticFileAnswer, Arrival::LanHttp), so ?icon= and
-        // ?go= get the ordinary bytes, and no header of the icon's.
+        // ?go= get the ordinary bytes, and no header of the icon's. An icon's
+        // name (&n=, I63NAME) is read only for one of those two answers, so a
+        // TV's &n= is never read either.
         CHECK(hs::appIconPart("/", alias, QString(), hs::IconReach::Elsewhere) ==
               hs::AppIconPart::None);
         CHECK(hs::appIconPart("/index.html", alias, QString(), hs::IconReach::Elsewhere) ==

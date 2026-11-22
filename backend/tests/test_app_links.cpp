@@ -577,4 +577,127 @@ void run_app_links_tests()
         CHECK(!bytes.contains("MoonlightWeb"));
         CHECK(!bytes.contains("DualRTX"));
     }
+
+    // I63NAME (security review, C1-C10): the icon's name is the one the page that
+    // made it wrote into the request, given back and never looked up. It is a
+    // label: the alias alone says what the icon opens.
+    SECTION("app links — the icon's name, given back as the request wrote it");
+    {
+        namespace hs = mw::homescreen;
+        const QString alias = QStringLiteral("x7Kq2AbC90");
+        const QString name = QString::fromUtf8("DualRTX \xC2\xB7 Steam \xC2\xB7 MoonlightWeb");
+        const QByteArray html =
+            "<head>\n"
+            "<title>MoonlightWeb</title>\n"
+            "<meta name=\"apple-mobile-web-app-title\" content=\"MoonlightWeb\" />\n"
+            "<link rel=\"manifest\" href=\"/manifest.webmanifest\" />\n"
+            "</head>";
+        const QByteArray json = R"({
+            "name": "MoonlightWeb", "short_name": "MoonlightWeb", "start_url": "/", "scope": "/",
+            "icons": [ { "src": "assets/icon-192.png" }, { "src": "assets/icon-512.png" } ]
+        })";
+
+        // In the manifest, as JSON: the name whole, the short name cut to 12
+        // code points; where it opens and its id the alias's alone (C6).
+        const QJsonObject named =
+            QJsonDocument::fromJson(
+                hs::manifest(json, QString(), QString(), QString(), "", "", alias, name))
+                .object();
+        const QJsonObject bare = QJsonDocument::fromJson(hs::manifest(json, QString(), QString(),
+                                                                      QString(), "", "", alias))
+                                     .object();
+        CHECK_EQ(named["name"].toString(), name);
+        CHECK_EQ(named["short_name"].toString(), QString::fromUtf8("DualRTX \xC2\xB7 St"));
+        CHECK_EQ(named["start_url"].toString(), bare["start_url"].toString());
+        CHECK_EQ(named["id"].toString(), bare["id"].toString());
+        CHECK_EQ(named["scope"].toString(), bare["scope"].toString());
+
+        // In the shell, only in the manifest's address, encoded down to
+        // A-Z a-z 0-9 - . _ ~ (C7): nothing else of the page moves, and the
+        // title and the apple title keep the edition's.
+        const QByteArray shell = hs::appIconShell(html, alias, name);
+        CHECK(shell.contains("<link rel=\"manifest\" href=\"/manifest.webmanifest?go=x7Kq2AbC90"
+                             "&amp;n=DualRTX%20%C2%B7%20Steam%20%C2%B7%20MoonlightWeb\" />"));
+        CHECK(shell.contains("<title>MoonlightWeb</title>"));
+        CHECK(shell.contains("content=\"MoonlightWeb\""));
+        CHECK(!shell.contains("Steam "));
+
+        // A hostile name (C10): refused whole, never cleaned — the manifest and
+        // the shell are then the ones with no name, byte for byte. A quote, an
+        // angle bracket, an ampersand that survive are escaped or encoded.
+        const QStringList refused = {
+            QString(65, QLatin1Char('a')),             // 65 code points
+            QStringLiteral("   "),                     // blank
+            QStringLiteral("a") + QChar(0x0000) + "b", // NUL (%00 decoded)
+            QStringLiteral("a\tb"),                    // a control
+            QStringLiteral("a") + QChar(0x007F) + "b", // DEL
+            QStringLiteral("a") + QChar(0x0085) + "b", // a C1 control
+            QStringLiteral("a") + QChar(0x202E) + "b", // RIGHT-TO-LEFT OVERRIDE
+            QStringLiteral("a") + QChar(0x2067) + "b", // RIGHT-TO-LEFT ISOLATE
+            QStringLiteral("a") + QChar(0x200B) + "b", // ZERO WIDTH SPACE
+            QStringLiteral("a") + QChar(0x200F) + "b", // RIGHT-TO-LEFT MARK
+            QStringLiteral("a") + QChar(0x2028) + "b", // LINE SEPARATOR
+            QStringLiteral("a") + QChar(0x2029) + "b", // PARAGRAPH SEPARATOR
+            QStringLiteral("a") + QChar(0xFEFF) + "b", // BYTE ORDER MARK
+            QString::fromUtf8("a\xFF\xFE"
+                              "b"),                    // invalid UTF-8 (U+FFFD)
+            QStringLiteral("a") + QChar(0xD800) + "b", // a lone surrogate
+        };
+        for (const QString& hostile : refused) {
+            CHECK(hs::appIconName(hostile).isEmpty());
+            CHECK(hs::appIconShortName(hostile).isEmpty());
+            CHECK_EQ(hs::manifest(json, QString(), QString(), QString(), "", "", alias, hostile),
+                     hs::manifest(json, QString(), QString(), QString(), "", "", alias));
+            CHECK_EQ(hs::appIconShell(html, alias, hostile), hs::appIconShell(html, alias));
+        }
+        CHECK_EQ(hs::appIconName(QString(64, QLatin1Char('a'))), QString(64, QLatin1Char('a')));
+        // Counted in code points: 64 emoji, each two UTF-16 units, hold.
+        QString emoji;
+        for (int i = 0; i < 64; ++i)
+            emoji += QString::fromUtf8("\xF0\x9F\x8E\xAE");
+        CHECK_EQ(hs::appIconName(emoji), emoji);
+        CHECK_EQ(hs::appIconName(emoji + "a"), QString());
+        // Cut between two code points, never inside a pair.
+        CHECK_EQ(hs::appIconShortName(emoji), emoji.left(24));
+
+        const QString script = QStringLiteral("<script>alert(\"x\")</script> & 'q'");
+        const QByteArray scripted = hs::appIconShell(html, alias, script);
+        CHECK(!scripted.contains("<script"));
+        CHECK(!scripted.contains("\"x\""));
+        CHECK(!scripted.contains("'q'"));
+        CHECK(scripted.contains(
+            "n=%3Cscript%3Ealert%28%22x%22%29%3C%2Fscript%3E%20%26%20%27q%27\" />"));
+        const QByteArray scriptedJson =
+            hs::manifest(json, QString(), QString(), QString(), "", "", alias, script);
+        CHECK_EQ(QJsonDocument::fromJson(scriptedJson).object()["name"].toString(), script);
+        CHECK_EQ(QJsonDocument::fromJson(scriptedJson).object()["start_url"].toString(),
+                 QStringLiteral("/#go=x7Kq2AbC90"));
+
+        // The short name never leaves a letter without the marks that follow
+        // it: "e" and its combining acute at the cut go together.
+        const QString marked =
+            QStringLiteral("abcdefghijk") + QStringLiteral("e") + QChar(0x0301) + "xyz";
+        CHECK_EQ(hs::appIconShortName(marked), QStringLiteral("abcdefghijk"));
+        CHECK_EQ(hs::appIconShortName(QStringLiteral("abcdefghijkl") + QChar(0x0301)),
+                 QStringLiteral("abcdefghijk"));
+
+        // As the request carries it (C9): what HttpParser left encoded is
+        // decoded here, %00 becomes a NUL that appIconName then refuses, and
+        // past 512 bytes encoded the name is not read at all.
+        CHECK_EQ(hs::appIconNameAsked(QStringLiteral("Steam %26 co")),
+                 QStringLiteral("Steam & co"));
+        CHECK_EQ(hs::appIconNameAsked(QStringLiteral("100%25")), QStringLiteral("100%"));
+        CHECK(hs::appIconName(hs::appIconNameAsked(QStringLiteral("a%00b"))).isEmpty());
+        CHECK(hs::appIconName(hs::appIconNameAsked(QStringLiteral("a%E2%80%AEb"))).isEmpty());
+        CHECK(hs::appIconName(hs::appIconNameAsked(QStringLiteral("a%FFb"))).isEmpty());
+        CHECK_EQ(hs::appIconNameAsked(QString(512, QLatin1Char('a'))),
+                 QString(512, QLatin1Char('a')));
+        CHECK(hs::appIconNameAsked(QString(513, QLatin1Char('a'))).isEmpty());
+        CHECK(hs::appIconNameAsked(QString(171, QChar(0x00E9))).isEmpty()); // 171 x %C3%A9 > 512
+
+        // A name with no link: not written anywhere, the machine's manifest as it was.
+        CHECK_EQ(hs::manifest(json, QString(), QString(), QString(), "", "", QString(), name),
+                 hs::manifest(json, QString(), QString(), QString(), "", ""));
+        CHECK_EQ(hs::appIconShell(html, QStringLiteral("x7Kq2\"bC90"), name), html);
+    }
 }

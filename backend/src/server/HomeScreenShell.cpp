@@ -53,7 +53,59 @@ void replaceCaptured(QString& text, const QRegularExpression& pattern, const QSt
     if (m.hasMatch()) text.replace(m.capturedStart(1), m.capturedLength(1), value);
 }
 
+// What a name an icon is given may not hold, refused whole (security review,
+// I63NAME C1/C9): the controls, what reorders or hides text, the line and
+// paragraph separators, and U+FFFD, which is what an invalid UTF-8 or UTF-16
+// sequence was decoded into.
+bool refusedInName(char32_t c)
+{
+    return c < 0x20 || (c >= 0x7F && c <= 0x9F) || (c >= 0x200B && c <= 0x200F) ||
+           (c >= 0x2028 && c <= 0x202E) || (c >= 0x2066 && c <= 0x2069) || c == 0xFEFF ||
+           c == 0xFFFD;
+}
+
+bool isCombiningMark(char32_t c)
+{
+    switch (QChar::category(c)) {
+    case QChar::Mark_NonSpacing:
+    case QChar::Mark_SpacingCombining:
+    case QChar::Mark_Enclosing: return true;
+    default: return false;
+    }
+}
+
 } // namespace
+
+QString appIconName(const QString& name)
+{
+    if (name.trimmed().isEmpty()) return {};
+    const QList<uint> points = QStringView(name).toUcs4();
+    if (points.size() > kAppIconNameMax) return {};
+    for (const uint c : points)
+        if (refusedInName(char32_t(c))) return {};
+    return name;
+}
+
+QString appIconShortName(const QString& name)
+{
+    const QString whole = appIconName(name);
+    const QList<uint> points = QStringView(whole).toUcs4();
+    if (points.size() <= kAppIconShortNameMax) return whole;
+    // Cut between two code points, never inside a surrogate pair, and never
+    // between a letter and the marks that follow it: such a letter goes with
+    // them rather than stand there without its accent.
+    qsizetype cut = kAppIconShortNameMax;
+    while (cut > 0 && isCombiningMark(char32_t(points.at(cut))))
+        --cut;
+    static_assert(sizeof(uint) == sizeof(char32_t));
+    return QString::fromUcs4(reinterpret_cast<const char32_t*>(points.constData()), cut).trimmed();
+}
+
+QString appIconNameAsked(const QString& queryValue)
+{
+    if (QUrl::toPercentEncoding(queryValue).size() > kAppIconNameQueryMax) return {};
+    return QUrl::fromPercentEncoding(queryValue.toUtf8());
+}
 
 QString title(const QString& editionName, const QString& machineName)
 {
@@ -68,7 +120,7 @@ QString shownMachineName(const QString& machineName, bool signedIn)
 
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
                     const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
-                    const QString& appLink)
+                    const QString& appLink, const QString& appName)
 {
     QJsonParseError error;
     const QJsonDocument doc = QJsonDocument::fromJson(json, &error);
@@ -109,12 +161,18 @@ QByteArray manifest(const QByteArray& json, const QString& title, const QString&
                                : address + QLatin1Char('#') + fragment.join(QLatin1Char('&'));
         obj[QStringLiteral("id")] = go.isEmpty() ? address : address + QStringLiteral("?go=") + go;
     }
-    // A shortcut to one app names nothing: not the app (the browser fetches a
-    // manifest without the session), and not the machine or the edition
-    // either, so the phone names the icon after the page that made it.
+    // A shortcut to one app names nothing of its own: not the app (the browser
+    // fetches a manifest without the session, and nothing is looked up), not
+    // the machine or the edition either. Only the name the page that made it
+    // wrote into the request, given back as it was, once it holds as a name
+    // (appIconName): it is a label, and the alias alone says what opens.
     if (!go.isEmpty()) {
         obj.remove(QStringLiteral("name"));
         obj.remove(QStringLiteral("short_name"));
+        const QString name = appIconName(appName);
+        const QString shortName = appIconShortName(appName);
+        if (!name.isEmpty()) obj[QStringLiteral("name")] = name;
+        if (!shortName.isEmpty()) obj[QStringLiteral("short_name")] = shortName;
     }
 
     QJsonArray icons = obj.value(QStringLiteral("icons")).toArray();
@@ -165,17 +223,22 @@ AppIconPart appIconPart(const QString& path, const QString& icon, const QString&
     return AppIconPart::None;
 }
 
-QByteArray appIconShell(const QByteArray& html, const QString& alias)
+QByteArray appIconShell(const QByteArray& html, const QString& alias, const QString& name)
 {
     if (!mw::applinks::validAlias(alias)) return html;
     static const QRegularExpression manifestLink(
         QString::fromLatin1(R"re(<link\s+rel="manifest"\s+href="([^"]*)")re"));
     QString page = QString::fromUtf8(html);
     // An attribute, so escaped as one, and its value an address, so encoded as
-    // one — ten letters and digits come out of both unchanged.
-    replaceCaptured(page, manifestLink,
-                    htmlAttribute(QStringLiteral("/manifest.webmanifest?go=") +
-                                  QString::fromLatin1(QUrl::toPercentEncoding(alias))));
+    // one — ten letters and digits come out of both unchanged. The name, when
+    // it holds as one, only ever here: encoded down to A-Z a-z 0-9 - . _ ~,
+    // which leaves nothing for the HTML to read (security review, I63NAME C7).
+    QString href = QStringLiteral("/manifest.webmanifest?go=") +
+                   QString::fromLatin1(QUrl::toPercentEncoding(alias));
+    const QString shown = appIconName(name);
+    if (!shown.isEmpty())
+        href += QStringLiteral("&n=") + QString::fromLatin1(QUrl::toPercentEncoding(shown));
+    replaceCaptured(page, manifestLink, htmlAttribute(href));
     return page.toUtf8();
 }
 

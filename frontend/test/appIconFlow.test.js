@@ -105,7 +105,10 @@ describe('making a link’s icon through the introduction server', () => {
 
         expect(fetch).toHaveBeenCalledTimes(1);
         for (const [url] of fetch.mock.calls) expect(String(url)).not.toContain(ALIAS);
+        // Named after the icon by the page itself (I63NAME): nothing asked.
         expect(store.held()).toEqual({
+            name: 'Display 1 · PC',
+            short_name: 'Display 1 ·',
             start_url: `/${ID}#go=${ALIAS}&k=K_1`,
             id: `/${ID}?go=${ALIAS}`,
         });
@@ -137,9 +140,16 @@ describe('making a link’s icon straight to the host', () => {
     it('reloads on /?icon= with this tab’s mark, asking nothing', async () => {
         vi.stubGlobal('fetch', vi.fn());
         await MoonlightApp._makeAppIcon(ALIAS, 'Display 1 · PC');
-        expect(open).toHaveBeenCalledWith(`/?icon=${ALIAS}`);
+        // The icon's name with it, for the host to give back (I63NAME).
+        expect(open).toHaveBeenCalledWith(`/?icon=${ALIAS}&n=Display%201%20%C2%B7%20PC`);
         expect(fetch).not.toHaveBeenCalled();
         expect(mark()).toMatchObject({ alias: ALIAS });
+    });
+
+    it('sends no name that would not hold as one', async () => {
+        vi.stubGlobal('fetch', vi.fn());
+        await MoonlightApp._makeAppIcon(ALIAS, 'Display‮1');
+        expect(open).toHaveBeenCalledWith(`/?icon=${ALIAS}`);
     });
 
     it('makes nothing on a page a worker answers without a tunnel', async () => {

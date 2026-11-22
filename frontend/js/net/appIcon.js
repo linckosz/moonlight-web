@@ -82,9 +82,11 @@ function decide() {
                 current = mark;
             }
         }
-        if (asked !== null) {
-            // First, before any request: the alias leaves the query.
+        if (asked !== null || url.searchParams.has('n')) {
+            // First, before any request: the alias leaves the query, and the
+            // icon's name with it.
             url.searchParams.delete('icon');
+            url.searchParams.delete('n');
             const hash = current ? `#go=${current.alias}` : ownLink ? linked.hash : url.hash;
             history.replaceState(history.state, '', url.pathname + url.search + hash);
         } else if (!current && ownLink) {
@@ -132,11 +134,11 @@ export function appIconAddress(alias) {
  * The machine's manifest made into the one that opens the link to @p alias,
  * here rather than asked of the host, so the alias is never in an address
  * that goes out: `go=` first in the fragment of where it opens, the application
- * named apart in its `id` (one icon per app), and no name at all — the phone
- * names the icon after the page. The same shape as the host's own
+ * named apart in its `id` (one icon per app), and no name but @p name, the
+ * icon's, when it holds as one (appIconName). The same shape as the host's own
  * (server/HomeScreenShell.cpp manifest). Anything but an alias: unchanged.
  */
-export function manifestWithAppLink(manifest, alias) {
+export function manifestWithAppLink(manifest, alias, name = '') {
     if (!isAppLinkAlias(alias) || !manifest || typeof manifest !== 'object') return manifest;
     const out = { ...manifest };
     const start = String(out.start_url || '/');
@@ -149,7 +151,56 @@ export function manifestWithAppLink(manifest, alias) {
     out.id = `${String(out.id || path).split('?')[0]}?go=${alias}`;
     delete out.name;
     delete out.short_name;
+    const shown = appIconName(name);
+    if (shown) {
+        out.name = shown;
+        const short = appIconShortName(shown);
+        if (short) out.short_name = short;
+    }
     return out;
+}
+
+/** The longest name an icon is given, and its short name, in code points
+ *  (server/HomeScreenShell.h kAppIconNameMax, kAppIconShortNameMax). */
+const NAME_MAX = 64;
+const SHORT_NAME_MAX = 12;
+
+/** What a name may not hold, refused whole: the host's own list
+ *  (HomeScreenShell.cpp refusedInName). */
+function refusedInName(c) {
+    return (
+        c < 0x20 ||
+        (c >= 0x7f && c <= 0x9f) ||
+        (c >= 0x200b && c <= 0x200f) ||
+        (c >= 0x2028 && c <= 0x202e) ||
+        (c >= 0x2066 && c <= 0x2069) ||
+        c === 0xfeff ||
+        c === 0xfffd ||
+        (c >= 0xd800 && c <= 0xdfff) // a surrogate left alone
+    );
+}
+
+/**
+ * @p name when it holds as the name of an icon, as the host decides it
+ * (HomeScreenShell.h appIconName): not blank, at most 64 code points, nothing
+ * refusedInName. '' otherwise: refused whole, never cleaned.
+ */
+export function appIconName(name) {
+    if (typeof name !== 'string' || !name.trim()) return '';
+    const points = Array.from(name, (ch) => ch.codePointAt(0));
+    if (points.length > NAME_MAX || points.some(refusedInName)) return '';
+    return name;
+}
+
+/** appIconName(@p name) cut to 12 code points, never between a letter and its
+ *  marks (HomeScreenShell.h appIconShortName). */
+export function appIconShortName(name) {
+    const whole = appIconName(name);
+    const chars = Array.from(whole);
+    if (chars.length <= SHORT_NAME_MAX) return whole;
+    let cut = SHORT_NAME_MAX;
+    while (cut > 0 && /\p{M}/u.test(chars[cut])) cut -= 1;
+    return chars.slice(0, cut).join('').trim();
 }
 
 /**
@@ -178,6 +229,10 @@ export async function forgetCachedAppLink() {
             .filter((part) => part && !part.startsWith('go='));
         manifest.start_url = kept.length ? `${path}#${kept.join('&')}` : path;
         if (manifest.id !== undefined) manifest.id = id.split('?')[0];
+        // And the app's name goes with its link: the machine's manifest names
+        // nothing until the page writes it again.
+        delete manifest.name;
+        delete manifest.short_name;
 
         const now = await cache.match(MANIFEST);
         if (!now || (await now.text()) !== text) return false;

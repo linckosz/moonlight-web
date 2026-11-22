@@ -106,6 +106,28 @@ describe('straight to the host', () => {
         for (const [first] of error.mock.calls) expect(String(first)).not.toMatch(/navigation/i);
     });
 
+    // I63NAME C2: the icon's name leaves the address with the alias, in the same
+    // first replaceState, before anything goes out.
+    it('takes the icon’s name out of the query with the alias', async () => {
+        mark();
+        const fetchSpy = vi.fn();
+        vi.stubGlobal('fetch', fetchSpy);
+        const replaced = [];
+        const replace = history.replaceState.bind(history);
+        vi.spyOn(history, 'replaceState').mockImplementation((...args) => {
+            replaced.push(String(args[2]));
+            return replace(...args);
+        });
+        const mod = await loadAt(`/?icon=${ALIAS}&n=${encodeURIComponent('PC · Steam')}`);
+        expect(replaced[1]).toBe(`/#go=${ALIAS}`);
+        expect(window.location.search).toBe('');
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(mod.appIconMode().alias).toBe(ALIAS);
+        // And alone, with no icon asked, it goes all the same.
+        await loadAt('/?n=Steam');
+        expect(window.location.search).toBe('');
+    });
+
     it('is nothing to a guest page', async () => {
         mark();
         const mod = await loadAt(`/p?icon=${ALIAS}`);
@@ -170,6 +192,53 @@ describe('the manifest the worker’s cache holds', () => {
         expect(made).not.toHaveProperty('name');
         expect(made).not.toHaveProperty('short_name');
         expect(manifestWithAppLink(machine, 'x7Kq2#k=AA')).toBe(machine);
+    });
+
+    // I63NAME: through the tunnel the page names the icon itself, as the host
+    // does off it — the same rules, and where it opens is the alias's alone.
+    it('is named after the icon when its name holds, and nothing otherwise', async () => {
+        const { manifestWithAppLink } = await loadAt('/');
+        const bare = manifestWithAppLink(machine, ALIAS);
+        const named = manifestWithAppLink(machine, ALIAS, 'DualRTX · Steam · MoonlightWeb');
+        expect(named.name).toBe('DualRTX · Steam · MoonlightWeb');
+        expect(named.short_name).toBe('DualRTX · St');
+        expect(named.start_url).toBe(bare.start_url);
+        expect(named.id).toBe(bare.id);
+        for (const hostile of [
+            'a'.repeat(65),
+            '  ',
+            'a\u0000b',
+            'a‮b',
+            'a​b',
+            'a b',
+            'a﻿b',
+            'a�b',
+            'a\uD800b',
+        ])
+            expect(manifestWithAppLink(machine, ALIAS, hostile)).toEqual(bare);
+    });
+
+    it('checks a name as the host does: code points, and a letter kept with its marks', async () => {
+        const { appIconName, appIconShortName } = await loadAt('/');
+        const emoji = '🎮'.repeat(64);
+        expect(appIconName('a'.repeat(64))).toBe('a'.repeat(64));
+        expect(appIconName(emoji)).toBe(emoji);
+        expect(appIconName(`${emoji}a`)).toBe('');
+        expect(appIconShortName(emoji)).toBe('🎮'.repeat(12));
+        expect(appIconShortName('abcdefghijkéxyz')).toBe('abcdefghijk');
+        expect(appIconShortName('abcdefghijkĺ')).toBe('abcdefghijk');
+        expect(appIconName(null)).toBe('');
+    });
+
+    it('loses the app’s name with its link', async () => {
+        const store = cacheHolding({
+            name: 'PC · Steam',
+            short_name: 'PC · Steam',
+            start_url: `/#go=${ALIAS}`,
+            id: `/?go=${ALIAS}`,
+        });
+        await loadAt('/');
+        await vi.waitFor(() => expect(store.held()).toEqual({ start_url: '/', id: '/' }));
     });
 
     it('loses its link on any load that is no icon’s, keeping the key', async () => {

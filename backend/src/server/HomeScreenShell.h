@@ -69,12 +69,13 @@ QString shownMachineName(const QString& machineName, bool signedIn);
 /// that address is this origin's own "/". The alias is written only when it has
 /// an alias's shape, and nothing about what it points at is: not its app's
 /// name, not its icon — a manifest is fetched without the session. Such a
-/// manifest names nothing at all, not even the machine or the edition: the
-/// phone then names the icon after the page, which says the app and the host
-/// for the signed-in session that made it.
+/// manifest names nothing of its own, not even the machine or the edition: its
+/// only name is @p appName, the one the signed-in page that made the icon wrote
+/// into the request, given back when it holds as a name (appIconName) and left
+/// out otherwise. Nothing is looked up to write it.
 QByteArray manifest(const QByteArray& json, const QString& title, const QString& hostId,
                     const QString& handoffKey, const QByteArray& icon192, const QByteArray& icon512,
-                    const QString& appLink = QString());
+                    const QString& appLink = QString(), const QString& appName = QString());
 
 /// The shell with @p title as its apple-mobile-web-app-title and @p icon180
 /// inlined as its apple-touch-icon. Anything it does not find is left as it is.
@@ -84,15 +85,39 @@ QByteArray shell(const QByteArray& html, const QString& title, const QByteArray&
  * A link straight to one app made into a home-screen icon, off the tunnel
  * (issue #63). A phone makes the icon from the manifest of the page as it was
  * loaded, never from one the page points at later; so the page reloads on
- * "/?icon=<alias>", and the shell it gets names, from the start, the manifest
- * that opens the link: "/manifest.webmanifest?go=<alias>".
+ * "/?icon=<alias>&n=<name>", and the shell it gets names, from the start, the
+ * manifest that opens the link: "/manifest.webmanifest?go=<alias>&n=<name>".
  *
- * Both answers depend on the alias's shape and on nothing else: no store is
- * asked, no session read, no host named, so they tell nobody whether an alias
- * exists. Through the tunnel neither applies — there the page writes that
- * manifest into the service worker's cache, and no alias ever travels in an
- * address the introduction server could see.
+ * Both answers depend on the request alone: the alias's shape, and the name the
+ * page wrote, given back as the icon's name. No store is asked, no session
+ * read, no host named, so they tell nobody whether an alias exists, nor what it
+ * opens; whoever learns the name wrote it. Through the tunnel neither applies —
+ * there the page writes that manifest into the service worker's cache, and no
+ * alias ever travels in an address the introduction server could see.
  */
+
+/// The longest name an icon is given, and its short name, in code points.
+inline constexpr qsizetype kAppIconNameMax = 64;
+inline constexpr qsizetype kAppIconShortNameMax = 12;
+/// Past this many bytes, percent-encoded, a name is not read at all.
+inline constexpr qsizetype kAppIconNameQueryMax = 512;
+
+/// @p name when it holds as the name of an icon: not blank, at most
+/// kAppIconNameMax code points, and without a control character, a character
+/// that reorders or hides text, a line or paragraph separator, a byte-order
+/// mark or U+FFFD (an invalid sequence decoded). Empty otherwise: refused whole,
+/// never cleaned.
+QString appIconName(const QString& name);
+
+/// appIconName(@p name) cut to kAppIconShortNameMax code points, between two
+/// code points and never between a letter and its marks.
+QString appIconShortName(const QString& name);
+
+/// The name a request's `n` asks for, from its value as HttpParser keeps it
+/// (QUrl::PrettyDecoded, a few escapes left in): decoded the rest of the way,
+/// or empty, unread, past kAppIconNameQueryMax bytes once encoded. Still to be
+/// checked by appIconName.
+QString appIconNameAsked(const QString& queryValue);
 
 /// How a request reached this host, as far as an icon is concerned. Only the
 /// direct way in — one of this host's own listening sockets, where the origin
@@ -120,8 +145,11 @@ enum class AppIconPart
 AppIconPart appIconPart(const QString& path, const QString& icon, const QString& go,
                         IconReach reach);
 
-/// The shell whose manifest link opens the link to @p alias. Returned unchanged,
-/// byte for byte, when @p alias does not have an alias's shape.
-QByteArray appIconShell(const QByteArray& html, const QString& alias);
+/// The shell whose manifest link opens the link to @p alias, and carries @p name
+/// when it holds as one (appIconName), percent-encoded: in that address and
+/// nowhere else in the page. Returned unchanged, byte for byte, when @p alias
+/// does not have an alias's shape.
+QByteArray appIconShell(const QByteArray& html, const QString& alias,
+                        const QString& name = QString());
 
 } // namespace mw::homescreen

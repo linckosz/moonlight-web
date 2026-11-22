@@ -855,19 +855,28 @@ void HttpServer::personaliseForHomeScreen(const HttpRequest& req, HttpResponse& 
 void HttpServer::personaliseForAppIcon(const HttpRequest& req, HttpResponse& resp, bool shell,
                                        const QString& ifNoneMatch) const
 {
+    // The name the page that makes the icon wrote into the request (n=), never
+    // looked up: given back as the icon's name, when it holds as one.
+    const QString name =
+        mw::homescreen::appIconNameAsked(req.queryParams.value(QStringLiteral("n")));
     if (shell) {
-        resp.body =
-            mw::homescreen::appIconShell(resp.body, req.queryParams.value(QStringLiteral("icon")));
+        resp.body = mw::homescreen::appIconShell(
+            resp.body, req.queryParams.value(QStringLiteral("icon")), name);
         // The page's address carries the alias until its first script takes
         // it off: nothing it loads before that says where it came from.
         resp.headers["Referrer-Policy"] = "no-referrer";
     } else {
         // This origin is the machine, as for /api/app/web-manifest off the
-        // tunnel: its own "/", the link, the icons inlined, and no name, no
-        // machine, no key — nothing a request without a session may not read.
-        resp.body = mw::homescreen::manifest(
-            resp.body, QString(), QString(), QString(), homeScreenIcon("/assets/icon-192.png"),
-            homeScreenIcon("/assets/icon-512.png"), req.queryParams.value(QStringLiteral("go")));
+        // tunnel: its own "/", the link, the icons inlined, and no machine, no
+        // key — nothing a request without a session may not read — and no
+        // name but the one the request gave.
+        resp.body = mw::homescreen::manifest(resp.body, QString(), QString(), QString(),
+                                             homeScreenIcon("/assets/icon-192.png"),
+                                             homeScreenIcon("/assets/icon-512.png"),
+                                             req.queryParams.value(QStringLiteral("go")), name);
+        // Words a third party may choose, under this origin: read as a
+        // manifest and as nothing else (I63NAME C8).
+        resp.headers["X-Content-Type-Options"] = "nosniff";
     }
     // Made for the one icon being added, never kept for the next page.
     resp.headers["Cache-Control"] = "no-store";
