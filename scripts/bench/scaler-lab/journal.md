@@ -3435,9 +3435,10 @@ Vérifié (22/11) :
   - le texte natif : 39,9 à 53,5 dB, de 1,2 à 18,6 % des pixels au-delà de 1/255 ;
   - le texte émulé : 61,5 à 66,1 dB, de 0,011 à 0,17 %, comme le texte Metal corrigé.
 - La durée de la sonde du client, sur un appareil neuf comme au démarrage du renderer, sur ce M1 chargé par Roblox : 108,5 ms au tout premier dessin, sans cache de shaders (profil neuf) ; ensuite 1,8 à 4,9 ms, et 1 à 4,8 ms au second appel.
+- La RTX 5060 Ti de DualRTX, Chrome sans fenêtre sur le vrai GPU (17:52). La sonde y voit des pentes de bloc et garde les textes, sur les huit cas. Le texte émulé y rend les octets du texte natif. Natif contre WARP : 58,1 à 64,2 dB. Durée de la sonde : 66,2 ms au tout premier dessin, sans cache de shaders (profil neuf) ; ensuite 2,8 à 5,6 ms, et 0,7 à 1,6 ms au second appel.
 
 **Le menu de debug** (MWDBGQ A) gagne « MoonlightWeb Qualité » en WebGL2 et en WebGPU. **Au lancement** (MWRELALGO A), un build release demande toujours 'auto' : un choix fait dans le menu d'un build de debug et resté enregistré ne passe plus dans un build release. C'était le cas pour toutes les entrées du menu.
 
 **Les deux modes en vrai** (MWLIVE) : ils ont tourné sur un stream réel, sur l'iPhone et sur la RTX. Aucun œil ne les a encore comparés.
 
-**Pas fait.** La durée de la sonde sur la RTX et sur le M3 de Bruno. WebGL sur un pilote qui prend `dFdx` pixel par pixel. L'émulation à l'œil sur un stream réel.
+**Pas fait.** La durée de la sonde sur le M3 de Bruno. WebGL sur un pilote qui prend `dFdx` pixel par pixel. L'émulation à l'œil sur un stream réel.
