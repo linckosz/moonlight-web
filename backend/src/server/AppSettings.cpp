@@ -1060,6 +1060,34 @@ bool AppSettings::iceTcp443() const
     return iceUdpMuxChoice(obj.value("ice_tcp_443"), sharedPortsSystem());
 }
 
+bool AppSettings::sharedPortsByDefault()
+{
+    return sharedPortsSystem();
+}
+
+void AppSettings::applyRouterSwitches(QJsonObject& obj, const RouterSwitches& switches,
+                                      bool onByDefault)
+{
+    if (switches.upnp) obj["upnp_enabled"] = *switches.upnp;
+    // A ticked box asks for what this system does by default when it can: the
+    // key leaves the file. Never seeded, so a later default still reaches it.
+    const auto box = [&obj, onByDefault](const char* key, bool ticked) {
+        if (ticked && onByDefault)
+            obj.remove(QLatin1String(key));
+        else
+            obj[QLatin1String(key)] = ticked;
+    };
+    if (switches.sharedPorts) box("ice_udp_mux", *switches.sharedPorts);
+    if (switches.tcp443) box("ice_tcp_443", *switches.tcp443);
+}
+
+void AppSettings::setRouterSwitches(const RouterSwitches& switches)
+{
+    QJsonObject obj = readAll();
+    applyRouterSwitches(obj, switches, sharedPortsSystem());
+    writeAll(obj);
+}
+
 bool AppSettings::debugIceDropUdp() const
 {
     QJsonObject obj = readAll();

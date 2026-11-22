@@ -115,6 +115,10 @@ public:
 
     bool live(int index) const;
     int liveCount() const;
+    /// A slot streams, or is being set up for a stream (a client or a session
+    /// on it, its worker not there yet): a restart of the server for a setting
+    /// waits until none is (server/SharedPortsRestart.h).
+    bool anyInUse() const;
     // True when ANY slot other than @p index still has a live worker. Sessions
     // on one host share a single running app, so a /cancel while this holds
     // would end the game for whoever is left.

@@ -215,6 +215,9 @@ public:
     /// one gives it back when it ends. On, whoever keeps holes for as long as
     /// the process runs asks for them (switchedOn).
     void switchChanged();
+    /// The admin page's box of TCP 443 was just written: the router's 443 is
+    /// looked at again, at once (asked for, or taken back).
+    void tcp443SwitchChanged();
 
     QList<Claim> heldTunnelPorts() const;
     std::optional<Claim> heldMediaPort(int slot) const;

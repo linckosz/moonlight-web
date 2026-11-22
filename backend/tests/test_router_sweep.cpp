@@ -313,6 +313,36 @@ void run_router_sweep_tests()
         CHECK(former.gw.removes == 0 && former.record.has(443, true));
     }
 
+    // The shared ports' lines of a run that had them, at a start without them
+    // (the admin page's box unticked, applied by a restart): nothing claims
+    // them, so the sweep takes every one back and nothing is added
+    // (UI443, security review (2)).
+    {
+        Bench b;
+        const uint16_t block = mw::routerports::kMediaBasePort;
+        QList<Hole> lines;
+        for (const uint16_t port : {uint16_t(3478), block})
+            for (const bool isTcp : {false, true}) {
+                Hole line;
+                line.external = port;
+                line.internal = port;
+                line.tcp = isTcp;
+                line.kind = Kind::Streams;
+                line.slot = -1;
+                line.lan = kLan;
+                b.left(line);
+                lines.append(line);
+            }
+        const QList<Hole> listed = b.core.sweepList();
+        CHECK_EQ(int(listed.size()), int(lines.size()));
+        CHECK(b.core.sweepBelieved(listed));
+        for (const Hole& line : listed)
+            CHECK(b.core.sweep(line).outcome == Swept::Removed);
+        CHECK(b.gw.table.isEmpty() && b.record.lines.isEmpty());
+        CHECK_EQ(b.gw.removes, int(lines.size()));
+        CHECK_EQ(b.gw.adds, 0);
+    }
+
     SECTION("RouterSweep: what is not this installation's stays");
     // Left as it is, and no longer in the record: `differs` says by what.
     const auto stays = [](Bench& b, const Hole& line, const TableGateway::Row& there,

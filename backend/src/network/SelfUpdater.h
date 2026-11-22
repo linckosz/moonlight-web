@@ -89,6 +89,13 @@ public:
     // { state, percent, version, requires_host_confirmation, error }
     // state ∈ idle | downloading | installing | restarting | failed
     QJsonObject statusJson() const;
+    /// Downloading, installing or restarting: a restart of the server for a
+    /// setting waits until this is false (SharedPortsRestart).
+    bool busy() const
+    {
+        return m_state == State::Downloading || m_state == State::Installing ||
+               m_state == State::Restarting;
+    }
 
     // Download + apply the update UpdateChecker resolved. Returns an empty
     // string once the download is under way, or a human-readable error.

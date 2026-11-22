@@ -360,6 +360,8 @@ add_executable(mw-server
     src/server/BoothGate.cpp
     src/server/OwnerProof.cpp
     src/server/SessionPool.cpp
+    src/server/ServerRestart.cpp
+    src/server/SharedPortsRestart.cpp
     src/server/StreamOwner.cpp
     src/server/routes/AuthRoutes.cpp
     src/server/routes/AuthStatusRoute.cpp

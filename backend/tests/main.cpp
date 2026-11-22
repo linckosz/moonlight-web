@@ -20,6 +20,8 @@ void run_stream_config_tests();
 void run_input_crypto_tests();
 void run_rest_router_tests();
 void run_app_settings_tests();
+void run_router_switches_tests();
+void run_server_restart_tests();
 void run_launcher_detect_tests();
 void run_host_app_image_tests();
 void run_log_archive_tests();
@@ -141,6 +143,7 @@ void run_quit_signals_tests();
 int run_quit_signals_child(int argc, char** argv);
 int run_quit_server_child(int argc, char** argv);
 int run_owned_child_sleep(int argc, char** argv);
+int run_restart_linger_child(int argc, char** argv);
 void run_lan_http_tests();
 void run_lan_http_pairing_tests();
 void run_connection_history_tests();
@@ -178,6 +181,10 @@ int main(int argc, char** argv)
     // and a child that sleeps then ends with a code.
     if (argc > 1 && std::strcmp(argv[1], "--quit-server-child") == 0)
         return run_quit_server_child(argc, argv);
+    // The restart's test (test_server_restart.cpp): a process of this image
+    // that lives a moment.
+    if (argc > 1 && std::strcmp(argv[1], "--restart-linger") == 0)
+        return run_restart_linger_child(argc, argv);
     if (argc > 1 && std::strcmp(argv[1], "--owned-child-sleep") == 0)
         return run_owned_child_sleep(argc, argv);
     // The signals' test (test_quit_signals.cpp): the handler as the server installs it.
@@ -200,6 +207,8 @@ int main(int argc, char** argv)
     run_input_crypto_tests();
     run_rest_router_tests();
     run_app_settings_tests();
+    run_router_switches_tests();
+    run_server_restart_tests();
     run_launcher_detect_tests();
     run_host_app_image_tests();
     run_log_archive_tests();
