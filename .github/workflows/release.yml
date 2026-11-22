@@ -388,6 +388,21 @@ jobs:
           if (-not (Test-Path $signed)) { throw "SignPath returned no $signed" }
           Copy-Item $signed dist\${{ needs.setup.outputs.app }}.exe -Force
 
+      # The ARM64 bundle as a folder that runs where it is unpacked, for test
+      # benches: an ARM64 machine can then run this build next to whatever is
+      # installed (--dev keeps its own state and ports) without installing it.
+      # It is the same dist/ the installer below packages, the same exe signed
+      # or not. A run artifact only, kept a week: never attached to a Release.
+      # x64 builds are made locally, so x64 needs none.
+      - name: Upload portable bundle (ARM64)
+        if: matrix.arch == 'arm64'
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ needs.setup.outputs.app }}-windows-arm64-portable-${{ needs.setup.outputs.label }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
       # Interactive installer: stepped wizard (Internet authorization, ViGEmBus,
       # Desktop admin shortcut). It is the only Windows artifact shipped (no raw
       # zip). It installs no streaming server: the app captures and encodes this
