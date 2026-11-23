@@ -526,6 +526,22 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
     margin-top: var(--space-1);
     line-height: 1.45;
 }
+/* A change that waits for Apply, just under its box (the shared port box). */
+.settings-confirm {
+    margin: var(--space-2) 0 var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent-1);
+}
+.settings-confirm .settings-hint {
+    margin: 0 0 var(--space-2);
+    color: var(--text-1);
+}
+.settings-confirm-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
 .settings-hint a {
     color: var(--accent-1);
     text-decoration: none;

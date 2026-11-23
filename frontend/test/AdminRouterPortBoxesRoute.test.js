@@ -4,7 +4,7 @@
  *
  * The two boxes of admin › Internet, down to the request itself: with the real
  * BackendClient, a change of a box is a POST to /api/admin/settings carrying
- * that box's key alone, the route that writes the boxes on the server
+ * that box's key alone (the shared port box once Apply is clicked under it), the route that writes the boxes on the server
  * (server/RouterSwitchesWrite.h). The mocked test beside this one
  * (AdminRouterPortBoxes.test.js) stops at the client's method.
  */
@@ -69,8 +69,17 @@ describe('AdminView — the boxes of the router ports, as requests', () => {
         box.dispatchEvent(new Event('change'));
     };
 
-    it('unticking the shared port box posts it to /api/admin/settings, alone', async () => {
+    it('unticking the shared port box posts nothing until Apply', async () => {
         change('#chk-shared-ports', false);
+        await Promise.resolve();
+        expect(posts()).toHaveLength(0);
+        document.querySelector('#btn-shared-ports-cancel').click();
+        expect(posts()).toHaveLength(0);
+    });
+
+    it('Apply posts the shared port box to /api/admin/settings, alone', async () => {
+        change('#chk-shared-ports', false);
+        document.querySelector('#btn-shared-ports-apply').click();
         await vi.waitFor(() => expect(posts()).toHaveLength(1));
         const [post] = posts();
         expect(post.path).toBe('/api/admin/settings');
