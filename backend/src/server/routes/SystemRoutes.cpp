@@ -20,6 +20,7 @@
 #include "server/routes/PairRequestRoutes.h"
 
 #include "server/HttpServer.h"
+#include "server/InternetAccessOff.h"
 #include "server/RestRouter.h"
 #include "server/AppSettings.h"
 #include "common/DetachedProcess.h"
@@ -132,7 +133,8 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                           std::function<bool(const QString& key)> spendHostKey,
                           std::function<void(bool)> onInternetAccessToggled,
                           std::function<QJsonObject()> rendezvousStatus,
-                          std::function<bool(const HttpRequest&)> viewerOnLan)
+                          std::function<bool(const HttpRequest&)> viewerOnLan,
+                          std::function<void(const QString& why)> dropTunnelPeers)
 {
     // API route: get Internet Access status
     // rendezvousStatus captured BY VALUE, like the callbacks below: the
@@ -239,12 +241,32 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             QTimer::singleShot(4000, waiter, finish);
         });
 
+    // Every way this file turns Internet Access off, in one order
+    // (server/InternetAccessOff.h): the switch and InternetAccessManager now, then
+    // after the answer the browser tunnels already open, the router's holes and
+    // the line. Captured by value by the routes, like the callbacks it holds.
+    const auto turnInternetAccessOff = [&appSettings, &internetAccess, onInternetAccessToggled,
+                                        dropTunnelPeers](const QString& why) {
+        mw::internetoff::Steps steps;
+        steps.writeOff = [&appSettings]() { appSettings.setInternetAccessEnabled(false); };
+        steps.stopAccess = [&internetAccess]() { internetAccess.stop(); };
+        steps.dropTunnels = dropTunnelPeers;
+        steps.switchChanged = [&internetAccess]() {
+            if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
+        };
+        steps.lineOff = [onInternetAccessToggled]() {
+            if (onInternetAccessToggled) onInternetAccessToggled(false);
+        };
+        steps.stillOff = [&appSettings]() { return !appSettings.internetAccessEnabled(); };
+        mw::internetoff::turnOff(steps, qApp, why);
+    };
+
     // API route: enable/configure Internet Access
     // onInternetAccessToggled captured BY VALUE: the parameter dies when this
     // registration function returns, but the route lambdas live on — the same
     // reason spendHostKey is captured that way below.
-    server.router()->post("/api/internet/enable", [&, onInternetAccessToggled](
-                                                      const HttpRequest& req) {
+    server.router()->post("/api/internet/enable", [&, onInternetAccessToggled,
+                                                   turnInternetAccessOff](const HttpRequest& req) {
         // Only localhost can modify internet access settings
         if (!req.isLocal)
             return HttpResponse::error(
@@ -267,11 +289,15 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             appSettings.setAutoIpDetection(body["auto_ip_detection"].toBool());
         if (body.contains("public_ip")) appSettings.setPublicIp(body["public_ip"].toString());
 
-        if (body.contains("internet_access_enabled"))
-            appSettings.setInternetAccessEnabled(body["internet_access_enabled"].toBool());
+        const bool enabled =
+            body.value("internet_access_enabled").toBool(appSettings.internetAccessEnabled());
+        // Off is written by turnInternetAccessOff() below, with all that goes with it.
+        if (enabled && body.contains("internet_access_enabled"))
+            appSettings.setInternetAccessEnabled(true);
         if (body.contains("upnp_enabled"))
             appSettings.setUpnpEnabled(body["upnp_enabled"].toBool());
-        if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
+        if (enabled)
+            if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
 
         // Legal traceability: record the exact agreement text the user read when
         // they ticked the checkbox. The mechanism is decided here, not by the
@@ -285,9 +311,6 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
                                            QStringLiteral("admin"), QStringLiteral("rendezvous"));
         }
 
-        bool enabled =
-            body.value("internet_access_enabled").toBool(appSettings.internetAccessEnabled());
-
         if (enabled) {
             qInfo() << "[main] POST /api/internet/enable — calling internetAccess.start()...";
             internetAccess.start();
@@ -299,8 +322,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             obj["status"] = "enabled";
             return HttpResponse::json(obj);
         } else {
-            internetAccess.stop();
-            if (onInternetAccessToggled) onInternetAccessToggled(false);
+            turnInternetAccessOff(QStringLiteral("POST /api/internet/enable"));
             QJsonObject obj;
             obj["status"] = "disabled";
             obj["internet_access_enabled"] = false;
@@ -1016,22 +1038,18 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     });
 
     // API route: disable Internet Access
-    server.router()->post(
-        "/api/internet/disable", [&, onInternetAccessToggled](const HttpRequest& req) {
-            // Only localhost can modify internet access settings
-            if (!req.isLocal)
-                return HttpResponse::error(
-                    403, "Internet access settings can only be modified from localhost");
+    server.router()->post("/api/internet/disable", [turnInternetAccessOff](const HttpRequest& req) {
+        // Only localhost can modify internet access settings
+        if (!req.isLocal)
+            return HttpResponse::error(
+                403, "Internet access settings can only be modified from localhost");
 
-            internetAccess.stop();
-            appSettings.setInternetAccessEnabled(false);
-            if (RouterPortAllocator* ports = internetAccess.routerPorts()) ports->switchChanged();
-            if (onInternetAccessToggled) onInternetAccessToggled(false);
+        turnInternetAccessOff(QStringLiteral("POST /api/internet/disable"));
 
-            QJsonObject obj;
-            obj["status"] = "disabled";
-            return HttpResponse::json(obj);
-        });
+        QJsonObject obj;
+        obj["status"] = "disabled";
+        return HttpResponse::json(obj);
+    });
 
     // API route: force refresh (re-detect the public IP, re-test NAT hairpin)
     server.router()->post("/api/internet/refresh", [&](const HttpRequest& req) {

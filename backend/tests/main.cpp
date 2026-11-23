@@ -78,6 +78,7 @@ void run_display_away_answer_tests();
 void run_host_lag_tracker_tests();
 void run_tunnel_frame_tests();
 void run_tunnel_peer_policy_tests();
+void run_internet_access_off_tests();
 void run_tunnel_diag_tests();
 void run_app_manifest_tests();
 void run_wolf_coop_tests();
@@ -266,6 +267,7 @@ int main(int argc, char** argv)
     run_host_lag_tracker_tests();
     run_tunnel_frame_tests();
     run_tunnel_peer_policy_tests();
+    run_internet_access_off_tests();
     run_tunnel_diag_tests();
     run_app_manifest_tests();
     run_wolf_coop_tests();

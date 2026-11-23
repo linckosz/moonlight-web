@@ -114,6 +114,7 @@ add_executable(run_tests
     test_host_lag_tracker.cpp
     test_tunnel_frame.cpp
     test_tunnel_peer_policy.cpp
+    test_internet_access_off.cpp
     test_tunnel_diag.cpp
     test_app_links.cpp
     test_app_manifest.cpp
@@ -238,6 +239,7 @@ add_executable(run_tests
     ${_src}/src/streaming/InputCrypto.cpp
     ${_src}/src/server/RestRouter.cpp
     ${_src}/src/server/AppSettings.cpp
+    ${_src}/src/server/InternetAccessOff.cpp
     ${_src}/src/server/AuthManager.cpp
     # A device paired from the QR code it shows: the book of its requests, and
     # its routes, driven without the server around them.

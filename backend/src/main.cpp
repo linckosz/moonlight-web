@@ -8899,6 +8899,10 @@ int main(int argc, char* argv[])
             return kind == NetClassify::Kind::Public &&
                    NetClassify::sharesHostNetwork(req.clientAddress, {routerPorts.publicIp()},
                                                   QNetworkInterface::allAddresses());
+        },
+        [](const QString& why) {
+            // Built below, and forgotten before it goes (ControlTunnelForgotten).
+            if (g_ControlTunnel) g_ControlTunnel->dropAllPeers(why);
         });
 
     // A device asking in by the QR code it shows, approved by the administrator

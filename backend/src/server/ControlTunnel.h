@@ -135,6 +135,12 @@ public:
     /// thread. One for a peer that is gone is closed.
     void takeSharedConnection(quint32 feed, quint32 number);
 
+    /// Internet Access was turned off (server/InternetAccessOff.h): every
+    /// browser goes, its channel open or not, kept after a `close` or not, and
+    /// its router hole with it. From the moment the switch is off, the tunnel
+    /// takes no browser and goes on with none (mw::internetoff::tunnelAdmits).
+    void dropAllPeers(const QString& why);
+
     // The wire format lives in server/TunnelFrame.h, on its own and free of
     // libdatachannel — its other half is JavaScript on a machine we will never
     // see, so it is the one part of this that has to be testable in isolation.

@@ -47,9 +47,14 @@ struct HttpRequest;
 ///        own network, as a stream would plan it (main.cpp streamClientKind):
 ///        GET /api/settings/streaming says so as `viewer_lan`, and the page's
 ///        automatic bitrate takes the LAN rule (frontend/js/util/AutoBitrate.js).
+/// @param dropTunnelPeers Takes down every browser tunnel, open or not, when
+///        Internet Access is turned off here (ControlTunnel::dropAllPeers,
+///        server/InternetAccessOff.h). A callback: the tunnel is built after
+///        these routes.
 void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthManager& authManager,
                           InternetAccessManager& internetAccess, ComputerManager& computerManager,
                           std::function<bool(const QString& key)> spendHostKey = {},
                           std::function<void(bool)> onInternetAccessToggled = {},
                           std::function<QJsonObject()> rendezvousStatus = {},
-                          std::function<bool(const HttpRequest&)> viewerOnLan = {});
+                          std::function<bool(const HttpRequest&)> viewerOnLan = {},
+                          std::function<void(const QString& why)> dropTunnelPeers = {});

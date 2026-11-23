@@ -30,6 +30,7 @@
 #include "server/AppSettings.h"
 #include "server/AuthManager.h"
 #include "server/HttpServer.h"
+#include "server/InternetAccessOff.h"
 #include "server/TunnelPeerPolicy.h"
 #include "streaming/IcePriority.h"
 #include "streaming/IceUdpDrop.h"
@@ -207,6 +208,13 @@ void ControlTunnel::requestTunnelPort()
 
     m_Ports->claimTunnelPort(this, [this](const RouterPortAllocator::Claim& claim,
                                           const QString& why) {
+        // Internet Access turned off while the router was answering: the hole
+        // goes back, and the browsers waiting for one go (startPeer).
+        if (!mw::internetoff::tunnelAdmits(*m_Settings)) {
+            if (claim.external != 0) m_Ports->releaseTunnelPort(claim.external);
+            giveUpWaiting(QStringLiteral("Internet Access is off"));
+            return;
+        }
         if (claim.external == 0) {
             giveUpWaiting(why);
             return;
@@ -356,6 +364,15 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
         Logger::warning(QStringLiteral("[Tunnel] Session %1 announced twice").arg(sessionId));
         return;
     }
+    // The line may still bring a browser after Internet Access was turned off:
+    // it goes in the same turn as the tunnels (server/InternetAccessOff.h).
+    if (!mw::internetoff::tunnelAdmits(*m_Settings)) {
+        Logger::info(
+            QStringLiteral("[Tunnel] Browser on session %1 refused — Internet Access is off")
+                .arg(sessionId.left(8)));
+        m_Rendezvous->closeSession(sessionId);
+        return;
+    }
 
     auto owned = std::make_shared<Peer>();
     Peer& p = *owned;
@@ -417,6 +434,14 @@ void ControlTunnel::onSessionOpened(const QString& sessionId)
 
 void ControlTunnel::startPeer(Peer& p)
 {
+    // Turned off while it waited for a hole: no connection is built for it.
+    // The peer is destroyed; every caller returns or looks the next one up.
+    if (!mw::internetoff::tunnelAdmits(*m_Settings)) {
+        const QString id = p.sessionId;
+        m_Rendezvous->closeSession(id);
+        dropPeer(id, QStringLiteral("Internet Access is off"));
+        return;
+    }
     p.awaitingPort = false;
     m_WaitingPeers.removeAll(p.sessionId);
     if (p.port == 0) p.port = takeTunnelPort();
@@ -826,6 +851,18 @@ void ControlTunnel::dropUnfinishedPeers()
     }
 }
 
+void ControlTunnel::dropAllPeers(const QString& why)
+{
+    const QStringList ids = m_Peers.keys();
+    for (const QString& id : ids) {
+        const Peer* pp = peer(id);
+        if (!pp) continue;
+        // The server still counts it: it is told, while the line is up.
+        if (!pp->detached) m_Rendezvous->closeSession(id);
+        dropPeer(id, why);
+    }
+}
+
 void ControlTunnel::enforceDetachedCap()
 {
     for (;;) {
@@ -950,6 +987,13 @@ void ControlTunnel::onSignal(const QString& sessionId, const QJsonObject& payloa
 {
     Peer* p = peer(sessionId);
     if (!p) return;
+    // No offer, answer or candidate once Internet Access is off: the browser
+    // goes now rather than at the turn that takes the tunnels down.
+    if (!mw::internetoff::tunnelAdmits(*m_Settings)) {
+        m_Rendezvous->closeSession(sessionId);
+        dropPeer(sessionId, QStringLiteral("Internet Access is off"));
+        return;
+    }
 
     const QString type = payload.value(QStringLiteral("type")).toString();
     if (type == QLatin1String("hello"))

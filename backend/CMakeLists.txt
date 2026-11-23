@@ -344,6 +344,7 @@ add_executable(mw-server
     src/server/LocalChannel.cpp
     src/server/LocalRequest.cpp
     src/server/ControlTunnel.cpp
+    src/server/InternetAccessOff.cpp
     src/server/HttpParser.cpp
     src/server/RequestGuard.cpp
     src/server/LanHttp.cpp
