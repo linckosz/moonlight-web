@@ -283,6 +283,9 @@ mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-ice-mux.patch)
 # gives a PeerConnection's agent such sockets, with ICE credentials of its own.
 mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/libdatachannel"
                libdatachannel-ice-mux.patch)
+# No socket or pipe of libjuice passes to a process the program starts: created closed at exec,
+# or not inheritable on Windows. Applied last: it touches lines the passive TCP wrote.
+mw_apply_patch("${MW_LIBJUICE_DIR}" libjuice-no-inherit.patch)
 
 # libdatachannel (WebRTC DataChannel + media). Match the previous .bat flags.
 set(NO_WEBSOCKET ON  CACHE BOOL "" FORCE)
@@ -301,6 +304,9 @@ set(UPNPC_BUILD_STATIC ON  CACHE BOOL "" FORCE)
 set(UPNPC_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(UPNPC_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
 set(UPNPC_BUILD_SAMPLE OFF CACHE BOOL "" FORCE)
+# No socket of miniupnpc passes to a process the program starts either. Its sockets are opened
+# when a stream asks the router for a hole, so as a worker starts.
+mw_apply_patch("${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniupnp" miniupnpc-no-inherit.patch)
 add_subdirectory(third_party/miniupnp/miniupnpc miniupnpc-build)
 
 # miniupnpc ships flat headers in include/, but our code includes them as

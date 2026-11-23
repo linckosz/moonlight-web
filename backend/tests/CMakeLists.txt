@@ -442,7 +442,7 @@ find_package(Git REQUIRED)
 set(_juice ${_src}/third_party/libdatachannel/deps/libjuice)
 set(_juice_patches ${_src}/third_party/patches)
 foreach(_juice_patch libjuice-ice-tcp-passive.patch libjuice-udp-long-datagram.patch
-                     libjuice-ice-mux.patch)
+                     libjuice-ice-mux.patch libjuice-no-inherit.patch)
     set(_juice_proofs ${_juice_patch})
     if(_juice_patch STREQUAL "libjuice-ice-tcp-passive.patch")
         list(APPEND _juice_proofs libjuice-ice-mux.patch)

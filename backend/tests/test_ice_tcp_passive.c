@@ -902,6 +902,181 @@ static void test_long_datagram_is_dropped(void) {
 	closesocket(tx);
 }
 
+// ── Nothing of libjuice passes to a child ───────────────────────────────────
+
+// The sockets of this process (and its pipes, outside Windows) open now, as a table indexed by
+// handle or descriptor number.
+#define OPEN_TABLE 16384
+#ifdef _WIN32
+static int socket_type(SOCKET s) {
+	int type = 0;
+	int len = sizeof(type);
+	return getsockopt(s, SOL_SOCKET, SO_TYPE, (char *)&type, &len) == 0 ? type : -1;
+}
+static void open_now(bool *table) {
+	for (int i = 1; i < OPEN_TABLE; ++i) // socket handles are multiples of 4
+		table[i] = socket_type((SOCKET)(uintptr_t)(i * 4)) >= 0;
+}
+static bool is_stream(int i) { return socket_type((SOCKET)(uintptr_t)(i * 4)) == SOCK_STREAM; }
+static bool passed_on(int i) {
+	DWORD flags = 0;
+	return !GetHandleInformation((HANDLE)(uintptr_t)(i * 4), &flags) ||
+	       (flags & HANDLE_FLAG_INHERIT);
+}
+static int index_of(socket_t s) { return (int)((uintptr_t)s / 4); }
+#elif defined(__linux__)
+// Read from /proc alone: the agents' descriptors are opened and closed by their poll thread
+// meanwhile, and a call made on one of them here would race with it.
+static bool proc_link(int fd, char *out, size_t size) {
+	char path[64];
+	snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+	ssize_t n = readlink(path, out, size - 1);
+	if (n <= 0)
+		return false;
+	out[n] = '\0';
+	return true;
+}
+static void open_now(bool *table) {
+	for (int fd = 0; fd < OPEN_TABLE; ++fd) {
+		char link[128];
+		table[fd] = proc_link(fd, link, sizeof(link)) &&
+		            (strncmp(link, "socket:", 7) == 0 || strncmp(link, "pipe:", 5) == 0);
+	}
+}
+// A TCP socket (listening or connected): its inode is in /proc/self/net/tcp or tcp6
+static bool is_stream(int fd) {
+	char link[128];
+	unsigned long inode = 0;
+	if (!proc_link(fd, link, sizeof(link)) || sscanf(link, "socket:[%lu]", &inode) != 1)
+		return false;
+	const char *tables[] = {"/proc/self/net/tcp", "/proc/self/net/tcp6"};
+	for (int k = 0; k < 2; ++k) {
+		FILE *f = fopen(tables[k], "r");
+		if (!f)
+			continue;
+		char line[512];
+		bool found = false;
+		while (!found && fgets(line, sizeof(line), f)) {
+			unsigned long ino = 0;
+			// sl local rem st tx:rx tr:when retrnsmt uid timeout inode
+			if (sscanf(line, " %*s %*s %*s %*s %*s %*s %*s %*s %*s %lu", &ino) == 1 && ino == inode)
+				found = true;
+		}
+		fclose(f);
+		if (found)
+			return true;
+	}
+	return false;
+}
+// Its open flags, as /proc/self/fdinfo shows them (octal): O_CLOEXEC set or not
+static bool passed_on(int fd) {
+	char path[64];
+	snprintf(path, sizeof(path), "/proc/self/fdinfo/%d", fd);
+	FILE *f = fopen(path, "r");
+	if (!f)
+		return true;
+	char line[128];
+	unsigned long flags = 0;
+	bool read = false;
+	while (!read && fgets(line, sizeof(line), f))
+		read = sscanf(line, "flags: %lo", &flags) == 1;
+	fclose(f);
+	return !read || !(flags & O_CLOEXEC);
+}
+static int index_of(socket_t s) { return (int)s; }
+#else
+#include <sys/stat.h>
+static void open_now(bool *table) {
+	for (int fd = 0; fd < OPEN_TABLE; ++fd) {
+		struct stat st;
+		table[fd] = fcntl(fd, F_GETFD) >= 0 && fstat(fd, &st) == 0 &&
+		            (S_ISSOCK(st.st_mode) || S_ISFIFO(st.st_mode));
+	}
+}
+static bool is_stream(int fd) {
+	int type = 0;
+	socklen_t len = sizeof(type);
+	return getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *)&type, &len) == 0 && type == SOCK_STREAM;
+}
+static bool passed_on(int fd) {
+	int flags = fcntl(fd, F_GETFD);
+	return flags < 0 || !(flags & FD_CLOEXEC);
+}
+static int index_of(socket_t s) { return (int)s; }
+#endif
+
+// What was opened since `before`, leaving out `mine` (a socket of the test's own): how many, how
+// many of them are TCP connections or listeners, how many would pass to a child.
+static void opened_since(const bool *before, socket_t mine, int *seen, int *streams, int *passed) {
+	static bool now[OPEN_TABLE];
+	open_now(now);
+	*seen = *streams = *passed = 0;
+	for (int i = 0; i < OPEN_TABLE; ++i) {
+		if (!now[i] || before[i] || (mine != INVALID_SOCKET && i == index_of(mine)))
+			continue;
+		++*seen;
+		if (is_stream(i))
+			++*streams;
+		if (passed_on(i)) {
+			++*passed;
+			printf("  number %d would pass to a child\n", i);
+		}
+	}
+}
+
+static void test_no_socket_passes_to_a_child(void) {
+	static bool before[OPEN_TABLE];
+	int seen, streams, passed;
+
+	printf("No socket of a pair connected over TCP passes to a child process\n");
+	// The peer dials the host (libjuice's active TCP), the host accepts: once connected, the
+	// host's listener is gone and the two ends of that connection remain, with the UDP sockets.
+	open_now(before);
+	side_t a = {0}, b = {0};
+	connecting_pair(&a, &b, NULL, NULL);
+	CHECK(wait_state(a.agent, JUICE_STATE_COMPLETED, 10000));
+	CHECK(wait_state(b.agent, JUICE_STATE_COMPLETED, 2000));
+	opened_since(before, INVALID_SOCKET, &seen, &streams, &passed);
+	printf("  %d socket(s)/pipe(s) opened by the agents, %d of them TCP\n", seen, streams);
+	// The host's end, accepted, and the peer's, dialled: two TCP connections
+	CHECK(streams >= 2);
+	CHECK(seen >= 4); // and the two UDP sockets
+	CHECK(passed == 0);
+	juice_destroy(a.agent);
+	juice_destroy(b.agent);
+
+	printf("No socket of a host that listens passes to a child process\n");
+	// A host alone, its checks running: its listener stays, and takes a connection of this
+	// test's own (left out of the count: it is not the agent's).
+	open_now(before);
+	side_t h = {0}, p = {0};
+	h.port = free_port(NULL);
+	make(&h, JUICE_ICE_TCP_MODE_ACTIVE_PASSIVE);
+	make(&p, JUICE_ICE_TCP_MODE_ACTIVE);
+	char sdp[JUICE_MAX_SDP_STRING_LEN];
+	juice_get_local_description(h.agent, sdp, sizeof(sdp));
+	juice_set_remote_description(p.agent, sdp);
+	juice_get_local_description(p.agent, sdp, sizeof(sdp));
+	juice_set_remote_description(h.agent, sdp);
+	juice_gather_candidates(h.agent); // the peer never gathers: nothing reaches the host
+	for (int t = 0; t < 2000 && !h.passive_port; t += 50)
+		sleep_ms(50);
+	CHECK(h.passive_port > 0);
+	socket_t mine = h.passive_port > 0 ? dial(h.passive_port) : INVALID_SOCKET;
+	CHECK(mine != INVALID_SOCKET);
+	sleep_ms(300); // the host's poll accepts it
+	opened_since(before, mine, &seen, &streams, &passed);
+	printf("  %d socket(s)/pipe(s) opened by the agents, %d of them TCP\n", seen, streams);
+	// The host's listener and the connection it accepted
+	CHECK(streams >= 2);
+	CHECK(seen >= 3); // and its UDP socket
+	CHECK(passed == 0);
+	if (mine != INVALID_SOCKET)
+		closesocket(mine);
+	juice_destroy(h.agent);
+	juice_destroy(p.agent);
+}
+
 int main(void) {
 #ifdef _WIN32
 	WSADATA wsa;
@@ -918,6 +1093,7 @@ int main(void) {
 	test_active_only_does_not_listen();
 	test_long_datagram_is_dropped();
 	test_passive_on_every_address();
+	test_no_socket_passes_to_a_child();
 	failures += ice_mux_tests();
 	printf(failures ? "\n%d FAILURE(S)\n" : "\nall passed\n", failures);
 	return failures ? 1 : 0;

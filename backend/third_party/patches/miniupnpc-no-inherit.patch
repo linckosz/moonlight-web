@@ -1,0 +1,88 @@
+diff --git a/miniupnpc/src/connecthostport.c b/miniupnpc/src/connecthostport.c
+index 0e2efdc..088e74a 100644
+--- a/miniupnpc/src/connecthostport.c
++++ b/miniupnpc/src/connecthostport.c
+@@ -119,7 +119,7 @@ SOCKET connecthostport(const char * host, unsigned short port,
+ 	}
+ 	memcpy(&dest.sin_addr, hp->h_addr, sizeof(dest.sin_addr));
+ 	memset(dest.sin_zero, 0, sizeof(dest.sin_zero));
+-	s = socket(PF_INET, SOCK_STREAM, 0);
++	s = miniupnpc_socket(PF_INET, SOCK_STREAM, 0);
+ 	if(ISINVALID(s))
+ 	{
+ 		PRINT_SOCKET_ERROR("socket");
+@@ -275,7 +275,7 @@ SOCKET connecthostport(const char * host, unsigned short port,
+ 		printf("ai_family=%d ai_socktype=%d ai_protocol=%d (PF_INET=%d, PF_INET6=%d)\n",
+ 		       p->ai_family, p->ai_socktype, p->ai_protocol, PF_INET, PF_INET6);
+ #endif
+-		s = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
++		s = miniupnpc_socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+ 		if(ISINVALID(s))
+ 			continue;
+ 		if(p->ai_addr->sa_family == AF_INET6 && scope_id > 0) {
+diff --git a/miniupnpc/src/minissdpc.c b/miniupnpc/src/minissdpc.c
+index 7873ad2..3f158da 100644
+--- a/miniupnpc/src/minissdpc.c
++++ b/miniupnpc/src/minissdpc.c
+@@ -181,7 +181,7 @@ connectToMiniSSDPD(const char * socketpath)
+ 	struct timeval timeout;
+ #endif /* #ifdef MINIUPNPC_SET_SOCKET_TIMEOUT */
+ 
+-	s = socket(AF_UNIX, SOCK_STREAM, 0);
++	s = miniupnpc_socket(AF_UNIX, SOCK_STREAM, 0);
+ 	if(s < 0)
+ 	{
+ 		/*syslog(LOG_ERR, "socket(unix): %m");*/
+@@ -562,9 +562,9 @@ ssdpDiscoverDevices(const char * const deviceTypes[],
+ 		localport = SSDP_PORT;
+ 
+ #ifdef _WIN32
+-	sudp = socket(ipv6 ? PF_INET6 : PF_INET, SOCK_DGRAM, IPPROTO_UDP);
++	sudp = miniupnpc_socket(ipv6 ? PF_INET6 : PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+ #else
+-	sudp = socket(ipv6 ? PF_INET6 : PF_INET, SOCK_DGRAM, 0);
++	sudp = miniupnpc_socket(ipv6 ? PF_INET6 : PF_INET, SOCK_DGRAM, 0);
+ #endif
+ 	if(ISINVALID(sudp))
+ 	{
+diff --git a/miniupnpc/src/miniupnpc_socketdef.h b/miniupnpc/src/miniupnpc_socketdef.h
+index 5986e58..4fea423 100644
+--- a/miniupnpc/src/miniupnpc_socketdef.h
++++ b/miniupnpc/src/miniupnpc_socketdef.h
+@@ -41,4 +41,36 @@
+ #define PRINT_SOCKET_ERROR(x) perror(x)
+ #endif
+ 
++/* MoonlightWeb patch: no socket of miniupnpc passes to a process the program starts. A child
++ * that held one would keep it for as long as the child runs. */
++#ifdef _WIN32
++#include <winsock2.h>
++#include <windows.h>
++#ifndef WSA_FLAG_NO_HANDLE_INHERIT
++#define WSA_FLAG_NO_HANDLE_INHERIT 0x80
++#endif
++/* socket(), with a handle no child inherits (socket() also asks for overlapped I/O) */
++static __inline SOCKET miniupnpc_socket(int domain, int type, int protocol)
++{
++	return WSASocketW(domain, type, protocol, NULL, 0,
++	                  WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
++}
++#else
++#include <sys/socket.h>
++#include <fcntl.h>
++#ifdef SOCK_CLOEXEC
++#define miniupnpc_socket(domain, type, protocol) \
++	socket((domain), (type) | SOCK_CLOEXEC, (protocol))
++#else
++/* socket(), its descriptor closed at exec right after */
++static inline int miniupnpc_socket(int domain, int type, int protocol)
++{
++	int s = socket(domain, type, protocol);
++	if(s >= 0)
++		fcntl(s, F_SETFD, FD_CLOEXEC);
++	return s;
++}
++#endif
++#endif
++
+ #endif /* MINIUPNPC_SOCKETDEF_H_INCLUDED */

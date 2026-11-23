@@ -1,0 +1,146 @@
+diff --git a/src/conn_poll.c b/src/conn_poll.c
+index 321e3d9..a16ae28 100644
+--- a/src/conn_poll.c
++++ b/src/conn_poll.c
+@@ -6,6 +6,10 @@
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+  */
+ 
++#if defined(__linux__) && !defined(_GNU_SOURCE)
++#define _GNU_SOURCE // MoonlightWeb patch: accept4() and pipe2(), so their descriptors are closed at exec
++#endif
++
+ #include "conn_poll.h"
+ #include "agent.h"
+ #include "log.h"
+@@ -160,12 +164,20 @@ int conn_poll_registry_init(conn_registry_t *registry, udp_socket_config_t *conf
+ 	}
+ #else
+ 	int pipefds[2];
++#if defined(__linux__) && defined(O_CLOEXEC)
++	if (pipe2(pipefds, O_CLOEXEC)) {
++#else
+ 	if (pipe(pipefds)) {
++#endif
+ 		JLOG_FATAL("Pipe creation failed");
+ 		free(registry_impl);
+ 		return -1;
+ 	}
+ 
++#if !defined(__linux__) || !defined(O_CLOEXEC)
++	socket_set_private(pipefds[0]);
++	socket_set_private(pipefds[1]);
++#endif
+ 	fcntl(pipefds[0], F_SETFL, O_NONBLOCK);
+ 	fcntl(pipefds[1], F_SETFL, O_NONBLOCK);
+ 	registry_impl->interrupt_pipe_out = pipefds[1]; // read
+@@ -1095,7 +1107,7 @@ static socket_t tcp_passive_listen(socket_t udp_sock) {
+ 	}
+ 	uint16_t port = addr_get_port((struct sockaddr *)&name.addr);
+ 
+-	socket_t sock = socket(name.addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
++	socket_t sock = socket_private(name.addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
+ 	if (sock == INVALID_SOCKET) {
+ 		JLOG_WARN("Passive ICE-TCP: socket creation failed, errno=%d", sockerrno);
+ 		return INVALID_SOCKET;
+@@ -1233,9 +1245,18 @@ static void tcp_passive_accept(juice_agent_t *agent) {
+ 		addr_record_t src;
+ 		memset(&src, 0, sizeof(src));
+ 		src.len = sizeof(src.addr);
++#if defined(__linux__) && defined(SOCK_CLOEXEC)
++		socket_t sock = accept4(conn_impl->listen_sock, (struct sockaddr *)&src.addr, &src.len,
++		                        SOCK_CLOEXEC);
++#else
+ 		socket_t sock = accept(conn_impl->listen_sock, (struct sockaddr *)&src.addr, &src.len);
++#endif
+ 		if (sock == INVALID_SOCKET)
+ 			return; // none left, or an error the next poll reports again
++#if !defined(__linux__) || !defined(SOCK_CLOEXEC)
++		// Whatever the listening socket was, this one is not passed on either
++		socket_set_private(sock);
++#endif
+ 
+ 		addr_unmap_inet6_v4mapped((struct sockaddr *)&src.addr, &src.len);
+ 		src.socktype = SOCK_STREAM;
+diff --git a/src/socket.h b/src/socket.h
+index 93899f5..d390827 100644
+--- a/src/socket.h
++++ b/src/socket.h
+@@ -109,6 +109,42 @@ typedef int sockopt_t;
+ 
+ #endif // _WIN32
+ 
++// MoonlightWeb patch: no socket or pipe of libjuice passes to a process the program starts. A child that
++// held one would keep its port bound after the agent closed it, for as long as the child runs.
++#ifdef _WIN32
++#ifndef WSA_FLAG_NO_HANDLE_INHERIT
++#define WSA_FLAG_NO_HANDLE_INHERIT 0x80
++#endif
++// The handle made not inheritable (a socket made by accept(), say)
++static inline void socket_set_private(socket_t sock) {
++	SetHandleInformation((HANDLE)sock, HANDLE_FLAG_INHERIT, 0);
++}
++// socket(), with a handle no child inherits (socket() also asks for overlapped I/O)
++static inline socket_t socket_private(int domain, int type, int protocol) {
++	return WSASocketW(domain, type, protocol, NULL, 0,
++	                  WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
++}
++#else
++// The descriptor closed at exec
++static inline void socket_set_private(int fd) {
++	int flags = fcntl(fd, F_GETFD);
++	if (flags >= 0)
++		fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
++}
++// socket(), with a descriptor closed at exec: at its creation where the system can, right after
++// it elsewhere
++static inline socket_t socket_private(int domain, int type, int protocol) {
++#ifdef SOCK_CLOEXEC
++	return socket(domain, type | SOCK_CLOEXEC, protocol);
++#else
++	socket_t sock = socket(domain, type, protocol);
++	if (sock != INVALID_SOCKET)
++		socket_set_private(sock);
++	return sock;
++#endif
++}
++#endif
++
+ #ifndef IN6_IS_ADDR_LOOPBACK
+ #define IN6_IS_ADDR_LOOPBACK(a)                                                                    \
+ 	(((const uint32_t *)(a))[0] == 0 && ((const uint32_t *)(a))[1] == 0 &&                         \
+diff --git a/src/tcp.c b/src/tcp.c
+index 1c6beea..09f5fc1 100644
+--- a/src/tcp.c
++++ b/src/tcp.c
+@@ -17,7 +17,7 @@
+ #define BUFFER_SIZE 1024
+ 
+ socket_t tcp_create_socket(const addr_record_t *dst) {
+-	socket_t sock = socket(dst->addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
++	socket_t sock = socket_private(dst->addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
+ 	if (sock == INVALID_SOCKET) {
+ 		JLOG_WARN("TCP socket creation failed, errno=%d", sockerrno);
+ 		return INVALID_SOCKET;
+diff --git a/src/udp.c b/src/udp.c
+index b3d3d68..423408e 100644
+--- a/src/udp.c
++++ b/src/udp.c
+@@ -47,7 +47,7 @@ static uint16_t get_next_port_in_range(uint16_t begin, uint16_t end) {
+ static socket_t create_socket_for_addrinfo(const udp_socket_config_t *config,
+                                            const struct addrinfo *ai) {
+ 	// Create socket
+-	socket_t sock = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
++	socket_t sock = socket_private(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+ 	if (sock == INVALID_SOCKET) {
+ 		JLOG_WARN("UDP socket creation failed, errno=%d", sockerrno);
+ 		return INVALID_SOCKET;
+@@ -416,7 +416,7 @@ static int get_local_default_inet6(uint16_t port, struct sockaddr_in6 *result) {
+ 	if (inet_pton(AF_INET6, dummy_host, &sin6.sin6_addr) != 1)
+ 		return -1;
+ 
+-	socket_t sock = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
++	socket_t sock = socket_private(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+ 	if (sock == INVALID_SOCKET)
+ 		return -1;
+ 
