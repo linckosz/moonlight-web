@@ -23,6 +23,7 @@
 #include <QFile>
 #include <QSslCertificate>
 #include <QStandardPaths>
+#include <QTemporaryDir>
 
 #include <openssl/pem.h>
 #include <openssl/x509.h>
@@ -92,6 +93,45 @@ static bool rewriteCert(const QString& certPath, const QString& keyPath, long da
     if (key) EVP_PKEY_free(key);
     if (certBio) BIO_free(certBio);
     if (keyBio) BIO_free(keyBio);
+    return ok;
+}
+
+/// Write a fresh EC key at @p keyPath and a certificate for @p cn signed with
+/// it at @p certPath.
+static bool makePair(const QString& certPath, const QString& keyPath, const char* cn)
+{
+    EVP_PKEY* key = EVP_EC_gen("P-256");
+    X509* cert = X509_new();
+    bool ok = false;
+    if (key && cert) {
+        X509_set_version(cert, 2);
+        ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
+        X509_gmtime_adj(X509_getm_notBefore(cert), 0);
+        X509_gmtime_adj(X509_getm_notAfter(cert), 30L * 24 * 60 * 60);
+        X509_set_pubkey(cert, key);
+        X509_NAME* name = X509_get_subject_name(cert);
+        X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                   reinterpret_cast<const unsigned char*>(cn), -1, -1, 0);
+        X509_set_issuer_name(cert, name);
+        if (X509_sign(cert, key, EVP_sha256())) {
+            BIO* c = BIO_new(BIO_s_mem());
+            BIO* k = BIO_new(BIO_s_mem());
+            if (c && k && PEM_write_bio_X509(c, cert) == 1 &&
+                PEM_write_bio_PrivateKey(k, key, nullptr, nullptr, 0, nullptr, nullptr) == 1) {
+                char* data = nullptr;
+                long len = BIO_get_mem_data(c, &data);
+                QFile cf(certPath);
+                ok = cf.open(QIODevice::WriteOnly) && cf.write(data, len) == len;
+                len = BIO_get_mem_data(k, &data);
+                QFile kf(keyPath);
+                ok = ok && kf.open(QIODevice::WriteOnly) && kf.write(data, len) == len;
+            }
+            if (c) BIO_free(c);
+            if (k) BIO_free(k);
+        }
+    }
+    if (cert) X509_free(cert);
+    if (key) EVP_PKEY_free(key);
     return ok;
 }
 
@@ -182,4 +222,144 @@ void run_cert_manager_tests()
     CHECK(certMatchesKey(certPath, keyPath));
 
     QDir(certDir).removeRecursively();
+
+    SECTION("CertManager: cert_pem / cert_key sources, and the key that goes with them");
+    {
+        QTemporaryDir tmp;
+        CHECK(tmp.isValid());
+        const QString dir = tmp.path();
+        const QString unset = QStringLiteral("MW_SFX_TEST_UNSET");
+        qunsetenv("MW_SFX_TEST_UNSET");
+        QList<QSslCertificate> chain;
+        QSslKey key;
+        QString described;
+
+        // A and its key; B, another pair, in a folder of its own.
+        QDir(dir).mkpath("a");
+        QDir(dir).mkpath("b");
+        const QString certA = dir + "/a/fullchain.pem";
+        const QString keyA = dir + "/a/held-elsewhere.txt";
+        const QString certB = dir + "/b/cert.pem";
+        const QString keyB = dir + "/b/key.pem";
+        CHECK(makePair(certA, keyA, "a.example"));
+        CHECK(makePair(certB, keyB, "b.example"));
+        const QSslCertificate a = QSslCertificate::fromPath(certA).value(0);
+        CHECK(!a.isNull());
+
+        // cert_key as a file path: its key is A's, loaded.
+        CHECK(CertManager::pairFromSources(certA, keyA, QString(), &chain, &key, &described));
+        CHECK(chain.value(0) == a);
+        CHECK(!key.isNull());
+        // cert_key names another pair's key: refused, never served.
+        CHECK(!CertManager::pairFromSources(certA, keyB, QString(), &chain, &key));
+        // The certificate must cover the domain when one is set.
+        CHECK(!CertManager::pairFromSources(certA, keyA, "other.example", &chain, &key));
+        CHECK(CertManager::pairFromSources(certA, keyA, "a.example", &chain, &key));
+
+        // No candidate beside the certificate: nothing loaded.
+        CHECK(!CertManager::pairFromSources(certA, unset, QString(), &chain, &key));
+        // A key beside it that is not its own (key.pem): skipped, nothing loaded.
+        CHECK(QFile::copy(keyB, dir + "/a/key.pem"));
+        CHECK(!CertManager::pairFromSources(certA, unset, QString(), &chain, &key));
+        // <base name>.key that is its own: found after the other one.
+        CHECK(QFile::copy(keyA, dir + "/a/fullchain.key"));
+        CHECK(CertManager::pairFromSources(certA, unset, QString(), &chain, &key, &described));
+        CHECK(chain.value(0) == a);
+        CHECK(described.endsWith("fullchain.key"));
+        // privkey.pem comes first.
+        CHECK(QFile::copy(keyA, dir + "/a/privkey.pem"));
+        CHECK(CertManager::pairFromSources(certA, unset, QString(), &chain, &key, &described));
+        CHECK(described.endsWith("privkey.pem"));
+        // Never another name, nor another folder: B's cert finds only B's key.pem.
+        CHECK(CertManager::pairFromSources(certB, unset, QString(), &chain, &key, &described));
+        CHECK(described.endsWith("b/key.pem"));
+        QFile::remove(keyB);
+        CHECK(!CertManager::pairFromSources(certB, unset, QString(), &chain, &key));
+
+        // Variables that hold a path to a PEM file.
+        qputenv("MW_SFX_TEST_CERT", certA.toLocal8Bit());
+        qputenv("MW_SFX_TEST_KEY", keyA.toLocal8Bit());
+        CHECK(CertManager::pairFromSources("MW_SFX_TEST_CERT", "MW_SFX_TEST_KEY", QString(), &chain,
+                                           &key, &described));
+        CHECK(chain.value(0) == a);
+        // Variables that hold the PEM itself.
+        qputenv("MW_SFX_TEST_CERT", readAll(certA));
+        qputenv("MW_SFX_TEST_KEY", readAll(keyA));
+        CHECK(CertManager::pairFromSources("MW_SFX_TEST_CERT", "MW_SFX_TEST_KEY", QString(), &chain,
+                                           &key));
+        CHECK(chain.value(0) == a);
+        // A variable that is neither PEM nor a regular file: nothing loaded.
+        qputenv("MW_SFX_TEST_KEY", (dir + "/a/missing.pem").toLocal8Bit());
+        CHECK(!CertManager::pairFromSources("MW_SFX_TEST_CERT", "MW_SFX_TEST_KEY", QString(),
+                                            &chain, &key));
+        qputenv("MW_SFX_TEST_KEY", (dir + "/a").toLocal8Bit());
+        CHECK(!CertManager::pairFromSources("MW_SFX_TEST_CERT", "MW_SFX_TEST_KEY", QString(),
+                                            &chain, &key));
+        // A file over 1 MiB named by a variable is not read.
+        {
+            QFile big(dir + "/a/big.pem");
+            CHECK(big.open(QIODevice::WriteOnly));
+            QByteArray pem = readAll(keyA);
+            big.write(pem);
+            big.write(QByteArray(1024 * 1024, '\n'));
+        }
+        qputenv("MW_SFX_TEST_KEY", (dir + "/a/big.pem").toLocal8Bit());
+        CHECK(!CertManager::pairFromSources("MW_SFX_TEST_CERT", "MW_SFX_TEST_KEY", QString(),
+                                            &chain, &key));
+        qunsetenv("MW_SFX_TEST_CERT");
+        qunsetenv("MW_SFX_TEST_KEY");
+    }
+
+    SECTION("CertManager: the build's pair is used only as a pair");
+    {
+        QTemporaryDir tmp;
+        CHECK(tmp.isValid());
+        const QString dir = tmp.path();
+        qunsetenv("MW_SFX_TEST_UNSET");
+        QDir(dir).mkpath("user");
+        QDir(dir).mkpath("build");
+        const QString certU = dir + "/user/fullchain.pem";
+        const QString keyU = dir + "/user/privkey.pem";
+        const QString certBuild = dir + "/build/cert.pem";
+        const QString keyBuild = dir + "/build/key.pem";
+        CHECK(makePair(certU, keyU, "user.example"));
+        CHECK(makePair(certBuild, keyBuild, "build.example"));
+        const QSslCertificate user = QSslCertificate::fromPath(certU).value(0);
+        const QSslCertificate built = QSslCertificate::fromPath(certBuild).value(0);
+        CertManager::BuiltInPair pair;
+        pair.certPem = readAll(certBuild);
+        pair.keyPem = readAll(keyBuild);
+        QList<QSslCertificate> chain;
+        QSslKey key;
+        QString described;
+
+        // The user's certificate file, no cert_key, the build's key around and
+        // the right key beside the certificate: the one beside it is used.
+        CHECK(CertManager::pairFromSources(certU, "MW_SFX_TEST_UNSET", QString(), &chain, &key,
+                                           &described, pair));
+        CHECK(chain.value(0) == user);
+        CHECK(described.endsWith("user/privkey.pem"));
+        CHECK(key.toPem() != QSslKey(pair.keyPem, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey).toPem());
+        // Without the key beside it, the build's key is never tried with it.
+        CHECK(QFile::remove(keyU));
+        CHECK(!CertManager::pairFromSources(certU, "MW_SFX_TEST_UNSET", QString(), &chain, &key,
+                                            nullptr, pair));
+        CHECK(makePair(certU, keyU, "user.example"));
+        const QSslCertificate user2 = QSslCertificate::fromPath(certU).value(0);
+
+        // No cert_pem: the build's certificate, with the build's key only,
+        // whatever cert_key names.
+        CHECK(CertManager::pairFromSources("MW_SFX_TEST_UNSET", keyU, QString(), &chain, &key,
+                                           &described, pair));
+        CHECK(chain.value(0) == built);
+        CHECK(chain.value(0) != user2);
+        CHECK(described == "cert=the build's certificate, key=the build's key");
+        // The build's certificate without its key and the user's key: nothing.
+        CertManager::BuiltInPair halfPair;
+        halfPair.certPem = pair.certPem;
+        CHECK(!CertManager::pairFromSources("MW_SFX_TEST_UNSET", keyU, QString(), &chain, &key,
+                                            nullptr, halfPair));
+        CHECK(!CertManager::pairFromSources("MW_SFX_TEST_UNSET", keyBuild, QString(), &chain, &key,
+                                            nullptr, halfPair));
+    }
 }

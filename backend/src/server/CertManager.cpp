@@ -32,6 +32,7 @@
 #include <functional>
 
 #include <openssl/bn.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
@@ -63,6 +64,81 @@ static EVP_PKEY* readPrivateKeyFile(const QString& keyPath)
         pkey = nullptr;
     }
     return pkey;
+}
+
+/// A certificate or key file given by a path is read only when it is a regular
+/// file of this size or less.
+static constexpr qint64 kMaxPemFileBytes = 1024 * 1024;
+
+static bool looksLikePem(const QByteArray& data)
+{
+    return data.trimmed().startsWith("-----BEGIN");
+}
+
+/// The bytes of @p path when it is an existing regular file of at most
+/// kMaxPemFileBytes, empty otherwise.
+static QByteArray readSmallRegularFile(const QString& path)
+{
+    if (path.isEmpty()) return {};
+    const QFileInfo fi(path);
+    if (!fi.exists() || !fi.isFile() || fi.size() > kMaxPemFileBytes) return {};
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    return f.read(kMaxPemFileBytes);
+}
+
+/// A PEM private key, RSA or EC; null when it is neither.
+static QSslKey keyFromPem(const QByteArray& pem)
+{
+    QSslKey key(pem, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
+    if (key.isNull()) key = QSslKey(pem, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+    return key;
+}
+
+/// The value of the environment variable @p name as PEM: its content when it
+/// is PEM, else the content of the file it names when that is a regular file
+/// of at most kMaxPemFileBytes holding PEM. @p filePath gets that file's path.
+/// A variable that is set but is neither is reported by its name only.
+static QByteArray pemFromEnv(const QString& name, QString* filePath = nullptr)
+{
+    if (name.isEmpty()) return {};
+    const QByteArray value = qgetenv(name.toUtf8().constData());
+    if (value.isEmpty()) return {};
+    if (looksLikePem(value)) return value;
+    const QString path = QString::fromLocal8Bit(value).trimmed();
+    QByteArray data = readSmallRegularFile(path);
+    if (looksLikePem(data)) {
+        if (filePath) *filePath = path;
+        return data;
+    }
+    data.fill('\0');
+    Logger::warning(QString("[CERT] %1 is set in this server's environment but is neither PEM "
+                            "nor a readable file: ignored")
+                        .arg(name));
+    return {};
+}
+
+/// Whether @p key is the private key of @p cert (what a TLS handshake needs;
+/// a mismatch fails there as "key values mismatch").
+static bool keyMatchesCert(const QSslCertificate& cert, const QSslKey& key)
+{
+    if (cert.isNull() || key.isNull()) return false;
+    const QByteArray der = cert.toDer();
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(der.constData());
+    X509* x509 = d2i_X509(nullptr, &p, static_cast<long>(der.size()));
+    QByteArray keyPem = key.toPem();
+    BIO* bio = BIO_new_mem_buf(keyPem.constData(), static_cast<int>(keyPem.size()));
+    EVP_PKEY* pkey =
+        bio ? PEM_read_bio_PrivateKey(
+                  bio, nullptr, [](char*, int, int, void*) -> int { return 0; }, nullptr)
+            : nullptr;
+    const bool match = x509 && pkey && X509_check_private_key(x509, pkey) == 1;
+    if (pkey) EVP_PKEY_free(pkey);
+    if (bio) BIO_free(bio);
+    if (x509) X509_free(x509);
+    keyPem.fill('\0');
+    ERR_clear_error(); // a mismatch leaves its reason queued for the next TLS call
+    return match;
 }
 
 /// Generate a self-signed RSA-2048 certificate + private key entirely via
@@ -346,8 +422,9 @@ QString CertManager::extractCertCN(const QString& pemPath)
     return cns.isEmpty() ? QString() : cns.first();
 }
 
-QString CertManager::scanKeyInDir(const QString& dir) const
+QStringList CertManager::scanKeysInDir(const QString& dir) const
 {
+    QStringList found;
     QDirIterator it(dir, {"*.pem"}, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
         QString filePath = it.next();
@@ -356,32 +433,20 @@ QString CertManager::scanKeyInDir(const QString& dir) const
         // authenticated to the certificate authority, it is not a TLS key.
         if (filePath.endsWith("account_key.pem")) continue;
 
-        QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly)) continue;
-
-        // Read content and check for private key marker before attempting QSslKey
-        QByteArray content = file.readAll();
-        file.close();
-        if (!content.contains("PRIVATE KEY")) continue;
-
-        // Re-open to reset cursor, try RSA private key
-        if (!file.open(QIODevice::ReadOnly)) continue;
-        QSslKey key(&file, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        file.close();
-
-        if (key.isNull()) {
-            // Try EC private key
-            if (!file.open(QIODevice::ReadOnly)) continue;
-            key = QSslKey(&file, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
-            file.close();
-        }
-
-        if (!key.isNull()) {
-            Logger::info("[CERT] Found private key: file=" + filePath);
-            return filePath;
-        }
+        // Check for the private key marker before attempting QSslKey
+        QByteArray content = readSmallRegularFile(filePath);
+        const bool isKey = content.contains("PRIVATE KEY") && !keyFromPem(content).isNull();
+        content.fill('\0');
+        if (!isKey) continue;
+        Logger::info("[CERT] Found private key: file=" + filePath);
+        found << filePath;
     }
-    return {};
+    return found;
+}
+
+QString CertManager::scanKeyInDir(const QString& dir) const
+{
+    return scanKeysInDir(dir).value(0);
 }
 
 QString CertManager::scanCertInDir(const QString& dir, const QString& domain) const
@@ -410,8 +475,8 @@ QString CertManager::scanCertInDir(const QString& dir, const QString& domain) co
 
 QSslKey CertManager::loadKeyFromEnv() const
 {
-    // 1. Runtime env var (overrides everything)
-    QByteArray data = qgetenv("MW_CERT_KEY");
+    // 1. Runtime env var (overrides everything): PEM, or the path of a PEM file
+    QByteArray data = pemFromEnv(QStringLiteral("MW_CERT_KEY"));
 
     // 2. Build-time embedded key (from .env at project root, via DEFINE)
 #ifdef MW_CERT_KEY
@@ -419,36 +484,166 @@ QSslKey CertManager::loadKeyFromEnv() const
 #endif
 
     if (data.isEmpty()) return {};
-
-    // Try RSA first, then EC
-    QSslKey key(data, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-    if (!key.isNull()) return key;
-    return QSslKey(data, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
+    const QSslKey key = keyFromPem(data);
+    data.fill('\0');
+    return key;
 }
 
-QByteArray CertManager::resolvePemValue(const QString& value)
+QByteArray CertManager::resolvePemValue(const QString& value, QString* filePath)
 {
     if (value.isEmpty()) return {};
 
-    // 1. Try env var — value IS the env var name (e.g. "MW_CERT_PEM")
-    QByteArray data = qgetenv(value.toUtf8());
-    if (!data.isEmpty()) return data;
+    // 1. An environment variable of that name: PEM, or the path of a PEM file
+    if (!qgetenv(value.toUtf8().constData()).isEmpty()) return pemFromEnv(value, filePath);
 
-    // 2. Try file path
-    QFile f(value);
-    if (f.open(QIODevice::ReadOnly)) return f.readAll();
+    // 2. A file path: a regular file of at most kMaxPemFileBytes
+    QByteArray data = readSmallRegularFile(value);
+    if (!data.isEmpty() && filePath) *filePath = value;
+    return data;
+}
 
+CertManager::BuiltInPair CertManager::builtInPair()
+{
+    BuiltInPair pair;
+#ifdef MW_CERT_PEM
+    pair.certPem = QByteArray(MW_CERT_PEM);
+#endif
+#ifdef MW_CERT_KEY
+    pair.keyPem = QByteArray(MW_CERT_KEY);
+#endif
+    return pair;
+}
+
+QString CertManager::keyBesideCert(const QString& certFile, const QSslCertificate& cert,
+                                   QSslKey* key)
+{
+    const QFileInfo fi(certFile);
+    const QDir dir = fi.absoluteDir();
+    const QStringList names = {QStringLiteral("privkey.pem"), QStringLiteral("key.pem"),
+                               fi.completeBaseName() + QStringLiteral(".key")};
+    for (const QString& name : names) {
+        const QString path = dir.filePath(name);
+        QByteArray data = readSmallRegularFile(path);
+        const QSslKey candidate = looksLikePem(data) ? keyFromPem(data) : QSslKey();
+        data.fill('\0');
+        if (candidate.isNull()) continue;
+        if (!keyMatchesCert(cert, candidate)) {
+            Logger::warning(QString("[CERT] %1 does not match the certificate %2: skipped")
+                                .arg(path, certFile));
+            continue;
+        }
+        if (key) *key = candidate;
+        return path;
+    }
     return {};
+}
+
+bool CertManager::pairFromSources(const QString& certPem, const QString& certKey,
+                                  const QString& domain, QList<QSslCertificate>* chainOut,
+                                  QSslKey* keyOut, QString* described, const BuiltInPair& builtIn)
+{
+    QString certFile;
+    QString keyFile;
+    QByteArray certData = resolvePemValue(certPem, &certFile);
+    QByteArray keyData = resolvePemValue(certKey, &keyFile);
+    QString certSource = certFile.isEmpty() ? certPem : certFile;
+    QString keySource = keyFile.isEmpty() ? certKey : keyFile;
+
+    // The build's own pair (embedded at build time) counts only as a pair:
+    // its certificate stands in for an empty cert_pem, and then only its own
+    // key goes with it. A certificate from cert_pem never takes the build's key.
+    if (certData.isEmpty() && !builtIn.certPem.isEmpty()) {
+        if (!keyData.isEmpty())
+            Logger::warning(QString("[CERT] cert_key (%1) is not used: cert_pem (%2) gave no "
+                                    "certificate, and the build's certificate goes only with "
+                                    "the build's key")
+                                .arg(keySource, certPem));
+        keyData.fill('\0');
+        certData = builtIn.certPem;
+        keyData = builtIn.keyPem;
+        certSource = QStringLiteral("the build's certificate");
+        keySource = QStringLiteral("the build's key");
+        certFile.clear();
+    }
+
+    if (certData.isEmpty()) {
+        // The defaults name variables that are usually unset: say nothing then.
+        if (certPem != QLatin1String("MW_CERT_PEM") || !keyData.isEmpty())
+            Logger::warning(QString("[CERT] cert_pem (%1) gave no certificate: it is neither set "
+                                    "in this server's environment nor a readable file")
+                                .arg(certPem));
+        keyData.fill('\0');
+        return false;
+    }
+
+    const QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
+    if (chain.isEmpty()) {
+        Logger::warning(QString("[CERT] cert_pem (%1) holds no PEM certificate").arg(certSource));
+        keyData.fill('\0');
+        return false;
+    }
+
+    // If domain is set, the cert must cover it (CN or SAN). One for a
+    // different domain (e.g. leftover from a previous unique_id, or the
+    // build-time embedded shared-domain cert on a bring-your-own-domain
+    // install) must not be used — fall through to the file scan.
+    if (!domain.isEmpty() && !certMatchesDomain(chain.first(), domain)) {
+        const QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
+        Logger::warning(QString("[CERT] The certificate from %1 (CN=%2) does not cover domain=%3 "
+                                "— falling back to file scan")
+                            .arg(certSource, cn, domain));
+        keyData.fill('\0');
+        return false;
+    }
+
+    QSslKey key;
+    if (!keyData.isEmpty()) {
+        key = keyFromPem(keyData);
+        keyData.fill('\0');
+        if (key.isNull()) {
+            Logger::warning(QString("[CERT] cert_key (%1) holds no RSA or EC private key in PEM, "
+                                    "unencrypted")
+                                .arg(keySource));
+            return false;
+        }
+    } else if (!certFile.isEmpty()) {
+        // No key from cert_key: one beside a certificate file, under fixed names.
+        keySource = keyBesideCert(certFile, chain.first(), &key);
+        if (keySource.isEmpty()) {
+            Logger::warning(
+                QString("[CERT] cert_pem (%1) gave a certificate but cert_key (%2) gave no private "
+                        "key: it is neither set in this server's environment nor a readable "
+                        "file, and no privkey.pem, key.pem or %3.key beside the certificate "
+                        "matches it. Set cert_key in settings.json to the key file's path, "
+                        "readable by the account the server runs as.")
+                    .arg(certFile, certKey, QFileInfo(certFile).completeBaseName()));
+            return false;
+        }
+    } else {
+        Logger::warning(
+            QString("[CERT] cert_pem (%1) gave a certificate but cert_key (%2) gave no private "
+                    "key: it is neither set in this server's environment nor a readable file. "
+                    "Set cert_key in settings.json to the key file's path, readable by the "
+                    "account the server runs as, or %2 in the server's own environment.")
+                .arg(certSource, certKey));
+        return false;
+    }
+
+    if (!keyMatchesCert(chain.first(), key)) {
+        Logger::warning(QString("[CERT] The private key from %1 does not match the certificate "
+                                "from %2: neither is used")
+                            .arg(keySource, certSource));
+        return false;
+    }
+
+    if (chainOut) *chainOut = chain;
+    if (keyOut) *keyOut = key;
+    if (described) *described = QString("cert=%1, key=%2").arg(certSource, keySource);
+    return true;
 }
 
 bool CertManager::loadCertFiles(const QString& certDir)
 {
-    // Check if a private key is provided via environment variable.
-    // When set, we only need to find a matching certificate (the key
-    // is already loaded from env, no file required).
-    QSslKey envKey = loadKeyFromEnv();
-    bool useEnvKey = !envKey.isNull();
-
     // Find the best certificate. Priority: root dir > subdirs, CN match > any cert.
     auto findCert = [this](const QString& dir, bool subdirs, const QString& domain) -> QString {
         auto flags = subdirs ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
@@ -488,42 +683,6 @@ bool CertManager::loadCertFiles(const QString& certDir)
         return false;
     }
 
-    // Load private key. Prefer the key file sitting next to the certificate —
-    // a cert and its key are dropped in together, so the neighbour is
-    // authoritative. The embedded env key (MW_CERT_KEY) belongs to ONE
-    // specific embedded cert; pairing it with a different scanned cert produces
-    // OpenSSL "key values mismatch" at handshake time (e.g. brunoocto key paired
-    // with a brunchlee/damian cert). So the env key is only a last resort, used
-    // when no file key is found alongside the cert (the embedded-cert deployment).
-    QSslKey key;
-    QString keySource;
-
-    QFileInfo certFi(certPath);
-    QString keyPath = scanKeyInDir(certFi.absolutePath());
-    if (!keyPath.isEmpty()) {
-        QFile keyFile(keyPath);
-        if (keyFile.open(QIODevice::ReadOnly)) {
-            key = QSslKey(&keyFile, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-            keyFile.close();
-            if (key.isNull() && keyFile.open(QIODevice::ReadOnly)) {
-                key = QSslKey(&keyFile, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
-                keyFile.close();
-            }
-            if (!key.isNull()) keySource = keyPath;
-        }
-    }
-
-    // Fall back to the embedded env key only when no file key was found.
-    if (key.isNull() && useEnvKey) {
-        key = envKey;
-        keySource = "env:MW_CERT_KEY";
-    }
-
-    if (key.isNull()) {
-        Logger::warning("No usable private key found for cert " + certPath);
-        return false;
-    }
-
     // Load cert chain
     QFile certFile(certPath);
     if (!certFile.open(QIODevice::ReadOnly)) {
@@ -532,9 +691,44 @@ bool CertManager::loadCertFiles(const QString& certDir)
     }
     QList<QSslCertificate> chain = QSslCertificate::fromDevice(&certFile, QSsl::Pem);
     certFile.close();
+    if (chain.isEmpty()) {
+        Logger::warning("SSL cert chain invalid: " + certPath);
+        return false;
+    }
 
-    if (chain.isEmpty() || key.isNull()) {
-        Logger::warning("SSL cert chain / key invalid");
+    // Load private key. Prefer a key file sitting next to the certificate —
+    // a cert and its key are dropped in together — and of those, the one that
+    // is this certificate's key: a folder can hold several pairs. The embedded
+    // env key (MW_CERT_KEY) belongs to ONE specific embedded cert, so it is only
+    // a last resort, and it too must match.
+    QSslKey key;
+    QString keySource;
+    for (const QString& keyPath : scanKeysInDir(QFileInfo(certPath).absolutePath())) {
+        QByteArray data = readSmallRegularFile(keyPath);
+        const QSslKey candidate = keyFromPem(data);
+        data.fill('\0');
+        if (!candidate.isNull() && keyMatchesCert(chain.first(), candidate)) {
+            key = candidate;
+            keySource = keyPath;
+            break;
+        }
+    }
+
+    if (key.isNull()) {
+        const QSslKey envKey = loadKeyFromEnv();
+        if (!envKey.isNull()) {
+            if (keyMatchesCert(chain.first(), envKey)) {
+                key = envKey;
+                keySource = "env:MW_CERT_KEY";
+            } else {
+                Logger::warning("[CERT] The key from MW_CERT_KEY does not match the certificate " +
+                                certPath + ": not used");
+            }
+        }
+    }
+
+    if (key.isNull()) {
+        Logger::warning("[CERT] No private key that matches the certificate " + certPath);
         return false;
     }
 
@@ -597,6 +791,11 @@ bool CertManager::loadCertFilesExplicit(const QString& certFilePath)
         Logger::warning("SSL cert chain / key invalid");
         return false;
     }
+    if (!keyMatchesCert(chain.first(), key)) {
+        Logger::warning(QString("[CERT] The private key from %1 does not match the certificate %2")
+                            .arg(keySource, certFilePath));
+        return false;
+    }
 
     m_SslConfig = QSslConfiguration::defaultConfiguration();
     m_SslConfig.setLocalCertificateChain(chain);
@@ -615,67 +814,23 @@ bool CertManager::loadCertFilesExplicit(const QString& certFilePath)
 
 bool CertManager::loadCert()
 {
-    // Case 1: cert_pem / cert_key resolve to PEM data directly (env var or file)
-    QByteArray certData = resolvePemValue(m_CertPem);
-    QByteArray keyData = resolvePemValue(m_CertKey);
-
-    // Build-time embedded fallback (GitHub Actions / .env at build time)
-#ifdef MW_CERT_PEM
-    if (certData.isEmpty()) certData = QByteArray(MW_CERT_PEM);
-#endif
-#ifdef MW_CERT_KEY
-    if (keyData.isEmpty()) keyData = QByteArray(MW_CERT_KEY);
-#endif
-
-    if (!certData.isEmpty() && !keyData.isEmpty()) {
-        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
-
-        // If domain is set, the cert must cover it (CN or SAN). One for a
-        // different domain (e.g. leftover from a previous unique_id, or the
-        // build-time embedded shared-domain cert on a bring-your-own-domain
-        // install) must not be used — fall through to the file scan.
-        if (!m_Domain.isEmpty() && !chain.isEmpty() &&
-            !certMatchesDomain(chain.first(), m_Domain)) {
-            QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
-            Logger::warning(QString("[CERT] Embedded cert CN=%1 does not cover domain=%2 — "
-                                    "falling back to file scan")
-                                .arg(cn, m_Domain));
-            certData.clear();
-            keyData.clear();
-        }
+    // Case 1: cert_pem / cert_key (environment variable, or file path), or the
+    // build's own pair; a key beside a certificate file when cert_key gives none.
+    QList<QSslCertificate> chain;
+    QSslKey key;
+    QString described;
+    if (pairFromSources(m_CertPem, m_CertKey, m_Domain, &chain, &key, &described)) {
+        m_SslConfig = QSslConfiguration::defaultConfiguration();
+        m_SslConfig.setLocalCertificateChain(chain);
+        m_SslConfig.setPrivateKey(key);
+        m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+        const QString cn =
+            chain.first().subjectInfo(QSslCertificate::CommonName).value(0, "(no CN)");
+        Logger::info(QString("SSL certificate loaded from source: CN=%1, %2").arg(cn, described));
+        return true;
     }
 
-    if (!certData.isEmpty() && !keyData.isEmpty()) {
-        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
-        QSslKey key(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        if (key.isNull()) key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
-
-        if (!chain.isEmpty() && !key.isNull()) {
-            m_SslConfig = QSslConfiguration::defaultConfiguration();
-            m_SslConfig.setLocalCertificateChain(chain);
-            m_SslConfig.setPrivateKey(key);
-            m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
-
-            QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0, "(no CN)");
-            Logger::info(
-                QString("SSL certificate loaded from source: CN=%1, cert_pem=%2, cert_key=%3")
-                    .arg(cn, m_CertPem, m_CertKey));
-            return true;
-        }
-        Logger::warning("Failed to load certificate from cert_pem/cert_key sources");
-        // Fall through to scan
-    }
-
-    // Case 2: cert_pem is a file path (not an env var) → treat as explicit cert file
-    if (!certData.isEmpty() && keyData.isEmpty() && !m_CertPem.isEmpty()) {
-        // cert_pem resolved (file), cert_key didn't → look for key alongside the cert file
-        if (!m_CertKey.isEmpty()) {
-            // If cert_key is set but didn't resolve, the key file path may be wrong
-            Logger::warning("[CERT] cert_key did not resolve: " + m_CertKey);
-        }
-    }
-
-    // Case 3: scan by domain + fallback (only when cert_pem/cert_key are empty)
+    // Case 3: scan by domain + fallback
     QString certDir = findCertDir();
 
     if (!certDir.isEmpty()) {
@@ -708,42 +863,14 @@ bool CertManager::loadCert()
 
 bool CertManager::reloadTls()
 {
-    // Case 1: cert_pem / cert_key resolve to PEM data directly (env var or file)
-    QByteArray certData = resolvePemValue(m_CertPem);
-    QByteArray keyData = resolvePemValue(m_CertKey);
-
-    // Build-time embedded fallback (GitHub Actions / .env at build time)
-#ifdef MW_CERT_PEM
-    if (certData.isEmpty()) certData = QByteArray(MW_CERT_PEM);
-#endif
-#ifdef MW_CERT_KEY
-    if (keyData.isEmpty()) keyData = QByteArray(MW_CERT_KEY);
-#endif
-
-    if (!certData.isEmpty() && !keyData.isEmpty()) {
-        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
-
-        if (!m_Domain.isEmpty() && !chain.isEmpty() &&
-            !certMatchesDomain(chain.first(), m_Domain)) {
-            QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
-            Logger::warning(QString("[CERT] Reload: embedded cert CN=%1 does not cover domain=%2")
-                                .arg(cn, m_Domain));
-            certData.clear();
-            keyData.clear();
-        }
-    }
-
-    if (!certData.isEmpty() && !keyData.isEmpty()) {
-        QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
-        QSslKey key(keyData, QSsl::Rsa, QSsl::Pem, QSsl::PrivateKey);
-        if (key.isNull()) key = QSslKey(keyData, QSsl::Ec, QSsl::Pem, QSsl::PrivateKey);
-
-        if (!chain.isEmpty() && !key.isNull()) {
-            m_SslConfig.setLocalCertificateChain(chain);
-            m_SslConfig.setPrivateKey(key);
-            Logger::info("TLS reloaded from cert_pem/cert_key sources");
-            return true;
-        }
+    QList<QSslCertificate> chain;
+    QSslKey key;
+    QString described;
+    if (pairFromSources(m_CertPem, m_CertKey, m_Domain, &chain, &key, &described)) {
+        m_SslConfig.setLocalCertificateChain(chain);
+        m_SslConfig.setPrivateKey(key);
+        Logger::info("TLS reloaded from cert_pem/cert_key sources: " + described);
+        return true;
     }
 
     // Scan by domain + fallback

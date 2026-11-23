@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <QList>
+#include <QSslCertificate>
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QString>
@@ -76,6 +78,31 @@ public:
     /// rejected here. An empty @p domain matches anything.
     static bool certMatchesDomain(const QSslCertificate& cert, const QString& domain);
 
+    /// A certificate and its key built into the binary (MW_CERT_PEM and
+    /// MW_CERT_KEY at build time); empty when the build has none.
+    struct BuiltInPair
+    {
+        QByteArray certPem;
+        QByteArray keyPem;
+    };
+    static BuiltInPair builtInPair();
+
+    /// The certificate and key that cert_pem (@p certPem) and cert_key
+    /// (@p certKey) name. Each is an environment variable holding PEM or the
+    /// path of a PEM file (a regular file of 1 MiB or less), or a file path;
+    /// the build's pair (@p builtIn) stands in, as a pair, when cert_pem gives no
+    /// certificate, and its key never goes with another certificate. With a certificate from
+    /// a file and no key from @p certKey, the key is looked for beside it, under
+    /// privkey.pem, key.pem or <the certificate's base name>.key. The
+    /// certificate must cover @p domain when one is set, and the key must be
+    /// the certificate's own. False, with a warning that names the sources and
+    /// never their content, when anything is missing or does not match.
+    /// @p described gets "cert=<source>, key=<source>".
+    static bool pairFromSources(const QString& certPem, const QString& certKey,
+                                const QString& domain, QList<QSslCertificate>* chain, QSslKey* key,
+                                QString* described = nullptr,
+                                const BuiltInPair& builtIn = builtInPair());
+
 private:
     QString findCertDir();
     bool loadCertFiles(const QString& certDir);
@@ -86,10 +113,16 @@ private:
     /// (CN or SAN, see certMatchesDomain).
     static bool certFileMatchesDomain(const QString& pemPath, const QString& domain);
     QString scanKeyInDir(const QString& dir) const;
+    /// Every *.pem under @p dir (subfolders included) that holds a private key.
+    QStringList scanKeysInDir(const QString& dir) const;
+    /// The first of privkey.pem, key.pem, <base name>.key beside @p certFile that
+    /// is @p cert's key; empty when none is.
+    static QString keyBesideCert(const QString& certFile, const QSslCertificate& cert,
+                                 QSslKey* key);
     QSslKey loadKeyFromEnv() const;
     QString scanCertInDir(const QString& dir, const QString& domain = QString()) const;
 
-    static QByteArray resolvePemValue(const QString& value);
+    static QByteArray resolvePemValue(const QString& value, QString* filePath = nullptr);
 
     /// Public config (PositiveSSL/LE cert for public-domain clients).
     QSslConfiguration m_SslConfig;
