@@ -29,6 +29,7 @@
 #include "test_framework.h"
 
 #include "common/Logger.h"
+#include "common/PrivilegedPlace.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -95,6 +96,32 @@ bool backdate(const QString& path, int secs)
                                   QFileDevice::FileModificationTime);
     f.close();
     return ok;
+}
+
+/// Every line of `path` that carries `tag`, and whether each one is whole:
+/// "<tag> <n> " followed by the filler and nothing else.
+bool wholeLines(const QString& path, const QString& tag, int expected, const QString& filler)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return false;
+    const QList<QByteArray> lines = f.readAll().split('\n');
+    f.close();
+    const QByteArray t = tag.toUtf8();
+    const QByteArray tail = filler.toUtf8();
+    QList<bool> seen(expected, false);
+    for (const QByteArray& line : lines) {
+        const int at = line.indexOf(t + ' ');
+        if (at < 0) continue;
+        const QByteArray rest = line.mid(at + t.size() + 1);
+        const int space = rest.indexOf(' ');
+        if (space <= 0) return false;
+        bool ok = false;
+        const int n = rest.left(space).toInt(&ok);
+        if (!ok || n < 0 || n >= expected || seen[n]) return false;
+        if (rest.mid(space + 1) != tail) return false;
+        seen[n] = true;
+    }
+    return !seen.contains(false);
 }
 
 /// Logger echoes every INFO to stdout. Filling a log several times over means
@@ -290,6 +317,49 @@ void run_logger_rotation_tests()
     }
     Logger::instance()->failNextForTests(0, 0);
     Logger::instance()->setReopenRetryForTests(-1);
+
+    // ── Several writers on one file ─────────────────────────────────────────
+    // Every write goes to the end of the file, even with several writers: a
+    // server and the one that replaces it, a worker. Two descriptors opened
+    // the way the Logger opens its file, written in turn: every line whole.
+    // As a process with its user's rights, even where the suite runs elevated
+    // (the CI's runner): a privileged one opens only in a place of its own.
+    mw::place::setForTests(QString(), {}, /*privileged=*/false);
+    {
+        const QString filler(120, QLatin1Char('y'));
+        const QString shared = dir.filePath(QStringLiteral("shared.log"));
+        QFile one(shared), two(shared);
+        QString why;
+        CHECK(mw::place::openForAppend(one, &why));
+        CHECK(mw::place::openForAppend(two, &why));
+        for (int i = 0; i < 200; ++i) {
+            one.write(QStringLiteral("one %1 %2\n").arg(i).arg(filler).toUtf8());
+            one.flush();
+            two.write(QStringLiteral("two %1 %2\n").arg(i).arg(filler).toUtf8());
+            two.flush();
+        }
+        one.close();
+        two.close();
+        CHECK(wholeLines(shared, QStringLiteral("one"), 200, filler));
+        CHECK(wholeLines(shared, QStringLiteral("two"), 200, filler));
+
+        // After a rollover the Logger opens its file again: a second writer on
+        // the new file, and still every line whole.
+        const QString rolled = dir.filePath(QStringLiteral("rolled.log"));
+        Logger::instance()->setLogFile(rolled);
+        CHECK(fillUntilRollover(rolled));
+        QFile other(rolled);
+        CHECK(mw::place::openForAppend(other, &why));
+        for (int i = 0; i < 15; ++i) {
+            Logger::info(QStringLiteral("mine %1 %2").arg(i).arg(filler));
+            other.write(QStringLiteral("other %1 %2\n").arg(i).arg(filler).toUtf8());
+            other.flush();
+        }
+        other.close();
+        CHECK(wholeLines(rolled, QStringLiteral("mine"), 15, filler));
+        CHECK(wholeLines(rolled, QStringLiteral("other"), 15, filler));
+    }
+    mw::place::resetForTests();
 
     // Leave the singleton pointing somewhere harmless: QTemporaryDir cannot
     // remove a file this process still holds open.
