@@ -12,7 +12,7 @@
 
 | Option | Effect | `settings.json` |
 |---|---|---|
-| `--port <port>` | HTTP listener port (it redirects to HTTPS, except for a reverse proxy on this machine that reports HTTPS: see `http_port`). The HTTPS port has no option: `https_port` in the settings. Default `80`, `48080` with `--dev`. | `http_port` (the option wins) |
+| `--port <port>` | HTTP listener port (it redirects to HTTPS, except for a reverse proxy on this machine or the local network that reports HTTPS: see `http_port`). The HTTPS port has no option: `https_port` in the settings. Default `80`, `48080` with `--dev`. | `http_port` (the option wins) |
 | `--ws-port <port>` | Base of the WebRTC signaling ports. Default `48001`, `48501` with `--dev`. The control channel and the per-slot worker ports are counted from it. | — |
 | `--log <path>` | Write the log to this file instead of the default log folder. Read before anything else, so the first line lands there. | — |
 | `--config <path>` | Read and write the settings from this file instead of `settings.json` in the data folder. Created if absent. | the whole file |

@@ -34,6 +34,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QDir>
 #include <QDirIterator>
@@ -975,6 +976,24 @@ bool HttpServer::rejectIfAbusive(QTcpSocket* socket)
     return true;
 }
 
+// A proxy that relays plain HTTP without reporting HTTPS is told what to add,
+// within the limits of m_ProxyHints (RequestGuard::ProxyHintLimiter).
+void HttpServer::logProxyHint(const HttpRequest& req)
+{
+    static QElapsedTimer clock;
+    if (!clock.isValid()) clock.start();
+    switch (m_ProxyHints.take(req.clientAddress, clock.elapsed())) {
+    case RequestGuard::ProxyHintLimiter::Verdict::Write:
+        Logger::warning(
+            RequestGuard::proxyHintText(req.clientAddress, req.headers, req.repeatedHeaders));
+        break;
+    case RequestGuard::ProxyHintLimiter::Verdict::Suppressed:
+        Logger::warning(QStringLiteral("[HttpServer] Further proxy hints suppressed for 10 min"));
+        break;
+    case RequestGuard::ProxyHintLimiter::Verdict::Silent: break;
+    }
+}
+
 // --- HTTP redirect ----------------------------------------------------------
 
 void HttpServer::onHttpConnection()
@@ -1144,8 +1163,8 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // that screenshots a first launch reads as an error). The page keeps
     // nothing there and does nothing but the wizard (app.js). A LAN caller
     // that writes "localhost" in Host is sent to HTTPS like everyone else, and
-    // so is a local reverse proxy unless it reports HTTPS for its browser
-    // (exception 3, RequestGuard::proxiedHttpsOnLoopback). A request through the
+    // so is a reverse proxy here or on the LAN unless it reports HTTPS for its
+    // browser (RequestGuard::plainArrival). A request through the
     // rendezvous tunnel never comes this way: ControlTunnel hands it to
     // serveRequest() as Arrival::Tunnel, without a socket.
     //
@@ -1163,25 +1182,26 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     const bool plainSocket = !qobject_cast<QSslSocket*>(socket);
     const QString lanHttpHost = plainSocket ? lanHttpArrival(req) : QString();
     req.lanHttpHost = lanHttpHost;
-    if (plainSocket && lanHttpHost.isEmpty() && m_ActiveHttpsPort > 0) {
+    if (plainSocket && m_ActiveHttpsPort > 0) {
         QString host = req.headers.value("host");
         int portSep = host.lastIndexOf(':');
         QString hostname = (portSep >= 0) ? host.left(portSep) : host;
 
-        bool isLocalClient = peerLocal;
-        bool isPublicDomain = !isLanHost(hostname);
-        const bool loopbackOnly = RequestGuard::loopbackOnly(req.clientAddress, host, req.headers);
-        // A reverse proxy on this machine that took the browser's HTTPS and
-        // relays it here in plain HTTP, whatever name the browser used: sent
-        // to HTTPS, the browser would leave the proxy. Its rights are still
-        // those of a remote browser (evaluate(), forwardedByProxy).
-        const bool proxiedHttps = RequestGuard::proxiedHttpsOnLoopback(
-            req.clientAddress, req.headers, req.repeatedHeaders);
-
-        // Skip redirect behind a TLS-terminating tunnel (localhost client +
-        // public Host header), for this machine on loopback (served as HTTP
-        // directly), or behind a local HTTPS reverse proxy.
-        if (!((isLocalClient && isPublicDomain) || loopbackOnly || proxiedHttps)) {
+        // A listed TV keeps its own path first. Then it is served behind a
+        // TLS-terminating tunnel (localhost client + public Host header), for
+        // this machine on loopback, or behind a reverse proxy here or on the
+        // LAN that took the browser's HTTPS: sent to HTTPS, that browser would
+        // leave the proxy. Rights are evaluate()'s: a proxied request has no
+        // local privilege (forwardedByProxy). The router's address is read on
+        // this thread, the one the allocator writes it on
+        // (setGatewayAddressProvider).
+        const bool tunnelEdge = peerLocal && !isLanHost(hostname);
+        const QString gateway = m_GatewayAddress ? m_GatewayAddress() : QString();
+        if (RequestGuard::plainArrival(!lanHttpHost.isEmpty(), tunnelEdge, req.clientAddress, host,
+                                       req.headers, req.repeatedHeaders,
+                                       gateway) == RequestGuard::PlainArrival::Redirected) {
+            if (RequestGuard::proxyHintWanted(req.clientAddress, req.headers, req.repeatedHeaders))
+                logProxyHint(req);
             QString portPart;
             if (m_ActiveHttpsPort != 443) portPart = QString(":%1").arg(m_ActiveHttpsPort);
 

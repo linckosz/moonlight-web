@@ -33,6 +33,7 @@
 #include "common/Types.h"
 #include "server/ConnectionGuard.h"
 #include "server/CertManager.h"
+#include "server/RequestGuard.h"
 
 class RestRouter;
 class StaticFileHandler;
@@ -108,6 +109,15 @@ public:
     void setLanHttpClientsProvider(std::function<QStringList()> fn)
     {
         m_LanHttpClients = std::move(fn);
+    }
+
+    /// The router's LAN address when UPnP found it, empty otherwise: a proxy
+    /// there is never taken for one of the LAN (RequestGuard::
+    /// proxiedHttpsFromLan). Called on this server's thread, which must be the
+    /// one that writes what it returns. Unset: no exclusion.
+    void setGatewayAddressProvider(std::function<QString()> fn)
+    {
+        m_GatewayAddress = std::move(fn);
     }
 
     /// Whether the TV holding the mw_lan_http token @p token may open the
@@ -366,6 +376,8 @@ private:
     /// Plain HTTP for a listed TV (issue #42): the validated Host when @p req
     /// arrives as one, empty otherwise.
     QString lanHttpArrival(const HttpRequest& req);
+    /// Logs proxyHintText() for @p req within the limits of m_ProxyHints.
+    void logProxyHint(const HttpRequest& req);
     /// This machine's addresses and name, and the list, read again when two
     /// seconds have passed.
     void refreshLanHttpView();
@@ -436,6 +448,10 @@ private:
     std::function<bool(const HttpRequest&, int slot)> m_PlayerSlotAuth;
     /// Plain HTTP for the listed TVs (see setLanHttpClientsProvider).
     std::function<QStringList()> m_LanHttpClients;
+    /// The router's address (setGatewayAddressProvider).
+    std::function<QString()> m_GatewayAddress;
+    /// How often a proxy is told what to add (logProxyHint).
+    RequestGuard::ProxyHintLimiter m_ProxyHints;
     /// And the one host they reach (see setLanHttpHostCheck).
     std::function<bool(const QString& hostId)> m_LanHttpHostCheck;
     std::function<bool(const QString& token, int slot)> m_LanHttpSlotAuth;

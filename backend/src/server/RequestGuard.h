@@ -20,7 +20,9 @@
 #include "common/Types.h"
 
 #include <QByteArray>
+#include <QList>
 #include <QMap>
+#include <QPair>
 #include <QSet>
 #include <QString>
 
@@ -115,6 +117,77 @@ bool loopbackOnly(const QString& peer, const QString& hostHeader,
 /// takes the local privilege away (forwardedByProxy).
 bool proxiedHttpsOnLoopback(const QString& peer, const QMap<QString, QString>& headers,
                             const QSet<QString>& repeatedHeaders);
+
+/// Whether every protocol a proxy reports for its browser is https: each item
+/// of X-Forwarded-Proto, and the proto= of each element of Forwarded. At least
+/// one of the two is present; a Forwarded element without exactly one proto=,
+/// an empty item, a header given more than once (repeatedHeaders, lowercase)
+/// or any other value answers false. No other header counts.
+bool proxySaysHttps(const QMap<QString, QString>& headers, const QSet<QString>& repeatedHeaders);
+
+/// proxiedHttpsOnLoopback() for a reverse proxy elsewhere on the local
+/// network: the socket peer is a private IPv4 (LanHttp::isPrivateIpv4: 10/8,
+/// 172.16/12, 192.168/16, 169.254/16, "::ffff:" taken off; never CGNAT nor
+/// IPv6), is not @p gateway (the router, when known; empty: no exclusion), and
+/// proxySaysHttps() holds. It decides only that the request is served on the
+/// plain port instead of being sent to HTTPS; its rights are a remote
+/// browser's (evaluate(): a LAN peer has no local privilege).
+bool proxiedHttpsFromLan(const QString& peer, const QMap<QString, QString>& headers,
+                         const QSet<QString>& repeatedHeaders, const QString& gateway);
+
+/// Whether a request being sent to HTTPS looks relayed by a proxy on this
+/// machine or the local network that does not report HTTPS: a loopback or
+/// private IPv4 peer, a proxy header (forwardedByProxy(), X-Forwarded-Ssl or
+/// Front-End-Https), and proxySaysHttps() false. Then the server logs what to
+/// add, by header names only.
+bool proxyHintWanted(const QString& peer, const QMap<QString, QString>& headers,
+                     const QSet<QString>& repeatedHeaders);
+
+/// What a request on the plain-HTTP port gets, decided in this order: a TV
+/// the owner listed (@p listedTv, LanHttp) keeps its own path; behind a
+/// TLS-terminating tunnel (@p tunnelEdge: loopback peer, public Host), this
+/// machine on loopback (loopbackOnly()), or a reverse proxy here or on the
+/// LAN that reports HTTPS (proxiedHttpsOnLoopback(), proxiedHttpsFromLan()),
+/// it is served; anything else is sent to HTTPS. Rights are not decided here.
+enum class PlainArrival
+{
+    LanHttp,
+    Served,
+    Redirected,
+};
+PlainArrival plainArrival(bool listedTv, bool tunnelEdge, const QString& peer,
+                          const QString& hostHeader, const QMap<QString, QString>& headers,
+                          const QSet<QString>& repeatedHeaders, const QString& gateway);
+
+/// The log line for proxyHintWanted(): the peer's address and the NAMES of
+/// the proxy headers it carries, never their values, and what to add.
+QString proxyHintText(const QString& peer, const QMap<QString, QString>& headers,
+                      const QSet<QString>& repeatedHeaders);
+
+/// How often that line is written: once per peer per kWindowMs (the
+/// kMaxPeers most recent peers kept), and kGlobalMax lines per kWindowMs for
+/// all peers together, then a single Suppressed, then nothing until the
+/// window ends. The clock is the caller's (milliseconds).
+class ProxyHintLimiter
+{
+public:
+    enum class Verdict
+    {
+        Write,
+        Suppressed,
+        Silent,
+    };
+    static constexpr qint64 kWindowMs = 10 * 60 * 1000;
+    static constexpr int kMaxPeers = 32;
+    static constexpr int kGlobalMax = 20;
+    Verdict take(const QString& peer, qint64 nowMs);
+
+private:
+    QList<QPair<QString, qint64>> m_Peers; // oldest first
+    qint64 m_WindowStart = -1;
+    int m_InWindow = 0;
+    bool m_SuppressedSaid = false;
+};
 
 /// Whether a request body may be accepted. Requires application/json for any
 /// non-empty body, which also forces a CORS preflight on cross-origin writes.

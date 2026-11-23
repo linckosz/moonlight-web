@@ -339,6 +339,168 @@ void run_request_guard_tests()
         CHECK(!d2.adminPrivilege);
     }
 
+    SECTION("RequestGuard — a reverse proxy on the LAN that took the browser's HTTPS");
+
+    {
+        const QSet<QString> none;
+        const QString box = "192.168.1.1";
+        const Headers https = hdr({{"x-forwarded-proto", "https"}});
+        // Served: a private IPv4 peer, every protocol https.
+        CHECK(proxiedHttpsFromLan("192.168.1.20", https, none, box));
+        CHECK(proxiedHttpsFromLan("10.0.0.5", hdr({{"forwarded", "proto=https"}}), none, box));
+        CHECK(proxiedHttpsFromLan("172.20.1.1", hdr({{"forwarded", "for=192.168.1.9;proto=HTTPS"}}),
+                                  none, box));
+        CHECK(proxiedHttpsFromLan("::ffff:192.168.1.20", https, none, box));
+        CHECK(proxiedHttpsFromLan("169.254.3.4", https, none, box));
+        // The router unknown: no exclusion.
+        CHECK(proxiedHttpsFromLan("192.168.1.1", https, none, QString()));
+        // Sent to HTTPS: the router, or a peer that is not of the LAN.
+        CHECK(!proxiedHttpsFromLan("192.168.1.1", https, none, box));
+        CHECK(!proxiedHttpsFromLan("::ffff:192.168.1.1", https, none, box));
+        CHECK(!proxiedHttpsFromLan("100.64.1.1", https, none, box));
+        CHECK(!proxiedHttpsFromLan("100.127.255.254", https, none, box));
+        CHECK(!proxiedHttpsFromLan("8.8.8.8", https, none, box));
+        CHECK(!proxiedHttpsFromLan("172.32.0.1", https, none, box));
+        CHECK(!proxiedHttpsFromLan("fd00::1", https, none, box));
+        CHECK(!proxiedHttpsFromLan("fe80::1", https, none, box));
+        CHECK(!proxiedHttpsFromLan("127.0.0.1", https, none, box));
+        CHECK(!proxiedHttpsFromLan("", https, none, box));
+        // Sent to HTTPS: plain, mixed, repeated or unknown protocols.
+        CHECK(
+            !proxiedHttpsFromLan("192.168.1.20", hdr({{"x-forwarded-proto", "http"}}), none, box));
+        CHECK(!proxiedHttpsFromLan("192.168.1.20", hdr({{"x-forwarded-proto", "https, http"}}),
+                                   none, box));
+        CHECK(!proxiedHttpsFromLan("192.168.1.20", https, QSet<QString>{"x-forwarded-proto"}, box));
+        CHECK(!proxiedHttpsFromLan("192.168.1.20", hdr({{"forwarded", "for=192.168.1.9"}}), none,
+                                   box));
+        CHECK(!proxiedHttpsFromLan(
+            "192.168.1.20", hdr({{"forwarded", "for=\"a,proto=https\";proto=http"}}), none, box));
+        CHECK(!proxiedHttpsFromLan("192.168.1.20", hdr({{"x-forwarded-ssl", "on"}}), none, box));
+        CHECK(!proxiedHttpsFromLan("192.168.1.20", hdr({{"front-end-https", "on"}}), none, box));
+        CHECK(!proxiedHttpsFromLan("192.168.1.20", hdr({{"x-forwarded-scheme", "https"}}), none,
+                                   box));
+        CHECK(!proxiedHttpsFromLan("192.168.1.20", hdr({{"x-forwarded-for", "192.168.1.9"}}), none,
+                                   box));
+
+        // Serving it grants nothing: an admin route from that proxy, with no
+        // session and no PIN, has neither the local privilege nor admin.
+        Request r;
+        r.method = "GET";
+        r.path = "/api/admin/settings";
+        r.headers = hdr({{"host", "192.168.1.40:8080"},
+                         {"x-forwarded-for", "192.168.1.9"},
+                         {"x-forwarded-proto", "https"}});
+        CHECK(proxiedHttpsFromLan("192.168.1.20", r.headers, none, box));
+        Context lan;
+        lan.peerLocal = false;
+        const Decision d = evaluate(r, lan);
+        CHECK(!d.localPrivilege);
+        CHECK(!d.hostMachine);
+        CHECK(!d.adminPrivilege);
+    }
+
+    SECTION("RequestGuard — what a request on the plain-HTTP port gets, in order");
+
+    {
+        const QSet<QString> none;
+        const QString box = "192.168.1.1";
+        const Headers lanProxy = hdr({{"host", "192.168.1.40:8080"},
+                                      {"x-forwarded-for", "192.168.1.9"},
+                                      {"x-forwarded-proto", "https"}});
+        using P = PlainArrival;
+        // A listed TV keeps its own path first, even with a proxy's headers.
+        CHECK(plainArrival(true, false, "192.168.1.20", "192.168.1.40:8080", lanProxy, none, box) ==
+              P::LanHttp);
+        CHECK(plainArrival(true, true, "127.0.0.1", "example.com", lanProxy, none, box) ==
+              P::LanHttp);
+        // Then the four that are served.
+        CHECK(plainArrival(false, true, "127.0.0.1", "stream.example.com", hdr({}), none, box) ==
+              P::Served);
+        CHECK(plainArrival(false, false, "127.0.0.1", "localhost:8080", hdr({}), none, box) ==
+              P::Served);
+        CHECK(plainArrival(false, false, "127.0.0.1", "192.168.1.40:8080", lanProxy, none, box) ==
+              P::Served);
+        CHECK(plainArrival(false, false, "192.168.1.20", "192.168.1.40:8080", lanProxy, none,
+                           box) == P::Served);
+        // Anything else is sent to HTTPS.
+        CHECK(plainArrival(false, false, "192.168.1.20", "192.168.1.40:8080", hdr({}), none, box) ==
+              P::Redirected);
+        CHECK(plainArrival(false, false, "192.168.1.1", "192.168.1.40:8080", lanProxy, none, box) ==
+              P::Redirected);
+        CHECK(plainArrival(false, false, "100.64.1.1", "192.168.1.40:8080", lanProxy, none, box) ==
+              P::Redirected);
+        CHECK(plainArrival(false, false, "192.168.1.20", "localhost:8080", hdr({}), none, box) ==
+              P::Redirected);
+    }
+
+    SECTION("RequestGuard — the line that tells a proxy what to add");
+
+    {
+        const QSet<QString> none;
+        // Wanted: a proxy here or on the LAN that does not report HTTPS.
+        CHECK(proxyHintWanted("127.0.0.1", hdr({{"x-forwarded-for", "192.168.1.9"}}), none));
+        CHECK(proxyHintWanted("192.168.1.20", hdr({{"via", "1.1 proxy"}}), none));
+        CHECK(proxyHintWanted("192.168.1.20", hdr({{"forwarded", "for=192.168.1.9"}}), none));
+        CHECK(proxyHintWanted("192.168.1.20", hdr({{"x-forwarded-ssl", "on"}}), none));
+        CHECK(proxyHintWanted("192.168.1.20", hdr({{"x-forwarded-proto", "https"}}),
+                              QSet<QString>{"x-forwarded-proto"}));
+        // Not wanted: no proxy, one that reports HTTPS, or not ours to help.
+        CHECK(!proxyHintWanted("192.168.1.20", hdr({{"host", "192.168.1.40"}}), none));
+        CHECK(!proxyHintWanted("192.168.1.20", hdr({{"x-forwarded-proto", "https"}}), none));
+        CHECK(!proxyHintWanted("8.8.8.8", hdr({{"x-forwarded-for", "192.168.1.9"}}), none));
+        CHECK(!proxyHintWanted("127.0.0.1", hdr({{"host", "localhost"}}), none));
+
+        // Header names, never their values.
+        const QString text = proxyHintText("192.168.1.20",
+                                           hdr({{"x-forwarded-for", "203.0.113.77"},
+                                                {"via", "1.1 secret-proxy-name"},
+                                                {"x-forwarded-proto", "http-secret-value"}}),
+                                           none);
+        CHECK(text.contains("192.168.1.20"));
+        CHECK(text.contains("x-forwarded-for"));
+        CHECK(text.contains("via"));
+        CHECK(text.contains("X-Forwarded-Proto"));
+        CHECK(!text.contains("203.0.113.77"));
+        CHECK(!text.contains("secret-proxy-name"));
+        CHECK(!text.contains("http-secret-value"));
+        const QString twice = proxyHintText("192.168.1.20", hdr({{"x-forwarded-proto", "https"}}),
+                                            QSet<QString>{"x-forwarded-proto"});
+        CHECK(twice.contains("given more than once"));
+
+        // Once per peer per window, 20 lines per window in all, then a single
+        // "suppressed", then nothing until the window ends.
+        using V = ProxyHintLimiter::Verdict;
+        const qint64 w = ProxyHintLimiter::kWindowMs;
+        ProxyHintLimiter limiter;
+        CHECK(limiter.take("192.168.1.20", 0) == V::Write);
+        CHECK(limiter.take("192.168.1.20", 1000) == V::Silent);
+        CHECK(limiter.take("192.168.1.21", 1000) == V::Write);
+        for (int i = 2; i < ProxyHintLimiter::kGlobalMax; ++i)
+            CHECK(limiter.take(QString("10.0.0.%1").arg(i), 2000) == V::Write);
+        CHECK(limiter.take("10.0.1.1", 3000) == V::Suppressed);
+        CHECK(limiter.take("10.0.1.2", 3000) == V::Silent);
+        CHECK(limiter.take("10.0.1.3", w - 1) == V::Silent);
+        // A new window: the global count starts again; a peer heard in the
+        // last window is heard again once its own window has passed.
+        CHECK(limiter.take("10.0.1.4", w) == V::Write);
+        CHECK(limiter.take("192.168.1.20", w) == V::Write);
+        CHECK(limiter.take("192.168.1.21", w + 999) == V::Silent);
+        CHECK(limiter.take("192.168.1.21", w + 1000) == V::Write);
+
+        // The 32 most recent peers are kept: the oldest is forgotten even
+        // while its own window still runs. One peer opens the global window at
+        // 10 ms, 19 more come just before it ends, then 14 in the next one:
+        // 34 heard, the two oldest forgotten, the second while still recent.
+        ProxyHintLimiter lru;
+        CHECK(lru.take("10.9.9.9", 10) == V::Write);
+        for (int i = 0; i < 19; ++i)
+            CHECK(lru.take(QString("10.1.0.%1").arg(i), w - 1) == V::Write);
+        for (int i = 0; i < 14; ++i)
+            CHECK(lru.take(QString("10.2.0.%1").arg(i), w + 10) == V::Write);
+        CHECK(lru.take("10.1.0.1", w + 20) == V::Silent);
+        CHECK(lru.take("10.1.0.0", w + 20) == V::Write);
+    }
+
     SECTION("First-run wizard link: plain HTTP loopback, no key");
 
     // The port actually listened on; no key in it; served by loopbackOnly.

@@ -16,6 +16,7 @@
  */
 
 #include "RequestGuard.h"
+#include "LanHttp.h"
 
 #include <QHostAddress>
 #include <QStringList>
@@ -252,10 +253,8 @@ bool loopbackOnly(const QString& peer, const QString& hostHeader,
     return !forwardedByProxy(headers);
 }
 
-bool proxiedHttpsOnLoopback(const QString& peer, const QMap<QString, QString>& headers,
-                            const QSet<QString>& repeatedHeaders)
+bool proxySaysHttps(const QMap<QString, QString>& headers, const QSet<QString>& repeatedHeaders)
 {
-    if (!isLoopbackAddress(peer)) return false;
     const QLatin1String xfp("x-forwarded-proto");
     const QLatin1String fwd("forwarded");
     if (!headers.contains(xfp) && !headers.contains(fwd)) return false;
@@ -290,6 +289,113 @@ bool proxiedHttpsOnLoopback(const QString& peer, const QMap<QString, QString>& h
         }
     }
     return true;
+}
+
+bool proxiedHttpsOnLoopback(const QString& peer, const QMap<QString, QString>& headers,
+                            const QSet<QString>& repeatedHeaders)
+{
+    return isLoopbackAddress(peer) && proxySaysHttps(headers, repeatedHeaders);
+}
+
+namespace {
+
+/// The peer as a private IPv4 of the local network (LanHttp::isPrivateIpv4,
+/// "::ffff:" taken off), empty otherwise: loopback, CGNAT, public, IPv6.
+QString lanPeer(const QString& peer)
+{
+    const QString v4 = LanHttp::normalizePeer(peer);
+    return !v4.isEmpty() && LanHttp::isPrivateIpv4(v4) ? v4 : QString();
+}
+
+} // namespace
+
+bool proxiedHttpsFromLan(const QString& peer, const QMap<QString, QString>& headers,
+                         const QSet<QString>& repeatedHeaders, const QString& gateway)
+{
+    const QString v4 = lanPeer(peer);
+    if (v4.isEmpty()) return false;
+    // The router: a port forward with source NAT shows an Internet visitor
+    // under its address, with headers of the visitor's own.
+    const QString box = LanHttp::normalizePeer(gateway);
+    if (!box.isEmpty() && box == v4) return false;
+    return proxySaysHttps(headers, repeatedHeaders);
+}
+
+bool proxyHintWanted(const QString& peer, const QMap<QString, QString>& headers,
+                     const QSet<QString>& repeatedHeaders)
+{
+    if (!isLoopbackAddress(peer) && lanPeer(peer).isEmpty()) return false;
+    const bool proxied = forwardedByProxy(headers) ||
+                         headers.contains(QLatin1String("x-forwarded-ssl")) ||
+                         headers.contains(QLatin1String("front-end-https"));
+    return proxied && !proxySaysHttps(headers, repeatedHeaders);
+}
+
+PlainArrival plainArrival(bool listedTv, bool tunnelEdge, const QString& peer,
+                          const QString& hostHeader, const QMap<QString, QString>& headers,
+                          const QSet<QString>& repeatedHeaders, const QString& gateway)
+{
+    // A TV the owner listed keeps its own path first, whatever it carries.
+    if (listedTv) return PlainArrival::LanHttp;
+    if (tunnelEdge) return PlainArrival::Served;
+    if (loopbackOnly(peer, hostHeader, headers)) return PlainArrival::Served;
+    if (proxiedHttpsOnLoopback(peer, headers, repeatedHeaders)) return PlainArrival::Served;
+    if (proxiedHttpsFromLan(peer, headers, repeatedHeaders, gateway)) return PlainArrival::Served;
+    return PlainArrival::Redirected;
+}
+
+QString proxyHintText(const QString& peer, const QMap<QString, QString>& headers,
+                      const QSet<QString>& repeatedHeaders)
+{
+    // Names only: what a proxy writes in them is not ours to log.
+    static const char* const kNames[] = {
+        "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", "x-forwarded-ssl",
+        "front-end-https", "forwarded",        "x-real-ip",         "via",
+    };
+    QStringList seen;
+    for (const char* name : kNames)
+        if (headers.contains(QLatin1String(name))) seen << QLatin1String(name);
+    QStringList twice;
+    for (const char* name : {"x-forwarded-proto", "forwarded"})
+        if (repeatedHeaders.contains(QLatin1String(name))) twice << QLatin1String(name);
+    QString text = QString("[HttpServer] A proxy at %1 relays plain HTTP").arg(peer);
+    if (!seen.isEmpty()) text += QString(" (%1)").arg(seen.join(QStringLiteral(", ")));
+    if (!twice.isEmpty())
+        text += QString(" with %1 given more than once").arg(twice.join(QStringLiteral(" and ")));
+    else
+        text += QStringLiteral(" without saying the browser is on HTTPS");
+    text += QStringLiteral(": redirected to HTTPS. Have it send X-Forwarded-Proto: https (or "
+                           "Forwarded: proto=https) once, e.g. nginx: proxy_set_header "
+                           "X-Forwarded-Proto $scheme;");
+    return text;
+}
+
+ProxyHintLimiter::Verdict ProxyHintLimiter::take(const QString& peer, qint64 nowMs)
+{
+    // The global window: kGlobalMax lines per kWindowMs, then one line saying
+    // the rest is held back, then silence until the window ends.
+    if (m_WindowStart < 0 || nowMs - m_WindowStart >= kWindowMs) {
+        m_WindowStart = nowMs;
+        m_InWindow = 0;
+        m_SuppressedSaid = false;
+    }
+    // Per peer: once per kWindowMs, the kMaxPeers most recent kept.
+    for (int i = 0; i < m_Peers.size(); ++i) {
+        if (m_Peers[i].first != peer) continue;
+        if (nowMs - m_Peers[i].second < kWindowMs) return Verdict::Silent;
+        m_Peers.removeAt(i);
+        break;
+    }
+    if (m_InWindow >= kGlobalMax) {
+        if (m_SuppressedSaid) return Verdict::Silent;
+        m_SuppressedSaid = true;
+        return Verdict::Suppressed;
+    }
+    ++m_InWindow;
+    m_Peers.append({peer, nowMs});
+    while (m_Peers.size() > kMaxPeers)
+        m_Peers.removeFirst();
+    return Verdict::Write;
 }
 
 bool isBodyContentTypeAllowed(const QString& contentType, qsizetype bodySize)

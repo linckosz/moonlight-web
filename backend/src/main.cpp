@@ -8960,6 +8960,15 @@ int main(int argc, char* argv[])
          [&appSettings]() { return appSettings.hostSigningPublicKey(); }, thisHostsLinks,
          &HttpServer::isLocalRequest});
     server.setLanHttpClientsProvider([&appSettings]() { return appSettings.lanHttpClients(); });
+    // The router's address, for the reverse proxies of the LAN. The allocator
+    // writes it in onDiscovered(), which the UPnP worker queues onto this
+    // (main) thread, and the server reads it here too: no other thread
+    // touches it. Empty until UPnP found the router.
+    {
+        QPointer<RouterPortAllocator> ports(&routerPorts);
+        server.setGatewayAddressProvider(
+            [ports]() { return ports ? ports->gatewayAddress() : QString(); });
+    }
     // And the one host it reaches, by every route that names one: this
     // machine's own, on Windows (LanHttp::hostAllowed, security review 13/11).
     server.setLanHttpHostCheck([&computerManager](const QString& id) {
