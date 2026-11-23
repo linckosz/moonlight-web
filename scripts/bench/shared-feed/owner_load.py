@@ -272,6 +272,38 @@ def overlay(d):
     return keep
 
 
+def parse_feed_height(text):
+    """One --feed-heights entry: None keeps the owner's pick, 0 is Auto (ShareManager::kFeedAuto)."""
+    text = text.strip().lower()
+    if not text:
+        return None
+    return FEED_AUTO if text == "auto" else int(text)
+
+
+FEED_AUTO = 0
+
+
+def feed_height(d):
+    """The guests' picture height the host keeps (0 = Auto). Only that field leaves the page:
+    the status also carries the board's rows."""
+    return d.json_eval("""(async () => {
+        const r = await fetch('/api/share/status', {credentials: 'same-origin'});
+        const j = r.ok ? await r.json() : {};
+        return JSON.stringify({status: r.status, height: j.feed_height});
+    })()""")
+
+
+def pick_feed_height(d, height):
+    """The owner's pick on the board, as its button sends it."""
+    return d.json_eval("""(async () => {
+        const r = await fetch('/api/share/feed', {method: 'POST',
+            credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({height: %d})});
+        const j = r.ok ? await r.json() : {};
+        return JSON.stringify({status: r.status, height: j.feed_height});
+    })()""" % height)
+
+
 def first_number(text):
     m = re.search(r"(-?\d+(?:\.\d+)?)", text or "")
     return float(m.group(1)) if m else None
@@ -388,8 +420,9 @@ def main():
     ap.add_argument("--display-index", default="0", help="remote host: which physical display")
     ap.add_argument("--feed-heights", default="",
                     help="the guests' picture height the owner picks before each window, in "
-                         "order (\"1080,720,1440\"; empty keeps it): a feed with guests on it is "
-                         "resized under them")
+                         "order (\"1080,720,1440\", \"auto\"; empty keeps it): a feed with guests "
+                         "on it is resized under them. The host keeps the owner's pick, so a run "
+                         "that picked one puts Auto back at its end, failed or not")
     ap.add_argument("--no-hevc-slots", default="",
                     help="guests whose Chrome decodes no HEVC, by slot (\"4\"): the shared feed "
                          "goes H.264 when one joins")
@@ -399,7 +432,7 @@ def main():
     a = ap.parse_args()
     schedule = [int(x) for x in a.guests.split(",")]
     no_hevc = {int(x) for x in a.no_hevc_slots.split(",") if x.strip()}
-    feed_heights = [int(x) if x.strip() else 0 for x in a.feed_heights.split(",")]         if a.feed_heights else []
+    feed_heights = [parse_feed_height(x) for x in a.feed_heights.split(",")] if a.feed_heights else []
     remote = bool(a.host_url)
     os.makedirs(OUT, exist_ok=True)
 
@@ -456,6 +489,7 @@ def main():
     d = drive.Driver(run.DEBUG_PORT)
     guests = {}
     shown = False
+    feed_picked = False
     try:
         d.navigate(base)
         d.eval("(async () => { await caches.delete('mw-shell'); for (const r of await "
@@ -484,16 +518,19 @@ def main():
 
         slots = [2, 3, 4]
         for w_index, want in enumerate(schedule):
-            height = feed_heights[w_index] if w_index < len(feed_heights) else 0
-            if height:
-                # The owner's pick on the board, as its button sends it.
-                got = d.json_eval("""(async () => {
-                    const r = await fetch('/api/share/feed', {method: 'POST',
-                        credentials: 'same-origin', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({height: %d})});
-                    return JSON.stringify(Object.assign({status: r.status}, await r.json()));
-                })()""" % height)
-                print("  guests' picture -> %dp (%s)" % (height, got.get("status")), flush=True)
+            height = feed_heights[w_index] if w_index < len(feed_heights) else None
+            if height is not None:
+                if not feed_picked:
+                    was = feed_height(d)
+                    print("  guests' picture before the run's pick: %s (%s)"
+                          % (was.get("height"), was.get("status")), flush=True)
+                # Set before the POST: a pick the host took but whose answer was lost still
+                # needs Auto put back.
+                feed_picked = True
+                got = pick_feed_height(d, height)
+                print("  guests' picture -> %s (%s)" % ("Auto" if height == FEED_AUTO
+                                                        else "%dp" % height, got.get("status")),
+                      flush=True)
             # Guests arrive and leave in slot order: 1 = slot 2, 3 = slots 2-4.
             for slot in slots[want:]:
                 if slot in guests:
@@ -527,7 +564,7 @@ def main():
                 time.sleep(a.secs)
             owner_stats = d.json_eval("JSON.stringify(window.__mwS0.take())")
             win = {
-                "guests": want, "at": t0, "feedHeight": height or None,
+                "guests": want, "at": t0, "feedHeight": height,
                 "owner": summarize(owner_stats),
                 "ownerOverlay": overlay(d),
                 "guestStages": {slot: summarize(g.take()) for slot, g in guests.items()},
@@ -545,6 +582,20 @@ def main():
     finally:
         for g in list(guests.values()):
             warnings += g.leave(d)
+        # The host keeps the owner's pick on disk (share.json): a run's 720 would
+        # otherwise size every later guest (22/11: Auto lost since the run before).
+        # Before the logout, which takes the owner's right to change it.
+        if feed_picked:
+            try:
+                back = pick_feed_height(d, FEED_AUTO)
+                now = feed_height(d)
+                print("  guests' picture put back to Auto: %s (%s), now %s"
+                      % (back.get("height"), back.get("status"), now.get("height")), flush=True)
+                if now.get("height") != FEED_AUTO:
+                    raise RuntimeError("the host reads %r" % now.get("height"))
+            except Exception as e:
+                warnings.append("the guests' picture could not be put back to Auto (%s): pick "
+                                "Auto on the share board" % e)
         # The owner's session ends with the run, as the page ends it (the host
         # revokes it): the PIN pairing of this run would otherwise stay in the
         # host's list of sessions. After the guests, whose slots it closes.
