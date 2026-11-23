@@ -57,7 +57,8 @@ QStringList relaunchArguments(const std::function<bool(const QString& name)>& is
         const QString name = QLatin1String(flag);
         if (isSet(name)) out << QStringLiteral("--") + name;
     }
-    for (const char* option : {"port", "ws-port", "log", "config"}) {
+    // "port" also answers for --http-port (one option, two names): relayed as --port.
+    for (const char* option : {"port", "https-port", "ws-port", "log", "config"}) {
         const QString name = QLatin1String(option);
         if (isSet(name)) out << QStringLiteral("--") + name << value(name);
     }

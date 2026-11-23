@@ -2200,8 +2200,12 @@ int main(int argc, char* argv[])
     parser.addHelpOption();
     parser.addVersionOption();
 
-    QCommandLineOption portOption("port", "HTTP server port", "port", "80");
-    parser.addOption(portOption);
+    // --port is the older name of --http-port, kept for existing scripts and units.
+    QCommandLineOption httpPortOption(QStringList{"http-port", "port"},
+                                      "HTTP server port (also --port)", "port");
+    parser.addOption(httpPortOption);
+    QCommandLineOption httpsPortOption("https-port", "HTTPS server port", "port");
+    parser.addOption(httpsPortOption);
 
     QCommandLineOption logOption("log", "Log file path", "path");
     parser.addOption(logOption);
@@ -2638,8 +2642,29 @@ int main(int argc, char* argv[])
     }
 
     // Read HTTP/HTTPS port preferences from persisted settings.
-    // CLI --port overrides the persisted HTTP port when explicitly provided.
+    // --http-port (or --port) and --https-port override them when given.
+    // A value that is not a port from 1 to 65535 stops here, before anything runs.
+    const auto cliPort = [&parser](const QCommandLineOption& o, const char* name,
+                                   quint16& out) -> bool {
+        if (!parser.isSet(o)) return true;
+        bool ok = false;
+        const uint v = parser.value(o).toUInt(&ok);
+        if (!ok || v == 0 || v > 65535) {
+            std::fprintf(stderr, "--%s: not a port (1-65535): %s\n", name,
+                         qPrintable(parser.value(o)));
+            return false;
+        }
+        out = static_cast<quint16>(v);
+        return true;
+    };
+    quint16 cliHttpPort = 0, cliHttpsPort = 0;
+    if (!cliPort(httpPortOption, "http-port", cliHttpPort)) return 2;
+    if (!cliPort(httpsPortOption, "https-port", cliHttpsPort)) return 2;
     AppSettings appSettings;
+    // The operator commands below talk to the running instance on this port.
+    const auto targetHttpsPort = [&]() -> quint16 {
+        return cliHttpsPort ? cliHttpsPort : appSettings.httpsPort(mw::edition::defaultHttpsPort());
+    };
 
     // ── Headless operator commands ───────────────────────────────────────────
     // Talk to the instance that is already running and exit. Two orderings
@@ -2648,27 +2673,20 @@ int main(int argc, char* argv[])
     // nobody can see); and before seedDocumentedDefaults(), so querying the
     // service as a different user than it runs as does not leave a stray
     // settings.json behind in that user's home.
-    if (parser.isSet(statusOption))
-        return runStatusCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()));
-    if (parser.isSet(newPinOption))
-        return runNewPinCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()));
-    if (parser.isSet(setAdminPasswordOption))
-        return runSetAdminPasswordCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()));
+    if (parser.isSet(statusOption)) return runStatusCommand(targetHttpsPort());
+    if (parser.isSet(newPinOption)) return runNewPinCommand(targetHttpsPort());
+    if (parser.isSet(setAdminPasswordOption)) return runSetAdminPasswordCommand(targetHttpsPort());
     if (parser.isSet(clearAdminPasswordOption))
-        return runClearAdminPasswordCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
-                                            parser.isSet(yesOption));
+        return runClearAdminPasswordCommand(targetHttpsPort(), parser.isSet(yesOption));
     if (parser.isSet(enableInternetOption))
-        return runEnableInternetCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
-                                        parser.isSet(yesOption));
+        return runEnableInternetCommand(targetHttpsPort(), parser.isSet(yesOption));
     if (parser.isSet(openLinkOption) || parser.isSet(printLinkOption))
-        return runOwnerLinkCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
-                                   parser.isSet(printLinkOption));
+        return runOwnerLinkCommand(targetHttpsPort(), parser.isSet(printLinkOption));
     if (parser.isSet(waitLinkOption)) return runWaitLinkCommand();
     if (parser.isSet(localRequestOption))
         return runLocalRequestCommand(parser.value(localRequestOption));
     if (parser.isSet(viewerMicOption))
-        return runViewerMicCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
-                                   parser.value(viewerMicOption));
+        return runViewerMicCommand(targetHttpsPort(), parser.value(viewerMicOption));
     if (parser.isSet(maxFrameRateOption) || parser.isSet(maxBitrateOption) ||
         parser.isSet(maxResolutionOption)) {
         // Not given: nothing to change; given empty: a bad value.
@@ -2676,9 +2694,8 @@ int main(int argc, char* argv[])
             if (!parser.isSet(o)) return std::nullopt;
             return parser.value(o);
         };
-        return runStreamLimitsCommand(appSettings.httpsPort(mw::edition::defaultHttpsPort()),
-                                      given(maxFrameRateOption), given(maxBitrateOption),
-                                      given(maxResolutionOption));
+        return runStreamLimitsCommand(targetHttpsPort(), given(maxFrameRateOption),
+                                      given(maxBitrateOption), given(maxResolutionOption));
     }
 
     appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
@@ -2693,7 +2710,7 @@ int main(int argc, char* argv[])
                                              : "Debug mode on (admin page)");
 
     quint16 httpPort = appSettings.httpPort(devMode ? kDevHttpPort : 80);
-    if (parser.isSet("port")) httpPort = parser.value("port").toUShort();
+    if (cliHttpPort) httpPort = cliHttpPort;
 
     // ── The server this one replaces (a restart) ─────────────────────────────
     // Before the lock and the ports, which it still holds while it exits.
@@ -2780,6 +2797,7 @@ int main(int argc, char* argv[])
 
     // Read remaining persistent settings
     quint16 httpsPort = appSettings.httpsPort(devMode ? kDevHttpsPort : 443);
+    if (cliHttpsPort) httpsPort = cliHttpsPort;
     VideoCodec preferredCodec = appSettings.videoCodec();
     bool upnpEnabled = appSettings.upnpEnabled();
     QString stunServer =

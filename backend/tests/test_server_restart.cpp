@@ -55,6 +55,8 @@ void run_server_restart_tests()
                                                              {"log", "C:/x/a.log"}}) ==
               (QStringList{"--port", "18080", "--ws-port", "18001", "--log", "C:/x/a.log",
                            "--config", "C:/x/settings.json"}));
+        CHECK(argsFor({"port", "https-port"}, {{"port", "18080"}, {"https-port", "18443"}}) ==
+              (QStringList{"--port", "18080", "--https-port", "18443"}));
         // One-off gestures and helpers' verbs are never repeated, whatever
         // they carry.
         const QSet<QString> gestures{"print-link",

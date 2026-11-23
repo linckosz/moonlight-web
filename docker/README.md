@@ -322,7 +322,7 @@ Everything else is configured from the admin page, or by editing
 Anything after the image name is passed straight to the binary:
 
 ```sh
-docker run … ghcr.io/linckosz/moonlight-web:latest --port 8080
+docker run … ghcr.io/linckosz/moonlight-web:latest --http-port 8080
 ```
 
 ---
