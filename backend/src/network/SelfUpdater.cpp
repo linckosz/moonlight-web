@@ -201,9 +201,9 @@ SelfUpdater::SelfUpdater(UpdateChecker* checker, QObject* parent)
     // Same reasoning for the transient task the service path registers: it can
     // only be dropped once the update it was running is over. Detached — a
     // startup must not wait on schtasks.
-    QProcess::startDetached(QStringLiteral("schtasks.exe"),
-                            {QStringLiteral("/Delete"), QStringLiteral("/TN"), serviceTaskName(),
-                             QStringLiteral("/F")});
+    mw::startDetached(QStringLiteral("schtasks.exe"),
+                      {QStringLiteral("/Delete"), QStringLiteral("/TN"), serviceTaskName(),
+                       QStringLiteral("/F")});
 #endif
 }
 

@@ -17,6 +17,8 @@
 
 #include "HostUploadCap.h"
 
+#include "common/DetachedProcess.h"
+
 #include <QByteArray>
 #include <QCoreApplication>
 #include <QDebug>
@@ -489,7 +491,7 @@ void Cap::stop()
 #ifdef _WIN32
     // Detached: it finishes after this worker has gone.
     const unsigned long pid = GetCurrentProcessId();
-    if (QProcess::startDetached(powershell(), argumentsFor(offScript(pid))))
+    if (mw::startDetached(powershell(), argumentsFor(offScript(pid))))
         qInfo().noquote() << "[HostCap] removing the cap (a detached PowerShell, twice 5 s apart)";
     else
         qWarning().noquote() << QStringLiteral("[HostCap] could not start the removal: the "

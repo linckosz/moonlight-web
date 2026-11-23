@@ -24,26 +24,35 @@
 
 namespace mw {
 
-/// Ask a child process to start without our open descriptors.
+/// Ask a child process to start without our open descriptors or handles.
 ///
-/// On Unix a child inherits every descriptor not marked close-on-exec, and
-/// the network libraries open most of their sockets without that mark. A
-/// child holding one keeps its port bound after we close it: the update's
-/// pkexec, waiting on a polkit prompt nobody was at the host to answer, held
-/// the tunnel's UDP 3481 for as long as it waited, and every browser that
-/// came back through the internet was refused (UM790Pro, 18/10/2026). A
-/// browser started by xdg-open, a game, or our own relaunched server would
-/// hold them for as long as it runs. Qt 6.6 and later close them for us.
+/// A child inherits what the parent left inheritable: on Unix every
+/// descriptor not marked close-on-exec, on Windows every inheritable handle
+/// when the process is created with inheritance on, which QProcess does. The
+/// network libraries open most of their sockets that way. A child holding one
+/// keeps its port bound after we close it, for as long as the child runs: an
+/// installer's prompt nobody answers, a browser, a game, or our own relaunched
+/// server, which would hold the sockets of the server it replaces.
+///
+/// On Unix Qt 6.6 and later close the descriptors for us. On Windows the
+/// handles are not passed at all: none of our detached children has a
+/// redirected standard channel, which is the only thing inheritance is
+/// needed for here.
 inline void closeInheritedDescriptors(QProcess& process)
 {
 #if defined(Q_OS_UNIX) && QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     process.setUnixProcessParameters(QProcess::UnixProcessFlag::CloseFileDescriptors);
+#elif defined(Q_OS_WIN)
+    process.setCreateProcessArgumentsModifier(
+        [](QProcess::CreateProcessArguments* arguments) { arguments->inheritHandles = false; });
 #else
     Q_UNUSED(process);
 #endif
 }
 
-/// QProcess::startDetached, without our open descriptors (see above).
+/// QProcess::startDetached, without our open descriptors (see above). No
+/// standard channel is redirected: with the handles kept back on Windows, a
+/// redirected channel would not reach the child.
 inline bool startDetached(const QString& program, const QStringList& arguments,
                           qint64* pid = nullptr)
 {

@@ -131,6 +131,7 @@ add_executable(run_tests
     test_keyboard_layout.cpp
     test_native_capabilities_json.cpp
     test_edition.cpp
+    test_detached_process.cpp
     test_autostart_entry.cpp
     test_launch_env.cpp
     test_kms_helper_protocol.cpp
