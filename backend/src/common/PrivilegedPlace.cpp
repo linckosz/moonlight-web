@@ -1253,6 +1253,27 @@ bool isWritablePlace(const QString& dir)
 #endif
 }
 
+namespace {
+
+// The file opened by its descriptor, which it then owns. The descriptor may
+// only append: every write goes to the end of the file, whoever else writes
+// to it at the same time.
+bool openAppendDescriptor(QFile& file, int fd, QString* why)
+{
+    if (file.open(fd, QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text,
+                  QFileDevice::AutoCloseHandle))
+        return true;
+#ifdef Q_OS_WIN
+    _close(fd);
+#else
+    ::close(fd);
+#endif
+    if (why) *why = file.errorString();
+    return false;
+}
+
+} // namespace
+
 bool openForAppend(QFile& file, QString* why)
 {
     auto refuse = [why](const QString& reason) {
@@ -1260,8 +1281,33 @@ bool openForAppend(QFile& file, QString* why)
         return false;
     };
     if (!isPrivileged()) {
+#ifdef Q_OS_WIN
+        // Every write goes to the end of the file, even with several writers
+        // (a server and the one that replaces it, a worker): the handle may
+        // append and nothing else, so the system places each write at the end.
+        // No security attributes: the handle is not inherited by a child.
+        // The file is opened as QFile opens it, with the same sharing, and
+        // the long-path prefix past MAX_PATH as QFile adds it.
+        QString native = QDir::toNativeSeparators(QFileInfo(file.fileName()).absoluteFilePath());
+        if (native.size() >= MAX_PATH && !native.startsWith(QLatin1String("\\\\")))
+            native.prepend(QLatin1String("\\\\?\\"));
+        const HANDLE h = CreateFileW(reinterpret_cast<LPCWSTR>(native.utf16()),
+                                     FILE_APPEND_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                                     FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                                     FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return refuse(lastError());
+        const int fd =
+            _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_WRONLY | _O_APPEND | _O_BINARY);
+        if (fd == -1) {
+            CloseHandle(h);
+            return refuse(QStringLiteral("the C runtime refused its handle"));
+        }
+        return openAppendDescriptor(file, fd, why);
+#else
+        // O_APPEND: every write goes to the end of the file.
         if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) return true;
         return refuse(file.errorString());
+#endif
     }
 
     const QString path = QDir::cleanPath(QFileInfo(file.fileName()).absoluteFilePath());
@@ -1306,16 +1352,7 @@ bool openForAppend(QFile& file, QString* why)
         return refuse(QStringLiteral("it is not a regular file of this account's with one link"));
     }
 #endif
-    if (!file.open(fd, QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text,
-                   QFileDevice::AutoCloseHandle)) {
-#ifdef Q_OS_WIN
-        _close(fd);
-#else
-        ::close(fd);
-#endif
-        return refuse(file.errorString());
-    }
-    return true;
+    return openAppendDescriptor(file, fd, why);
 }
 
 SharedDir::SharedDir(const QString& dir, Owner owner, bool make)
