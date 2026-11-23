@@ -113,7 +113,9 @@ HttpRequest parse(const QByteArray& raw)
             QString key = lines[i].left(colon).trimmed();
             QString value = lines[i].mid(colon + 1).trimmed();
             if (!isHeaderLine(key, value)) req.malformed = true;
-            req.headers[key.toLower()] = value;
+            const QString name = key.toLower();
+            if (req.headers.contains(name)) req.repeatedHeaders.insert(name);
+            req.headers[name] = value;
         }
     }
 

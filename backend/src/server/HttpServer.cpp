@@ -1143,8 +1143,9 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
     // Ubuntu's snap Firefox, render as a blank page; and which an app catalogue
     // that screenshots a first launch reads as an error). The page keeps
     // nothing there and does nothing but the wizard (app.js). A LAN caller
-    // that writes "localhost" in Host, or a local reverse proxy relaying the
-    // LAN, is sent to HTTPS like everyone else. A request through the
+    // that writes "localhost" in Host is sent to HTTPS like everyone else, and
+    // so is a local reverse proxy unless it reports HTTPS for its browser
+    // (exception 3, RequestGuard::proxiedHttpsOnLoopback). A request through the
     // rendezvous tunnel never comes this way: ControlTunnel hands it to
     // serveRequest() as Arrival::Tunnel, without a socket.
     //
@@ -1170,11 +1171,17 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
         bool isLocalClient = peerLocal;
         bool isPublicDomain = !isLanHost(hostname);
         const bool loopbackOnly = RequestGuard::loopbackOnly(req.clientAddress, host, req.headers);
+        // A reverse proxy on this machine that took the browser's HTTPS and
+        // relays it here in plain HTTP, whatever name the browser used: sent
+        // to HTTPS, the browser would leave the proxy. Its rights are still
+        // those of a remote browser (evaluate(), forwardedByProxy).
+        const bool proxiedHttps = RequestGuard::proxiedHttpsOnLoopback(
+            req.clientAddress, req.headers, req.repeatedHeaders);
 
         // Skip redirect behind a TLS-terminating tunnel (localhost client +
-        // public Host header) or for this machine on loopback (served as HTTP
-        // directly).
-        if (!((isLocalClient && isPublicDomain) || loopbackOnly)) {
+        // public Host header), for this machine on loopback (served as HTTP
+        // directly), or behind a local HTTPS reverse proxy.
+        if (!((isLocalClient && isPublicDomain) || loopbackOnly || proxiedHttps)) {
             QString portPart;
             if (m_ActiveHttpsPort != 443) portPart = QString(":%1").arg(m_ActiveHttpsPort);
 

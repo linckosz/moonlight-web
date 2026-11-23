@@ -257,6 +257,88 @@ void run_request_guard_tests()
         CHECK(!evaluate(r, tunnel).hostMachine);
     }
 
+    SECTION("RequestGuard — a local reverse proxy that took the browser's HTTPS");
+
+    {
+        const QSet<QString> none;
+        // Served on the plain port: the proxy reports HTTPS for every hop.
+        CHECK(proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-proto", "https"}}), none));
+        CHECK(proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-proto", "HTTPS"}}), none));
+        CHECK(proxiedHttpsOnLoopback("::1", hdr({{"forwarded", "proto=https"}}), none));
+        CHECK(proxiedHttpsOnLoopback("::ffff:127.0.0.1",
+                                     hdr({{"forwarded", "for=192.168.1.9;proto=HTTPS"}}), none));
+        CHECK(proxiedHttpsOnLoopback(
+            "127.0.0.1",
+            hdr({{"forwarded", "for=192.168.1.9;proto=\"https\", for=10.0.0.2;proto=https"}}),
+            none));
+        // A proxy on this machine that keeps the browser's LAN name in Host,
+        // with the browser on HTTPS at the proxy: served, not sent away.
+        CHECK(proxiedHttpsOnLoopback("127.0.0.1",
+                                     hdr({{"host", "192.168.1.40:8080"},
+                                          {"x-forwarded-for", "192.168.1.9"},
+                                          {"x-forwarded-proto", "https"}}),
+                                     none));
+        // Sent to HTTPS: plain HTTP at the proxy, mixed, or unknown.
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-proto", "http"}}), none));
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-proto", "https, http"}}),
+                                      none));
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-proto", "https,"}}), none));
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-proto", ""}}), none));
+        CHECK(!proxiedHttpsOnLoopback(
+            "127.0.0.1", hdr({{"forwarded", "for=1.2.3.4;proto=https, for=5.6.7.8;proto=http"}}),
+            none));
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"forwarded", "for=192.168.1.9"}}), none));
+        // A comma inside quotes splits the element: its half without proto=
+        // is a no, whatever the quotes held.
+        CHECK(!proxiedHttpsOnLoopback(
+            "127.0.0.1", hdr({{"forwarded", "for=\"a,proto=https\";proto=http"}}), none));
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"forwarded", "proto=https;proto=https"}}),
+                                      none));
+        CHECK(!proxiedHttpsOnLoopback(
+            "127.0.0.1", hdr({{"x-forwarded-proto", "https"}, {"forwarded", "proto=http"}}), none));
+        // The peer must be this machine on loopback, not merely local.
+        CHECK(!proxiedHttpsOnLoopback("192.168.1.9", hdr({{"x-forwarded-proto", "https"}}), none));
+        CHECK(!proxiedHttpsOnLoopback("::ffff:192.168.1.9", hdr({{"x-forwarded-proto", "https"}}),
+                                      none));
+        CHECK(!proxiedHttpsOnLoopback("", hdr({{"x-forwarded-proto", "https"}}), none));
+        // No protocol reported at all: the wizard's bare loopback is
+        // loopbackOnly's, and a proxy that says nothing is sent to HTTPS.
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({}), none));
+        CHECK(
+            !proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-for", "192.168.1.9"}}), none));
+        // A header given twice: its other values are unknown.
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"x-forwarded-proto", "https"}}),
+                                      QSet<QString>{"x-forwarded-proto"}));
+        CHECK(!proxiedHttpsOnLoopback("127.0.0.1", hdr({{"forwarded", "proto=https"}}),
+                                      QSet<QString>{"forwarded"}));
+
+        // Serving it grants nothing: an admin route from that proxy, with no
+        // session and no PIN, has neither the local privilege nor admin.
+        Request r;
+        r.method = "GET";
+        r.path = "/api/admin/settings";
+        r.headers = hdr({{"host", "192.168.1.40:8080"},
+                         {"x-forwarded-for", "192.168.1.9"},
+                         {"x-forwarded-proto", "https"}});
+        CHECK(proxiedHttpsOnLoopback("127.0.0.1", r.headers, none));
+        Context c;
+        c.peerLocal = true;
+        const Decision d = evaluate(r, c);
+        CHECK(!d.localPrivilege);
+        CHECK(!d.hostMachine);
+        CHECK(!d.adminPrivilege);
+        // The same under a loopback Host, nginx's default.
+        r.headers = hdr({{"host", "127.0.0.1:8080"},
+                         {"x-forwarded-for", "192.168.1.9"},
+                         {"x-forwarded-proto", "https"}});
+        CHECK(proxiedHttpsOnLoopback("127.0.0.1", r.headers, none));
+        CHECK(!loopbackOnly("127.0.0.1", r.headers.value("host"), r.headers));
+        const Decision d2 = evaluate(r, c);
+        CHECK(!d2.localPrivilege);
+        CHECK(!d2.hostMachine);
+        CHECK(!d2.adminPrivilege);
+    }
+
     SECTION("First-run wizard link: plain HTTP loopback, no key");
 
     // The port actually listened on; no key in it; served by loopbackOnly.

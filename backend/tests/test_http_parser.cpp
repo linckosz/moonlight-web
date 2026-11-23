@@ -52,6 +52,17 @@ void run_http_parser_tests()
         CHECK_EQ(r.queryParams.value("s"), QString());
     }
 
+    // A header given on two lines, whatever its case, is noted; headers keeps
+    // the last value.
+    {
+        HttpRequest r = HttpParser::parse(raw("GET / HTTP/1.1\r\nHost: a\r\n"
+                                              "X-Forwarded-Proto: http\r\n"
+                                              "x-forwarded-proto: https\r\n\r\n"));
+        CHECK(r.repeatedHeaders.contains("x-forwarded-proto"));
+        CHECK(!r.repeatedHeaders.contains("host"));
+        CHECK_EQ(r.headers.value("x-forwarded-proto"), QString("https"));
+    }
+
     // POST body after the blank line is preserved verbatim.
     {
         HttpRequest r = HttpParser::parse(

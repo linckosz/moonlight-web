@@ -35,6 +35,9 @@ struct HttpRequest
     // queryParams keeps the last of them. Read where a repeated key must count
     // as no key at all (an icon's names, HttpServer::personaliseForAppIcon).
     QSet<QString> repeatedQueryKeys;
+    // The header names (lowercase) given on more than one line: headers keeps
+    // the last of them (RequestGuard::proxiedHttpsOnLoopback).
+    QSet<QString> repeatedHeaders;
     QMap<QString, QString> pathParams;
     QByteArray body;
     QString clientAddress;      // Populated by HttpServer from socket peer

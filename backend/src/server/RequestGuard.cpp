@@ -252,6 +252,46 @@ bool loopbackOnly(const QString& peer, const QString& hostHeader,
     return !forwardedByProxy(headers);
 }
 
+bool proxiedHttpsOnLoopback(const QString& peer, const QMap<QString, QString>& headers,
+                            const QSet<QString>& repeatedHeaders)
+{
+    if (!isLoopbackAddress(peer)) return false;
+    const QLatin1String xfp("x-forwarded-proto");
+    const QLatin1String fwd("forwarded");
+    if (!headers.contains(xfp) && !headers.contains(fwd)) return false;
+    // A header given twice keeps only its last line in the map: its other
+    // values are unknown, so it counts as a no.
+    if (repeatedHeaders.contains(xfp) || repeatedHeaders.contains(fwd)) return false;
+    const auto isHttps = [](QString v) {
+        v = v.trimmed();
+        if (v.size() >= 2 && v.startsWith(QLatin1Char('"')) && v.endsWith(QLatin1Char('"')))
+            v = v.mid(1, v.size() - 2);
+        return v.compare(QLatin1String("https"), Qt::CaseInsensitive) == 0;
+    };
+    if (headers.contains(xfp)) {
+        for (const QString& item : headers.value(xfp).split(QLatin1Char(',')))
+            if (!isHttps(item)) return false;
+    }
+    if (headers.contains(fwd)) {
+        // Forwarded (RFC 7239): elements split by ',', pairs by ';'. Every
+        // element must carry proto=https.
+        for (const QString& element : headers.value(fwd).split(QLatin1Char(','))) {
+            int protos = 0;
+            for (const QString& pair : element.split(QLatin1Char(';'))) {
+                const int eq = pair.indexOf(QLatin1Char('='));
+                if (eq <= 0) continue;
+                if (pair.left(eq).trimmed().compare(QLatin1String("proto"), Qt::CaseInsensitive) !=
+                    0)
+                    continue;
+                if (!isHttps(pair.mid(eq + 1))) return false;
+                ++protos;
+            }
+            if (protos != 1) return false;
+        }
+    }
+    return true;
+}
+
 bool isBodyContentTypeAllowed(const QString& contentType, qsizetype bodySize)
 {
     if (bodySize <= 0) return true; // nothing to parse
