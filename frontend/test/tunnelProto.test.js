@@ -109,10 +109,15 @@ describe('protocol revision', () => {
             pending.catch(() => {});
             await vi.waitFor(() => expect(FakeWebSocket.last).not.toBeNull());
 
-            FakeWebSocket.last.frame(frame);
+            const ws = FakeWebSocket.last;
+            ws.frame(frame);
             expect(t.hostProto).toBe(want);
-            // ready is answered with the hello, whatever the revision.
-            expect(FakeWebSocket.last.sent.map((s) => JSON.parse(s).d.type)).toEqual(['hello']);
+            // ready is answered with the hello, whatever the revision, once the
+            // STUN probe of the network has answered (null here: no WebRTC).
+            await vi.waitFor(() =>
+                expect(ws.sent.map((s) => JSON.parse(s).d.type)).toEqual(['hello']),
+            );
+            expect('needs443' in JSON.parse(ws.sent[0]).d).toBe(false);
             FakeWebSocket.last = null;
         }
     });
