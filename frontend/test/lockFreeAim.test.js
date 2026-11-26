@@ -13,7 +13,7 @@ import { StreamView } from '../js/ui/StreamView.js';
  * drawing now starts where the host's pointer was put and follows the same
  * motion the host is sent.
  */
-function view() {
+function view({ final = true } = {}) {
     const inputEl = document.createElement('div');
     const sent = [];
     const v = Object.create(StreamView.prototype);
@@ -25,7 +25,7 @@ function view() {
         pointerLocked: false,
         _pointerLockRefused: false,
         _lockFreeLook: true,
-        _lockRefusalFinal: true,
+        _lockRefusalFinal: final,
         _mouseSensitivity: 1,
         _mouseCarryX: 0,
         _mouseCarryY: 0,
@@ -47,19 +47,30 @@ function view() {
 }
 
 describe('lock-free look on a tablet', () => {
-    it('starts the drawn pointer where the click put the host one', () => {
+    it('starts the drawn pointer where the host says its own is', () => {
         const { v, sent } = view();
+        v._clientCursorHostSaid({ x: 960, y: 540, visible: true });
+        expect(v._clientCursorPos).toEqual({ x: 960, y: 540 });
+        // The capture's click moves neither the host's pointer nor the drawing.
+        v._onGamingClick({ preventDefault() {}, clientX: 100, clientY: 100 });
+        expect(sent).toEqual([]);
+        expect(v._clientCursorPos).toEqual({ x: 960, y: 540 });
+    });
+
+    it('starts it where the click put the host one where the lock may come', () => {
+        const { v, sent } = view({ final: false });
         v._onGamingClick({ preventDefault() {}, clientX: 480, clientY: 270 });
         expect(sent[0]).toMatchObject({ type: 'mousemove', x: 480, y: 270 });
         // Half of a 960×540 picture is the middle of a 1920×1080 frame.
+        expect(v._clientCursorPos).toEqual({ x: 960, y: 540 });
+        // Not refused yet: the host's word came only once.
+        v._clientCursorHostSaid({ x: 10, y: 10, visible: true });
         expect(v._clientCursorPos).toEqual({ x: 960, y: 540 });
     });
 
     it('moves the drawn pointer by the motion the host is sent', () => {
         const { v, sent } = view();
-        v._onGamingClick({ preventDefault() {}, clientX: 480, clientY: 270 });
-        v._pointerLockRefused = true;
-        sent.length = 0;
+        v._clientCursorHostSaid({ x: 960, y: 540, visible: true });
         v._onGamingMouseMove({ movementX: 30, movementY: -20, clientX: 0, clientY: 0 });
         expect(sent).toEqual([{ type: 'mousemove', dx: 30, dy: -20 }]);
         expect(v._clientCursorPos).toEqual({ x: 990, y: 520 });
@@ -67,20 +78,15 @@ describe('lock-free look on a tablet', () => {
 
     it('keeps the drawn pointer inside the picture', () => {
         const { v } = view();
-        v._onGamingClick({ preventDefault() {}, clientX: 950, clientY: 10 });
-        v._pointerLockRefused = true;
+        v._clientCursorHostSaid({ x: 1900, y: 20, visible: true });
         v._onGamingMouseMove({ movementX: 500, movementY: -500, clientX: 0, clientY: 0 });
         expect(v._clientCursorPos).toEqual({ x: 1919, y: 0 });
     });
 
     it("puts the drawn pointer back on the host's word at every report", () => {
         const { v } = view();
-        v._onGamingClick({ preventDefault() {}, clientX: 480, clientY: 270 });
-        // Before the refusal the host's word comes only once (the finger and
-        // the absolute moves own the position).
         v._clientCursorHostSaid({ x: 10, y: 10, visible: true });
-        expect(v._clientCursorPos).toEqual({ x: 960, y: 540 });
-        v._pointerLockRefused = true;
+        expect(v._clientCursorPos).toEqual({ x: 10, y: 10 });
         v._onGamingMouseMove({ movementX: 30, movementY: 0, clientX: 0, clientY: 0 });
         // Windows' acceleration took the real pointer further than the delta.
         v._clientCursorHostSaid({ x: 1100, y: 540, visible: true });

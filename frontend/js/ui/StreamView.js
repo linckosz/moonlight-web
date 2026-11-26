@@ -671,6 +671,13 @@ export class StreamView {
         // a moment (Chrome right after Escape), and the next click asks again.
         this._lockFreeLook = lockFreeLookWanted(IS_IOS);
         this._lockRefusalFinal = IS_IOS;
+        // Where the refusal is final, it is known before any click
+        // (IPADPRE = A, 26/11/2026): the first moves are lock-free look, and
+        // the edge turns work from the start. The first click is still
+        // the "click to capture": it is kept from the game, and it asks once
+        // (_lockRefusalKnown). The button it pressed is let go the same way.
+        this._captureClickOwed = false;
+        this._captureDownKept = false;
         // A TV's taps come from its browser's cursor: one off the picture is
         // ignored (_tvTapOffPicture), not pinned to the nearest edge.
         this._tvCursor = IS_TV;
@@ -9639,6 +9646,7 @@ export class StreamView {
             } else if (
                 this._pointerLockRefused &&
                 this._lockFreeLook &&
+                this._mouseAllowed !== false &&
                 this._lookFreeByDeltas(e)
             ) {
                 // Lock-free look (iOS, or key mw_lookfree): no lock to be had, so the browser's own
@@ -9678,8 +9686,9 @@ export class StreamView {
                 // Keep the arrow over the surrounding letterbox bars.
                 const inside = rawX >= 0 && rawY >= 0 && rawX <= rect.width && rawY <= rect.height;
                 if (!IS_TOUCH_DEVICE) this._applyLocalCursor(inside);
-                // Outside the picture (letterbox bars) → don't move the host cursor.
-                if (!inside) return;
+                // Outside the picture (letterbox bars) → don't move the host
+                // cursor; nor for a guest who watches without the mouse (P1).
+                if (!inside || this._mouseAllowed === false) return;
                 const x = Math.round(Math.max(0, Math.min(rawX, rect.width)));
                 const y = Math.round(Math.max(0, Math.min(rawY, rect.height)));
                 const refW = Math.round(rect.width);
@@ -9702,6 +9711,17 @@ export class StreamView {
         // Click to capture focus: set host cursor at clicked position, then grab pointer.
         this._onGamingClick = (e) => {
             if (this._mouseFocused) return; // Already focused — click handled by mousedown/mouseup
+            // The refusal known before any click: this one is still the
+            // capture's, kept from the game (P2), and asks once all the same.
+            // No absolute move to the clicked point: the host's pointer is
+            // already where the deltas or the absolute moves put it.
+            if (this._captureClickOwed) {
+                e.preventDefault();
+                this._captureClickOwed = false;
+                this._announceLockRefusal();
+                this._lockPointerOnClick();
+                return;
+            }
             // Refused already: the click went out as a click (mousedown/up).
             // On iOS asking again would only be refused again; elsewhere the
             // refusal may have been a moment's, so this click asks once more.
@@ -9710,6 +9730,8 @@ export class StreamView {
                 return;
             }
             e.preventDefault();
+            // A guest who watches without the mouse: the click moves nothing (P1).
+            if (this._mouseAllowed === false) return;
 
             // Send absolute position so the host cursor teleports to the clicked point
             const rect = this._mediaRect();
@@ -9731,14 +9753,46 @@ export class StreamView {
 
         // Mouse button events: only send when focused (pre-focus click only
         // captures), or once the browser has refused the lock for good.
+        // The capture's click is the game's neither down nor up.
         this._onGamingMouseDown = (e) => {
-            if (this._mouseFocused || this._pointerLockRefused) this.handleMouseDown(e);
+            if (this._mouseFocused) {
+                this.handleMouseDown(e);
+            } else if (this._captureClickOwed) {
+                this._captureDownKept = true;
+            } else if (this._pointerLockRefused && this._mouseAllowed !== false) {
+                this.handleMouseDown(e);
+            }
         };
         this._onGamingMouseUp = (e) => {
-            if (this._mouseFocused || this._pointerLockRefused) this.handleMouseUp(e);
+            if (this._mouseFocused) {
+                this.handleMouseUp(e);
+            } else if (this._captureDownKept) {
+                this._captureDownKept = false;
+            } else if (this._pointerLockRefused && this._mouseAllowed !== false) {
+                this.handleMouseUp(e);
+            }
         };
         this.inputEl.addEventListener('mousedown', this._onGamingMouseDown);
         this.inputEl.addEventListener('mouseup', this._onGamingMouseUp);
+        this._lockRefusalKnown();
+    }
+
+    /**
+     * Where the lock is never granted (_lockRefusalFinal), say so as gaming
+     * mode starts rather than at the first click (IPADPRE = A): the moves go
+     * out as lock-free look from the first one, and the edge turns work
+     * before any click. The first click stays the capture's (_onGamingClick).
+     * A guest without the mouse is not refused anything: nothing was asked.
+     */
+    _lockRefusalKnown() {
+        if (!this._lockRefusalFinal || !this._gamingMode || this.pointerLocked) return;
+        if (this._mouseAllowed === false || this._pointerLockRefused) return;
+        this._pointerLockRefused = true;
+        this._captureClickOwed = true;
+        this._captureDownKept = false;
+        console.log(
+            '[StreamView] Mouse: pointer lock never granted here — lock-free from the start',
+        );
     }
 
     /** Hide the local arrow cursor when a client point sits over the streamed
@@ -11035,7 +11089,10 @@ export class StreamView {
         this._mouseAllowed = allowed;
         console.log(`[StreamView] Mouse ${allowed ? 'given to' : 'taken from'} this viewer`);
         if (this._kbdBtn) this._kbdBtn.hidden = !allowed;
-        if (allowed) return;
+        if (allowed) {
+            this._lockRefusalKnown();
+            return;
+        }
         this._hideVirtualKeyboard();
         if (document.pointerLockElement === this.inputEl) document.exitPointerLock();
         if (this.inputEl) this.inputEl.style.cursor = 'default';
@@ -11145,11 +11202,23 @@ export class StreamView {
     _pointerLockRefusedForGood(why) {
         clearTimeout(this._lockWatch);
         this._lockWatch = 0;
-        if (this._pointerLockRefused || this.pointerLocked || !this._gamingMode) return;
+        if (this.pointerLocked || !this._gamingMode) return;
+        // Known before the click (_lockRefusalKnown): the click's answer is
+        // still worth a line, it says how this browser refuses.
+        if (this._pointerLockRefused) {
+            if (this._lockRefusalFinal)
+                console.log(`[StreamView] Mouse: pointer lock refused again (${why})`);
+            return;
+        }
         this._pointerLockRefused = true;
         console.log(
             `[StreamView] Mouse: pointer lock refused (${why}) — clicks now go to the host`,
         );
+        this._announceLockRefusal();
+    }
+
+    /** The "click to capture" goes, and the viewer is told once why. */
+    _announceLockRefusal() {
         // "Click to capture" would ask for something this browser won't give.
         if (this.hintEl) this.hintEl.style.display = 'none';
         if (!StreamView._lockRefusedToastShown) {
@@ -13357,6 +13426,8 @@ export class StreamView {
 
     handleWheel(e) {
         e.preventDefault();
+        // A guest who watches without the mouse turns no wheel either (P1).
+        if (this._mouseAllowed === false) return;
         // A trackpad pinch: Ctrl on the event, and no Ctrl key down here. It
         // zooms on the host, and never turns around with the wheel.
         if (e.ctrlKey && !this._realCtrlHeld()) {
@@ -13493,6 +13564,7 @@ export class StreamView {
             clearTimeout(this._lockWatch);
             this._lockWatch = 0;
             this._pointerLockRefused = false;
+            this._captureClickOwed = false;
         }
         this._mouseFocused = this.pointerLocked;
         // The hint asks for a click only gaming mode answers. Leaving gaming
