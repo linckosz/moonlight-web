@@ -137,15 +137,14 @@ public:
     /// Whether "ice_udp_mux" and "ice_tcp_443" are on when the file does not
     /// name them, on this system.
     static bool sharedPortsByDefault();
-    /// The three switches of the router the admin page writes: each one that
-    /// is set is written, the others are left as they are.
+    /// The two switches of the router the pages write: each one that is set
+    /// is written, the other is left as it is. "ice_tcp_443" is not one of
+    /// them: no route writes it.
     struct RouterSwitches
     {
         std::optional<bool> upnp;
         /// The box "One shared port for streams" ticked or not
         std::optional<bool> sharedPorts;
-        /// The box "Also through TCP 443" ticked or not
-        std::optional<bool> tcp443;
     };
     /// One read and one write of the file for all of them. A ticked box of
     /// the shared ports takes its key out of the file when this system's
@@ -162,13 +161,17 @@ public:
     static bool iceUdpMuxChoice(const QJsonValue& stored, bool onByDefault);
     // ── TCP 443 on the router ────────────────────────────────────────────────
     // JSON bool "ice_tcp_443", DEFAULT as "ice_udp_mux", and not seeded
-    // either; written by the admin page's box "Also through TCP 443", read at
-    // every look of the router's 443 (no restart). With it, and with ice_udp_mux and
-    // ice_tcp_passive, the host asks its router to forward TCP 443 to the port its streams share,
-    // for a browser on a network that lets out nothing else: only when it can show, alone, that
-    // nobody has 443 and that it then leads here (network/Tcp443Guard). false: 443 is never asked
-    // for, and an entry this installation holds there is taken off. A host whose 443 is forwarded
-    // by hand has nothing to gain from it.
+    // either; typed into settings.json by hand (no route and no box writes it),
+    // read at every look of the router's 443 (no restart). With it, and with
+    // ice_udp_mux and ice_tcp_passive, the host may ask its router to forward
+    // TCP 443 to the port its streams share, for a browser on a network that
+    // lets out nothing else: only while such a browser needs it
+    // (network/Tcp443Demand), and only when it can show, alone, that nobody
+    // has 443 and that it then leads here (network/Tcp443Guard). Never with a
+    // list of the ports the router may forward (router_ports_allowed). false:
+    // 443 is never asked for, and an entry this installation holds there is
+    // taken off. A host whose 443 is forwarded by hand has nothing to gain
+    // from it.
     bool iceTcp443() const;
     // A DEBUG switch for a bench, never for a user: JSON bool "debug_ice_drop_udp",
     // DEFAULT false, typed into the file by hand. Nothing writes it, not even its

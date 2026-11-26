@@ -153,6 +153,8 @@ add_executable(run_tests
     test_ice_mux_ports.cpp
     test_tcp443_guard.cpp
     test_tcp443_probe.cpp
+    test_tcp443_demand.cpp
+    test_allowed_ports.cpp
     test_mux_refuse.cpp
     test_ice_mux_handles.cpp
     test_owner_account.cpp
@@ -203,6 +205,10 @@ add_executable(run_tests
     ${_src}/src/network/IceMuxPorts.cpp
     # TCP 443 on the router: when the host asks for it, and what it takes back.
     ${_src}/src/network/Tcp443Guard.cpp
+    # ...only while a browser needs it.
+    ${_src}/src/network/Tcp443Demand.cpp
+    # The owner's list of the ports the router may forward (issue #82).
+    ${_src}/src/network/AllowedPorts.cpp
     # ...and what it learns by dialling, on the loopback.
     ${_src}/src/network/Tcp443Probe.cpp
     # A worker above the server takes the shared sockets out of it.

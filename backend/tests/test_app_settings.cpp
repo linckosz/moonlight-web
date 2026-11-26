@@ -647,44 +647,40 @@ void run_app_settings_tests()
         CHECK(!s.readAll().contains("ice_tcp_443"));
     }
 
-    // The admin page's boxes of the router's ports (setRouterSwitches): a
+    // The admin page's box of the router's ports (setRouterSwitches): a
     // ticked box on a system whose default is on takes its key out of the
     // file, so it stays unseeded; an unticked one writes false; elsewhere a
     // ticked one writes true. UPnP is written as asked. What is not asked is
-    // left as it is.
+    // left as it is, "ice_tcp_443" always: no switch writes it any more.
     {
         using RS = AppSettings::RouterSwitches;
         CHECK_EQ(AppSettings::sharedPortsByDefault(), sharedByDefault);
         for (const bool onByDefault : {true, false}) {
-            QJsonObject obj{{"other", 7}};
-            AppSettings::applyRouterSwitches(obj, RS{std::nullopt, false, false}, onByDefault);
+            QJsonObject obj{{"other", 7}, {"ice_tcp_443", false}};
+            AppSettings::applyRouterSwitches(obj, RS{std::nullopt, false}, onByDefault);
             CHECK(obj.value("ice_udp_mux").isBool() && !obj.value("ice_udp_mux").toBool());
-            CHECK(obj.value("ice_tcp_443").isBool() && !obj.value("ice_tcp_443").toBool());
-            AppSettings::applyRouterSwitches(obj, RS{std::nullopt, true, std::nullopt},
-                                             onByDefault);
+            AppSettings::applyRouterSwitches(obj, RS{std::nullopt, true}, onByDefault);
             if (onByDefault)
                 CHECK(!obj.contains("ice_udp_mux"));
             else
                 CHECK(obj.value("ice_udp_mux") == QJsonValue(true));
-            CHECK(obj.value("ice_tcp_443") == QJsonValue(false)); // not asked: kept
-            AppSettings::applyRouterSwitches(obj, RS{false, std::nullopt, true}, onByDefault);
+            AppSettings::applyRouterSwitches(obj, RS{false, std::nullopt}, onByDefault);
             CHECK(obj.value("upnp_enabled") == QJsonValue(false));
-            if (onByDefault)
-                CHECK(!obj.contains("ice_tcp_443"));
-            else
-                CHECK(obj.value("ice_tcp_443") == QJsonValue(true));
+            CHECK(obj.value("ice_tcp_443") == QJsonValue(false)); // typed by hand: kept
             CHECK(obj.value("other") == QJsonValue(7));
             CHECK(!obj.contains("debug_dev_standard_ports"));
             CHECK(!obj.contains("debug_ice_mux_refuse"));
         }
         // Through the file: untick then tick again leaves no key behind on a
-        // system whose default is on, and the getters follow.
-        s.setRouterSwitches(RS{std::nullopt, false, false});
-        CHECK(!s.iceUdpMux() && !s.iceTcp443());
-        s.setRouterSwitches(RS{std::nullopt, true, true});
-        CHECK(s.iceUdpMux() && s.iceTcp443());
+        // system whose default is on, and the getter follows. Absent, the key
+        // of 443 says what the system's default says.
+        s.setRouterSwitches(RS{std::nullopt, false});
+        CHECK(!s.iceUdpMux());
+        s.setRouterSwitches(RS{std::nullopt, true});
+        CHECK(s.iceUdpMux());
         CHECK_EQ(s.readAll().contains("ice_udp_mux"), !sharedByDefault);
-        CHECK_EQ(s.readAll().contains("ice_tcp_443"), !sharedByDefault);
+        CHECK(!s.readAll().contains("ice_tcp_443"));
+        CHECK_EQ(s.iceTcp443(), sharedByDefault);
     }
 
     // keyboard_layout_fidelity: three values, "auto" by default. A boolean from

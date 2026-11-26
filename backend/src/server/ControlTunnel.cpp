@@ -169,6 +169,7 @@ ControlTunnel::ControlTunnel(HttpServer* http, AuthManager* auth, AppSettings* s
     connect(m_Ports, &RouterPortAllocator::gatewayMissing, this,
             [this]() { giveUpWaiting(QStringLiteral("no IGD on this network")); });
     connect(m_Ports, &RouterPortAllocator::portLost, this, &ControlTunnel::onPortLost);
+    connect(m_Ports, &RouterPortAllocator::tcp443Changed, this, &ControlTunnel::onTcp443Changed);
     connect(m_Ports, &RouterPortAllocator::switchedOff, this, [this]() {
         const QList<uint16_t> spare = m_FreePorts;
         m_FreePorts.clear();
@@ -484,9 +485,14 @@ void ControlTunnel::createPeerConnection(Peer& p)
 void ControlTunnel::buildPeerConnection(Peer& p)
 {
     const QString sessionId = p.sessionId;
-    // A connection this one replaces is expected nowhere any more
+    // A connection this one replaces is expected nowhere any more, and is no
+    // browser on 443. What the browser said it needs still stands.
     endBy443(p, false);
+    uncount443(p);
     p.public443CandidateSent = false;
+    p.by443Candidate.clear();
+    p.by443Mid.clear();
+    p.tookBy443 = false;
 
     // ICE for the control channel.
     //
@@ -681,15 +687,13 @@ void ControlTunnel::buildPeerConnection(Peer& p)
                                      .arg(mappedPort)
                                      .arg(tcp ? QStringLiteral(" (TCP, listening)") : QString()));
                 }
-                // Once, and only when this connection's agent is expected
-                // where such a connection comes in: on the streams' shared
-                // port, where the server listens for it from this moment
-                if (!by443Cand.empty() && !pp->public443CandidateSent && expectBy443(*pp)) {
-                    pp->public443CandidateSent = true;
-                    send(by443Cand);
-                    Logger::info(QStringLiteral("[Tunnel] Session %1 offered %2:443 as well "
-                                                "(TCP, by the router's 443)")
-                                     .arg(id.left(8), QString::fromStdString(publicIP)));
+                // Kept, for a browser that said it needs 443 only: offered
+                // now if 443 leads here already, or once it does
+                // (onTcp443Changed())
+                if (!by443Cand.empty() && pp->by443Candidate.empty()) {
+                    pp->by443Candidate = by443Cand;
+                    pp->by443Mid = mid;
+                    offerBy443(*pp);
                 }
             },
             Qt::QueuedConnection);
@@ -703,7 +707,16 @@ void ControlTunnel::buildPeerConnection(Peer& p)
                 this,
                 [this, id, attempt]() {
                     Peer* pp = peer(id);
-                    if (pp && pp->attempt == attempt) endBy443(*pp, true);
+                    if (!pp || pp->attempt != attempt) return;
+                    // Connected after its agent took a connection by the
+                    // shared port, which its ICE gate let in, and it is a
+                    // browser that asked for 443 (and was offered the copy):
+                    // a browser on 443, which keeps 443 while it is here
+                    if (pp->wants443 && pp->tookBy443 && !pp->countedOn443 && m_Ports) {
+                        pp->countedOn443 = true;
+                        m_Ports->peer443(true);
+                    }
+                    endBy443(*pp, true);
                 },
                 Qt::QueuedConnection);
             return;
@@ -894,8 +907,10 @@ void ControlTunnel::dropPeer(const QString& sessionId, const QString& why)
         }
     }
     owned->sockets.clear();
-    // Nothing is expected for it on the streams' shared port from here on
+    // Nothing is expected for it on the streams' shared port from here on,
+    // and it is no browser on 443 any more
     endBy443(*owned, false);
+    uncount443(*owned);
 
     // Detach the callbacks before the objects go. libdatachannel may still be
     // inside one on a thread of its own, and it must not come back to a peer
@@ -948,6 +963,48 @@ void ControlTunnel::endBy443(Peer& p, bool connected)
     p.sharedFeed = 0;
 }
 
+void ControlTunnel::offerBy443(Peer& p)
+{
+    // Only to a browser that said it needs it, once, and not to one already
+    // connected; and only when 443 leads here and this connection's agent is
+    // expected where such a connection comes in: on the streams' shared port,
+    // where the server listens for it from this moment
+    if (!p.wants443 || p.public443CandidateSent || p.by443Candidate.empty() || !p.pc) return;
+    if (p.pc->state() == rtc::PeerConnection::State::Connected) return;
+    if (!expectBy443(p)) return;
+    p.public443CandidateSent = true;
+    m_Rendezvous->sendSignal(
+        p.sessionId,
+        QJsonObject{{QStringLiteral("type"), QStringLiteral("ice")},
+                    {QStringLiteral("candidate"), QString::fromStdString(p.by443Candidate)},
+                    {QStringLiteral("mid"), QString::fromStdString(p.by443Mid)}});
+    Logger::info(QStringLiteral("[Tunnel] Session %1 offered its public address on 443 as well "
+                                "(TCP, by the router's 443)")
+                     .arg(p.sessionId.left(8)));
+}
+
+void ControlTunnel::onTcp443Changed(quint16 leadsTo)
+{
+    if (leadsTo == 0) return;
+    for (const std::shared_ptr<Peer>& p : std::as_const(m_Peers))
+        if (p) offerBy443(*p);
+}
+
+void ControlTunnel::want443(Peer& p)
+{
+    const bool first = !p.wants443;
+    p.wants443 = true;
+    if (first && m_Ports) m_Ports->need443(mw::tcp443::Asker::Rendezvous);
+    offerBy443(p);
+}
+
+void ControlTunnel::uncount443(Peer& p)
+{
+    if (!p.countedOn443) return;
+    p.countedOn443 = false;
+    if (m_Ports) m_Ports->peer443(false);
+}
+
 void ControlTunnel::takeSharedConnection(quint32 feed, quint32 number)
 {
     IceMux* mux = IceMux::shared();
@@ -964,6 +1021,8 @@ void ControlTunnel::takeSharedConnection(quint32 feed, quint32 number)
         if (!mux->tcp().take(feed, number, &socket, &frame)) return;
         if (!p->pc->offerIceTcp(socket, reinterpret_cast<const char*>(frame.data()), frame.size()))
             IceMuxTcp::closeTaken(socket);
+        else
+            p->tookBy443 = true;
         return;
     }
     // Its connection is gone, or connected, since this one named it
@@ -1038,6 +1097,12 @@ void ControlTunnel::handleHello(Peer& p, const QJsonObject& msg)
     }
 
     p.helloSeen = true;
+    // The browser's STUN probe got no answer: its network may let out nothing
+    // but TCP 443. A yes, and nothing else: no port, no address. It comes from
+    // the introduction server, on this host's own line to it (onSignal(), from
+    // RendezvousClient::signalReceived), before any session: bounded as such
+    // (mw::tcp443::Asker::Rendezvous).
+    if (msg.value(QStringLiteral("needs443")).toBool(false)) want443(p);
     sendSignedOffer(p);
 }
 
@@ -1165,6 +1230,10 @@ void ControlTunnel::handleDiag(Peer& p, const QJsonObject& msg)
     // dropped without a word, so it cannot be used to write in this log.
     if (!p.answerVerified || p.diagSeen || channelOpen(p)) return;
     p.diagSeen = true;
+    // The connection did not come up: 443 is asked for, once for this
+    // connection, so that the browser's next try finds it (it says it needs
+    // it then). The same bounds as a hello's.
+    want443(p);
 
     const qint64 now = diagClockMs();
     closeDiagWindow();

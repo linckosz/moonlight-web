@@ -796,7 +796,6 @@
         "internet": "Internet",
         "enableInternet": "Enable Internet Access",
         "sharedPortsBox": "One shared port for streams",
-        "tcp443Box": "Also through TCP 443",
         "sharedPortsRestartWaiting": "The server restarts to apply this once no stream is running.",
         "sharedPortsRestarting": "The server is restarting to apply this…",
         "sharedPortsConfirm": "Applying this restarts the server. This page reconnects by itself; a stream in progress is not cut, the restart waits for it to end.",

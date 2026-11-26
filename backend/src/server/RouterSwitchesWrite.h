@@ -27,10 +27,12 @@
 
 /// The router's switches, in the two routes that write them.
 ///
-/// POST /api/admin/settings writes the admin page's two boxes, "ice_udp_mux"
-/// ("One shared port for streams") and "ice_tcp_443" ("Also through TCP 443"),
-/// and only them of the three. POST /api/settings/streaming writes
-/// "upnp_enabled", and only it.
+/// POST /api/admin/settings writes the admin page's box "ice_udp_mux" ("One
+/// shared port for streams"), and only it of the three. POST
+/// /api/settings/streaming writes "upnp_enabled", and only it. "ice_tcp_443"
+/// has no box: 443 is asked for only when a browser needs it
+/// (network/Tcp443Demand), and the key is set in settings.json alone, false to
+/// keep it off. Both routes refuse a body that names it.
 ///
 /// Each route asks its refused() before it writes anything of the body: a
 /// value that is not a JSON boolean is a 400, and then no key of the body is
@@ -41,7 +43,9 @@
 /// keys included).
 namespace mw::routerswitches {
 
-inline const char* const kBoxKeys[] = {"ice_udp_mux", "ice_tcp_443"};
+inline const char* const kBoxKeys[] = {"ice_udp_mux"};
+/// Set in settings.json alone: no route writes it.
+inline const char* const kFileOnlyKeys[] = {"ice_tcp_443"};
 inline const char* const kUpnpKey = "upnp_enabled";
 
 /// The first of @p body's keys among the named ones whose value is not a
@@ -56,15 +60,28 @@ inline QString notBoolean(const QJsonObject& body, std::initializer_list<const c
     return {};
 }
 
+/// The first key of @p body that no route writes, as a reason; an empty
+/// string when there is none.
+inline QString fileOnly(const QJsonObject& body)
+{
+    for (const char* key : kFileOnlyKeys) {
+        if (body.contains(QLatin1String(key)))
+            return QStringLiteral("%1 is set in settings.json only").arg(QLatin1String(key));
+    }
+    return {};
+}
+
 /// POST /api/admin/settings: why the body is refused, or an empty string.
 inline QString adminRefused(const QJsonObject& body)
 {
-    return notBoolean(body, {kBoxKeys[0], kBoxKeys[1]});
+    if (const QString why = fileOnly(body); !why.isEmpty()) return why;
+    return notBoolean(body, {kBoxKeys[0]});
 }
 
 /// POST /api/settings/streaming: why the body is refused, or an empty string.
 inline QString streamingRefused(const QJsonObject& body)
 {
+    if (const QString why = fileOnly(body); !why.isEmpty()) return why;
     for (const char* key : kBoxKeys) {
         if (body.contains(QLatin1String(key)))
             return QStringLiteral("%1 is set in the admin settings (POST /api/admin/settings)")
@@ -73,17 +90,16 @@ inline QString streamingRefused(const QJsonObject& body)
     return notBoolean(body, {kUpnpKey});
 }
 
-/// What the admin route writes: the two boxes the body names, nothing else.
+/// What the admin route writes: the box the body names, nothing else.
 struct BoxesWritten
 {
     bool sharedPorts = false;
-    bool tcp443 = false;
-    bool any() const { return sharedPorts || tcp443; }
+    bool any() const { return sharedPorts; }
 };
 
-/// POST /api/admin/settings, after adminRefused() said nothing: the boxes
-/// the body names, in one write of the file; echoes in @p reply what the file
-/// now resolves to.
+/// POST /api/admin/settings, after adminRefused() said nothing: the box the
+/// body names, in one write of the file; echoes in @p reply what the file now
+/// resolves to.
 inline BoxesWritten adminWrite(const QJsonObject& body, AppSettings& settings, QJsonObject& reply)
 {
     AppSettings::RouterSwitches s;
@@ -92,14 +108,9 @@ inline BoxesWritten adminWrite(const QJsonObject& body, AppSettings& settings, Q
         s.sharedPorts = body.value(QLatin1String(kBoxKeys[0])).toBool();
         done.sharedPorts = true;
     }
-    if (body.contains(QLatin1String(kBoxKeys[1]))) {
-        s.tcp443 = body.value(QLatin1String(kBoxKeys[1])).toBool();
-        done.tcp443 = true;
-    }
     if (!done.any()) return done;
     settings.setRouterSwitches(s);
-    if (done.sharedPorts) reply[QLatin1String(kBoxKeys[0])] = settings.iceUdpMux();
-    if (done.tcp443) reply[QLatin1String(kBoxKeys[1])] = settings.iceTcp443();
+    reply[QLatin1String(kBoxKeys[0])] = settings.iceUdpMux();
     reply[QStringLiteral("status")] = QStringLiteral("saved");
     return done;
 }

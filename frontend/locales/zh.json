@@ -796,7 +796,6 @@
         "internet": "互联网",
         "enableInternet": "启用互联网访问",
         "sharedPortsBox": "所有串流共用一个端口",
-        "tcp443Box": "同时通过 TCP 443",
         "sharedPortsRestartWaiting": "服务器将在没有串流运行时重新启动，以应用此设置。",
         "sharedPortsRestarting": "服务器正在重新启动，以应用此设置…",
         "sharedPortsConfirm": "应用此设置会重新启动服务器。此页面会自动重新连接；正在进行的串流不会中断，重启会等它结束。",

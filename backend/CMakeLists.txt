@@ -427,6 +427,8 @@ add_executable(mw-server
     src/network/IceMuxTcp.cpp
     src/network/IceMuxPorts.cpp
     src/network/Tcp443Guard.cpp
+    src/network/Tcp443Demand.cpp
+    src/network/AllowedPorts.cpp
     src/network/Tcp443Probe.cpp
     src/network/RouterPortAllocator.cpp
     src/network/StunClient.cpp

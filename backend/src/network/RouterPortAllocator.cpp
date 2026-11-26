@@ -16,6 +16,7 @@
  */
 
 #include "RouterPortAllocator.h"
+#include "AllowedPorts.h"
 #include "BoundedRun.h"
 #include "RouterHoles.h"
 #include "PortIdentity.h"
@@ -627,8 +628,15 @@ public:
         }
         const quint16 leadsTo = m_Guard443->leadsTo();
         const bool refused = m_Guard443->formerRefused();
+        // The last look made, and whether the guard is still at it: a run
+        // under way, or a look that waits for the sweep
+        const uint32_t look = m_Last443.look;
+        const bool busy = m_Guard443->running() || m_Waiting443.waits();
         QMetaObject::invokeMethod(
-            m_Owner, [o = m_Owner, leadsTo, refused]() { o->onTcp443(leadsTo, refused); },
+            m_Owner,
+            [o = m_Owner, leadsTo, refused, look, busy]() {
+                o->onTcp443(leadsTo, refused, look, busy);
+            },
             Qt::QueuedConnection);
     }
 
@@ -866,11 +874,13 @@ void RouterPortAllocator::consider443()
     // The router may be asked while UPnP and Internet Access are on. Off, an
     // entry that is held is taken back, as every hole is, and nothing else.
     const bool ask = enabled();
-    // The shared ports as they run (setStreamMux), not as the file now asks:
-    // the box of the shared ports takes effect at the next start, router
-    // included; the box of 443 at once.
-    now.wanted = ask && !mw::portidentity::devPorts() && static_cast<bool>(m_MuxHolds) &&
-                 m_Settings->iceTcpPassive() && m_Settings->iceTcp443();
+    // Wanted while every switch it takes is on AND a browser needs it now
+    // (need443(), Tcp443Demand). A switch that went off ends the demand: a
+    // browser has to ask again once it is back on.
+    const bool allowed = tcp443Allowed();
+    if (!allowed && m_Demand443.off()) armGrace443();
+    now.wanted = allowed && m_Demand443.wanted();
+    now.look = ++m_Look443;
     if (m_PublicAddress) now.publicAddress = m_PublicAddress();
     // Where it would lead: the shared block port, once the router forwards it
     // in TCP. The worker fills in what only it can ask (the router's own
@@ -895,9 +905,20 @@ void RouterPortAllocator::onStale(bool refused)
     m_StaleRefused = refused;
 }
 
-void RouterPortAllocator::onTcp443(quint16 leadsTo, bool staleRemovalRefused)
+void RouterPortAllocator::onTcp443(quint16 leadsTo, bool staleRemovalRefused, uint32_t look,
+                                   bool busy)
 {
     m_Tcp443Refused = staleRemovalRefused;
+    // What the guard made of the ask, once it has looked since and is done:
+    // held, or not (not asked again for a while, and what a run may have
+    // left is taken off by the look that follows)
+    if (!busy && look >= m_Opening443 && m_Demand443.settled(leadsTo != 0, monotonicMs())) {
+        if (leadsTo == 0)
+            Logger::info(QStringLiteral("[UPNP] TCP 443: not held, not asked for again for %1 s")
+                             .arg(mw::tcp443::Demand::kRetryMs / 1000));
+        consider443();
+    }
+    armGrace443();
     if (leadsTo == m_Tcp443Port) return;
     m_Tcp443Port = leadsTo;
     emit tcp443Changed(leadsTo);
@@ -955,6 +976,11 @@ QString RouterPortAllocator::refusal()
     if (!enabled()) return QStringLiteral("UPnP is off");
     ensureStarted();
     if (m_State == GatewayState::Missing) return QStringLiteral("no IGD");
+    // The owner's list of the ports the router may forward was refused: no
+    // hole is asked for until it is mended. What this host wrote before is
+    // still taken off (the start's sweep, a release).
+    if (mw::routerports::allowedPorts().state == mw::routerports::AllowedPorts::State::Invalid)
+        return QStringLiteral("router_ports_allowed is refused");
     return {};
 }
 
@@ -973,11 +999,12 @@ void RouterPortAllocator::deliver(quint64 token, const Claim& claim, const QStri
 void RouterPortAllocator::claimTunnelPort(QObject* context, Callback callback)
 {
     // A DEV identity walks its own block only (RouterPortPools.h), and forgets
-    // what it remembers from before it had one.
+    // what it remembers from before it had one. With the owner's list
+    // (router_ports_allowed), what is not of it is forgotten the same way.
     const bool dev = mw::portidentity::devPorts();
     QList<uint16_t> remembered;
     for (const quint16 p : m_Settings->rememberedTunnelPorts()) {
-        if (RouterPortCore::tunnelPortAllowed(dev, p))
+        if (RouterPortCore::tunnelPortAsked(dev, p))
             remembered.append(p);
         else
             m_Settings->forgetTunnelPort(p);
@@ -1064,7 +1091,7 @@ void RouterPortAllocator::claimMuxPort(int which, uint16_t current,
     QList<uint16_t> first;
     if (current != 0) first.append(current);
     if (const quint16 remembered = m_Settings->rememberedMuxPort(which)) {
-        if (!RouterPortCore::muxPortAllowed(dev, which, remembered))
+        if (!RouterPortCore::muxPortAsked(dev, which, remembered))
             m_Settings->forgetMuxPort(which);
         else if (!first.contains(remembered))
             first.append(remembered);
@@ -1232,9 +1259,81 @@ void RouterPortAllocator::releaseMuxPort(int which)
                      .arg(claim.external));
 }
 
-void RouterPortAllocator::tcp443SwitchChanged()
+bool RouterPortAllocator::tcp443Allowed() const
 {
+    // The shared ports as they run (setStreamMux), not as the file now asks:
+    // the box of the shared ports takes effect at the next start, router
+    // included; the key of 443 at once.
+    // With the owner's list of the ports the router may forward
+    // (router_ports_allowed), valid or not, 443 is never one of them.
+    mw::tcp443::Switches s;
+    s.guard = m_Probe443 != nullptr;
+    s.router = enabled();
+    s.devPorts = mw::portidentity::devPorts();
+    s.sharedPorts = static_cast<bool>(m_MuxHolds);
+    s.tcpPassive = m_Settings->iceTcpPassive();
+    s.tcp443 = m_Settings->iceTcp443();
+    s.portList = mw::routerports::allowedPorts().defined();
+    return mw::tcp443::allowedBy(s);
+}
+
+void RouterPortAllocator::need443(mw::tcp443::Asker who)
+{
+    if (m_Closing.load()) return;
+    QList<mw::tcp443::Demand::Line> lines;
+    const bool asked = m_Demand443.ask(who, tcp443Allowed(), monotonicMs(), &lines);
+    for (const mw::tcp443::Demand::Line& line : std::as_const(lines))
+        Logger::warning(QStringLiteral("[UPNP] ") + line.text);
+    if (!asked) return;
+    Logger::info(QStringLiteral("[UPNP] TCP 443: a browser needs it (%1), asked for")
+                     .arg(who == mw::tcp443::Asker::Rendezvous ? QStringLiteral("tunnel")
+                                                               : QStringLiteral("stream")));
+    // What the worker says of the looks sent before this one is not about it
+    m_Opening443 = m_Look443 + 1;
+    // Bounded: an ask the guard says nothing of is given up (Demand::tick)
+    armGrace443();
     consider443();
+}
+
+void RouterPortAllocator::peer443(bool arrived)
+{
+    const uint64_t now = monotonicMs();
+    if (arrived)
+        m_Demand443.arrived(now);
+    else
+        m_Demand443.left(now);
+    armGrace443();
+}
+
+void RouterPortAllocator::armGrace443()
+{
+    const uint64_t due = m_Demand443.dueAtMs();
+    if (due == 0) {
+        if (m_Grace443) m_Grace443->stop();
+        return;
+    }
+    if (!m_Grace443) {
+        m_Grace443 = new QTimer(this);
+        m_Grace443->setSingleShot(true);
+        connect(m_Grace443, &QTimer::timeout, this, [this]() {
+            const bool opening = m_Demand443.state() == mw::tcp443::Demand::State::Opening;
+            if (m_Demand443.tick(monotonicMs())) {
+                if (opening)
+                    Logger::info(QStringLiteral("[UPNP] TCP 443: nothing came of the ask within "
+                                                "%1 min, given up; not asked for again for %2 s")
+                                     .arg(mw::tcp443::Demand::kOpeningMaxMs / 60000)
+                                     .arg(mw::tcp443::Demand::kRetryMs / 1000));
+                else
+                    Logger::info(QStringLiteral("[UPNP] TCP 443: no browser on it for %1 min, "
+                                                "taken off")
+                                     .arg(mw::tcp443::Demand::kGraceMs / 60000));
+                consider443();
+            }
+            armGrace443();
+        });
+    }
+    const uint64_t now = monotonicMs();
+    m_Grace443->start(static_cast<int>(due > now ? due - now : 0));
 }
 
 void RouterPortAllocator::switchChanged()

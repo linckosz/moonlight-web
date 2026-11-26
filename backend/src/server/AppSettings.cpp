@@ -1073,7 +1073,6 @@ void AppSettings::applyRouterSwitches(QJsonObject& obj, const RouterSwitches& sw
             obj[QLatin1String(key)] = ticked;
     };
     if (switches.sharedPorts) box("ice_udp_mux", *switches.sharedPorts);
-    if (switches.tcp443) box("ice_tcp_443", *switches.tcp443);
 }
 
 void AppSettings::setRouterSwitches(const RouterSwitches& switches)

@@ -103,8 +103,9 @@ bool publicIpv4(const QString& address);
 struct Situation
 {
     /// Every switch it takes is on (ice_udp_mux, ice_tcp_passive,
-    /// ice_tcp_443, UPnP, Internet Access), and the run is not a DEV
-    /// identity's.
+    /// ice_tcp_443, UPnP, Internet Access, no router_ports_allowed list),
+    /// the run is not a DEV identity's, and a browser needs it now
+    /// (Tcp443Demand).
     bool wanted = false;
     /// What browsers reach this host at.
     QString publicAddress;
@@ -115,6 +116,9 @@ struct Situation
     uint16_t blockPort = 0;
     /// The lease the other holes are asked with, 0 for a permanent entry.
     uint32_t leaseSec = 0;
+    /// The number of the look this was asked for, told back with what came
+    /// of it (RouterPortAllocator): nothing to the guard.
+    uint32_t look = 0;
 };
 
 enum class Outcome

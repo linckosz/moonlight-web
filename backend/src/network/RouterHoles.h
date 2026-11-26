@@ -102,6 +102,13 @@ bool dottedIpv4(const QString& text);
 /// A DEV identity's also include what it wrote when it bound the installed
 /// host's block and drew from its pool: a slot's hole to that block, and (with
 /// a tag) its shared port at the top of it. Those are only ever taken back.
+///
+/// So do the numbers of the owner's list (router_ports_allowed), and those an
+/// earlier list gave that the settings still remember
+/// (mw::routerports::removableByList()), for a line that fits its kind: what
+/// a list was given is taken back once the list is changed or gone. This says
+/// what may be taken back only: what is asked for goes by RouterPortCore's
+/// *Asked().
 bool allowed(bool devInstance, const Hole& hole);
 
 /// A port no MoonlightWeb ever asks a router for: between the installed

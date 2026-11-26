@@ -184,6 +184,21 @@ private:
         /// expected there.
         bool public443CandidateSent = false;
         quint32 sharedFeed = 0;
+        /// This browser said it needs the router's TCP 443 (needs443 in its
+        /// hello, or a failure report): only such a browser is offered the copy
+        /// on 443, and its saying so is what may have 443 asked for
+        /// (RouterPortAllocator::need443(), mw::tcp443::Asker::Rendezvous).
+        bool wants443 = false;
+        /// That copy, made as the listener's candidate came, and kept until
+        /// it may be sent: 443 may be held only seconds after the browser
+        /// asked (tcp443Changed()). With its media line.
+        std::string by443Candidate;
+        std::string by443Mid;
+        /// A connection by the shared port was taken by this connection's
+        /// agent; and, once it connected so, it is counted as a browser on 443
+        /// (RouterPortAllocator::peer443()) until it goes.
+        bool tookBy443 = false;
+        bool countedOn443 = false;
         /// The bench switch debug_ice_drop_udp, read when the connection was
         /// built: no UDP candidate crosses either way (mw::ice::isUdpCandidate).
         bool dropUdp = false;
@@ -256,6 +271,18 @@ private:
     bool expectBy443(Peer& p);
     /// It expects none there any more: connected, or gone.
     void endBy443(Peer& p, bool connected);
+    /// The copy on 443 this browser asked for goes, once: when 443 leads here
+    /// and its agent is expected where such a connection comes in.
+    void offerBy443(Peer& p);
+    /// The router's 443 leads here from now on, or no longer does: the
+    /// browsers that asked for it and wait are offered the copy.
+    void onTcp443Changed(quint16 leadsTo);
+    /// This browser no longer counts as one on 443 (it goes, or is rebuilt).
+    void uncount443(Peer& p);
+    /// This browser said it needs 443, through the introduction server: it is
+    /// offered the copy on 443 when 443 leads here, and 443 is asked for
+    /// within the bounds of such an ask (mw::tcp443::Asker::Rendezvous).
+    void want443(Peer& p);
 
     void onChannelMessage(const QString& sessionId, const QByteArray& message);
     void handleRequestFrame(Peer& p, quint32 id, const QByteArray& payload);

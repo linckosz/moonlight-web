@@ -247,6 +247,12 @@ public:
     /// the preferred list and the pool for the installed host, the --dev block
     /// for a --dev (RouterPortPools.h).
     static bool tunnelPortAllowed(bool devInstance, uint16_t port);
+    /// Whether a tunnel hole on `port` may be asked for in this run: one of
+    /// the owner's list when it is in force (router_ports_allowed,
+    /// AllowedPorts.h), tunnelPortAllowed() otherwise. A list that was refused
+    /// asks for nothing at all, which the allocator sees to. What is taken
+    /// back goes by tunnelPortAllowed() and the list (RouterHoles' allowed()).
+    static bool tunnelPortAsked(bool devInstance, uint16_t port);
 
     /// The tunnel's request. A remembered port the instance may not hold is
     /// left out — a --dev remembering 3479 from before it had a block.
@@ -257,6 +263,8 @@ public:
     /// stream block for the installed host, the top of the block alone for a
     /// --dev, which has no conferencing port at all.
     static bool muxPortAllowed(bool devInstance, int which, uint16_t port);
+    /// The same, for what may be asked for in this run (tunnelPortAsked()).
+    static bool muxPortAsked(bool devInstance, int which, uint16_t port);
 
     /// The request for one of the mux's ports, the caller's `hold` and `drop`
     /// left to set. A remembered port the instance may not hold is left out.
@@ -268,6 +276,8 @@ public:
     /// hole for this kind of instance: one of its stream block, or of its
     /// media pool (RouterPortPools.h).
     static bool mediaPortAllowed(bool devInstance, uint16_t port);
+    /// The same, for what may be asked for in this run (tunnelPortAsked()).
+    static bool mediaPortAsked(bool devInstance, uint16_t port);
 
     /// The request for a stream slot's own port, `internalPort`: the number
     /// the slot had on the router last time (`remembered`, 0 for none, left

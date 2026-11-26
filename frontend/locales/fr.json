@@ -796,7 +796,6 @@
         "internet": "Internet",
         "enableInternet": "Activer l'accès Internet",
         "sharedPortsBox": "Un seul port partagé pour les streams",
-        "tcp443Box": "Aussi par le TCP 443",
         "sharedPortsRestartWaiting": "Le serveur redémarre pour l'appliquer dès qu'aucun stream ne tourne.",
         "sharedPortsRestarting": "Le serveur redémarre pour l'appliquer…",
         "sharedPortsConfirm": "L'appliquer redémarre le serveur. Cette page se reconnecte d'elle-même ; un stream en cours n'est pas coupé, le redémarrage attend sa fin.",

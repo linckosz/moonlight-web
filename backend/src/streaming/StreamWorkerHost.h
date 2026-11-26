@@ -23,6 +23,7 @@
 #include <QJsonObject>
 #include <QList>
 
+#include <functional>
 #include <vector>
 
 /**
@@ -155,6 +156,13 @@ public:
     /// of, if it still is some worker's; let go of otherwise. On the main
     /// thread.
     static void handMuxConnection(quint32 feed, quint32 number);
+    /// Told when a stream counts as a browser on the router's TCP 443, and
+    /// when it no longer does (RouterPortAllocator::peer443()): a stream that
+    /// was offered the copy on 443, once a connection by the shared TCP port
+    /// that named its agent was handed to it and its browser's end is up
+    /// (viewerUp: past the agent's own gate), until its sockets are given back.
+    /// Set once by main(), on the main thread.
+    static void setOn443(std::function<void(bool arrived)> on443);
 
     /// Spawn the worker and hand it the session config. Returns false when the
     /// process could not be started (caller falls back to in-process mode).
@@ -356,6 +364,15 @@ private:
     /// The server takes its TCP connections on the shared ports, and there is
     /// a way to hand them to it: it was told so with the sockets.
     bool m_MuxTcp = false;
+    /// Its config offers the copy on the router's TCP 443 (iceMuxPublic's
+    /// tcp443); a connection by the shared TCP port was handed to it; and,
+    /// once its browser's end is up, it counts as a browser on 443
+    /// (setOn443()).
+    bool m_MuxBy443 = false;
+    bool m_TookBy443 = false;
+    bool m_CountedOn443 = false;
+    /// Counted once both are so: handed such a connection, and up.
+    void count443IfUp();
     /// The 127.0.0.1 port of its agent's feed, which is what a connection
     /// handed to it names the agent by; 0 without an agent that expects one.
     quint16 m_MuxFeedPort = 0;

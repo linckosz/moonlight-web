@@ -31,8 +31,8 @@
 #include "server/ServerRestart.h"
 #include "server/SharedPortsRestart.h"
 #include "network/IceMux.h"
+#include "network/AllowedPorts.h"
 #include "network/InternetAccessManager.h"
-#include "network/PortIdentity.h"
 #include "network/RouterHoles.h"
 #include "network/RouterPortAllocator.h"
 #include "network/Tcp443Guard.h"
@@ -183,6 +183,10 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // The same of any other forward this installation made under such an
         // address: a key of its own, with words of its own on the page.
         mw::routerholes::tellAdmin(obj, req.isLocal, ports && ports->staleRemovalRefused());
+        // The owner's list of the ports the router may forward
+        // (router_ports_allowed) was refused: nothing is asked of the router.
+        // A yes or a no, for the admin alone; the rule it breaks is in the log.
+        mw::routerports::tellAdmin(obj, req.isLocal);
         return HttpResponse::json(obj);
     });
 
@@ -1163,20 +1167,16 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         obj["remember_me_days"] = authManager.rememberMeDays();
         obj["remember_me_days_default"] = AppSettings::kRememberMeDaysDefault;
         obj["remember_me_days_acknowledged"] = appSettings.rememberMeDaysAcknowledged();
-        // The two boxes of the router's ports (admin > Internet): what the file
-        // asks, as resolved, and whether the shared ports run in this process.
-        // "One shared port for streams" takes effect at the next start; "Also
-        // through TCP 443" at once, and only while the shared ports run. No
-        // address and no port in any of them.
+        // The box of the router's ports (admin > Internet): what the file asks,
+        // as resolved, and whether the shared ports run in this process. "One
+        // shared port for streams" takes effect at the next start. TCP 443 has
+        // no box: it is asked for when a browser needs it. No address and no
+        // port here.
         obj["ice_udp_mux"] = appSettings.iceUdpMux();
-        obj["ice_tcp_443"] = appSettings.iceTcp443();
         obj["shared_ports_running"] = IceMux::shared() != nullptr;
         // A restart that applies the box waits for the streams and pairings.
         obj["restart_pending"] =
             SharedPortsRestart::shared() && SharedPortsRestart::shared()->pending();
-        // Never on a DEV identity (its ports are not the router's 443's), nor
-        // without TCP passive: the box would do nothing there.
-        obj["tcp443_applies"] = !mw::portidentity::devPorts() && appSettings.iceTcpPassive();
         return HttpResponse::json(obj);
     });
 
@@ -1376,17 +1376,13 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             hadChange = true;
         }
 
-        // ── The two boxes of admin > Internet ────────────────────────────
+        // ── The box of admin > Internet ──────────────────────────────────
         // Last, after every refusal of the body, so that a body refused above
-        // writes none of them and asks for no restart. The box of 443 applies
-        // at once (its guard looks again); the box of the shared ports at the
-        // next start, router included: nothing here touches what runs.
+        // writes nothing and asks for no restart. The box of the shared ports
+        // takes effect at the next start, router included: nothing here
+        // touches what runs.
         if (const auto boxes = mw::routerswitches::adminWrite(body, appSettings, obj);
             boxes.any()) {
-            if (boxes.tcp443) {
-                if (RouterPortAllocator* ports = internetAccess.routerPorts())
-                    ports->tcp443SwitchChanged();
-            }
             // The shared ports: by a restart, now or once nothing would be cut
             // (server/SharedPortsRestart.h). Asked last of all: "now" makes
             // this answer the last of this process; the page reconnects.

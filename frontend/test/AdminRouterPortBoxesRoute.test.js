@@ -2,10 +2,11 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  *
- * The two boxes of admin › Internet, down to the request itself: with the real
- * BackendClient, a change of a box is a POST to /api/admin/settings carrying
- * that box's key alone (the shared port box once Apply is clicked under it), the route that writes the boxes on the server
- * (server/RouterSwitchesWrite.h). The mocked test beside this one
+ * The box of admin › Internet, down to the request itself: with the real
+ * BackendClient, Apply under the shared port box is a POST to
+ * /api/admin/settings carrying that box's key alone, the route that writes it
+ * on the server (server/RouterSwitchesWrite.h). Nothing posts ice_tcp_443: it
+ * has no box. The mocked test beside this one
  * (AdminRouterPortBoxes.test.js) stops at the client's method.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -30,9 +31,6 @@ describe('AdminView — the boxes of the router ports, as requests', () => {
         view = new AdminView(document.body.firstElementChild, () => {});
         view._hasAdminAccess = true;
         view._sharedPorts = true;
-        view._tcp443 = true;
-        view._sharedPortsRunning = true;
-        view._tcp443Applies = true;
         view._sharedPortsRestartPending = false;
         vi.spyOn(BackendClient, '_adminKey').mockResolvedValue('admin-key');
         fetchMock = vi.fn(async (path, init) => {
@@ -89,11 +87,10 @@ describe('AdminView — the boxes of the router ports, as requests', () => {
         expect(Toast.error).not.toHaveBeenCalled();
     });
 
-    it('the 443 box goes to /api/admin/settings too, alone', async () => {
-        change('#chk-tcp443', false);
-        await vi.waitFor(() => expect(posts()).toHaveLength(1));
-        const [post] = posts();
-        expect(post.path).toBe('/api/admin/settings');
-        expect(post.body).toEqual({ ice_tcp_443: false });
+    it('no request ever carries ice_tcp_443', async () => {
+        view.render();
+        view.bindEvents();
+        expect(document.querySelector('#chk-tcp443')).toBeNull();
+        expect(posts().some((p) => 'ice_tcp_443' in (p.body || {}))).toBe(false);
     });
 });

@@ -2,11 +2,11 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  *
- * The two boxes of admin › Internet: "One shared port for streams"
- * (ice_udp_mux), applied by a restart of the server once no stream runs, after
- * an Apply under the box (Cancel or leaving the page writes nothing), and
- * "Also through TCP 443" (ice_tcp_443), applied at once and shown only while
- * the shared ports run where it can apply.
+ * The box of admin › Internet: "One shared port for streams" (ice_udp_mux),
+ * applied by a restart of the server once no stream runs, after an Apply
+ * under the box (Cancel or leaving the page writes nothing). TCP 443 has no
+ * box: the server asks for it when a browser needs it, whatever the page is
+ * told.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
@@ -65,25 +65,26 @@ describe('AdminView — the boxes of the router ports', () => {
         };
     };
 
-    it('shows both boxes as the file asks while the shared ports run', async () => {
-        const { shared, tcp443, waiting } = await show({});
+    it('shows the box as the file asks', async () => {
+        const { shared, waiting } = await show({});
         expect(shared.checked).toBe(true);
-        expect(tcp443.checked).toBe(true);
         expect(waiting).toBeNull();
-        const off = await show({ ice_udp_mux: false, ice_tcp_443: false });
+        const off = await show({ ice_udp_mux: false });
         expect(off.shared.checked).toBe(false);
-        expect(off.tcp443.checked).toBe(false);
     });
 
-    it('hides 443 while the shared ports do not run, or where it cannot apply', async () => {
-        for (const extra of [{ shared_ports_running: false }, { tcp443_applies: false }]) {
+    it('has no box for TCP 443, whatever the server says', async () => {
+        for (const extra of [
+            {},
+            { ice_tcp_443: false },
+            { shared_ports_running: false },
+            { tcp443_applies: false },
+        ]) {
             const { shared, tcp443 } = await show(extra);
             expect(shared).not.toBeNull();
             expect(tcp443).toBeNull();
+            expect(document.body.innerHTML).not.toContain('tcp443');
         }
-        // The stored choice is not lost while it is hidden.
-        await show({ shared_ports_running: false, ice_tcp_443: false });
-        expect(view._tcp443).toBe(false);
     });
 
     it('says the restart waits for the streams, and only then', async () => {
@@ -196,20 +197,6 @@ describe('AdminView — the boxes of the router ports', () => {
         expect(document.querySelector('#shared-ports-confirm')).not.toBeNull();
         expect(view._sharedPorts).toBe(true);
         expect(apply.disabled).toBe(false);
-    });
-
-    it('writes the 443 box alone, and puts it back on a refusal', async () => {
-        const { tcp443 } = await show({});
-        BackendClient.saveAdminSettings.mockResolvedValue({ ice_tcp_443: false });
-        tcp443.checked = false;
-        tcp443.dispatchEvent(new Event('change'));
-        await vi.waitFor(() =>
-            expect(BackendClient.saveAdminSettings).toHaveBeenCalledWith({ ice_tcp_443: false }),
-        );
-        BackendClient.saveAdminSettings.mockRejectedValue(new Error('refused'));
-        tcp443.checked = true;
-        tcp443.dispatchEvent(new Event('change'));
-        await vi.waitFor(() => expect(tcp443.checked).toBe(false));
     });
 
     it('cannot be clicked from a view that may not write them', async () => {

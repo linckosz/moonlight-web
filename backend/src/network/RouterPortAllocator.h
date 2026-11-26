@@ -18,6 +18,7 @@
 #pragma once
 
 #include "RouterPortCore.h"
+#include "Tcp443Demand.h"
 
 #include <QHash>
 #include <QList>
@@ -220,9 +221,16 @@ public:
     /// one gives it back when it ends. On, whoever keeps holes for as long as
     /// the process runs asks for them (switchedOn).
     void switchChanged();
-    /// The admin page's box of TCP 443 was just written: the router's 443 is
-    /// looked at again, at once (asked for, or taken back).
-    void tcp443SwitchChanged();
+    /// A browser needs TCP 443 (mw::tcp443::Demand): `who` says through what
+    /// it said so, which bounds what it may open. Asked for when allowed and
+    /// not wanted already; nothing else otherwise. On the main thread.
+    void need443(mw::tcp443::Asker who);
+    /// A browser is connected through 443 (its connection came in on the
+    /// shared TCP port and its agent took it), or one such went: 443 is kept
+    /// for as long as one is, and Demand::kGraceMs more.
+    void peer443(bool arrived);
+    /// Whether 443 may be asked for at all now: every switch it takes.
+    bool tcp443Allowed() const;
 
     QList<Claim> heldTunnelPorts() const;
     std::optional<Claim> heldMediaPort(int slot) const;
@@ -271,7 +279,12 @@ private:
     /// TCP 443 is looked at again on the worker's thread, with what stands
     /// now: the switches, the address, the shared block port and its hole.
     void consider443();
-    void onTcp443(quint16 leadsTo, bool staleRemovalRefused);
+    /// What the worker's guard did: where 443 leads now, and whether it is
+    /// still at work (a run under way, a look that waits). `look` is the
+    /// number of the last look it was given.
+    void onTcp443(quint16 leadsTo, bool staleRemovalRefused, uint32_t look, bool busy);
+    /// The demand's grace timer, set from Demand::dueAtMs().
+    void armGrace443();
     /// The router was found again from another address of this machine
     /// (RouterPortCore::followAddress()).
     void onLanMoved(const QString& lanIp);
@@ -305,6 +318,16 @@ private:
     std::function<QString()> m_PublicAddress;
     quint16 m_Tcp443Port = 0;
     bool m_Tcp443Refused = false;
+    /// Whether 443 is wanted now: asked for by a browser that needs it, and
+    /// kept while one is on it (need443(), peer443()).
+    mw::tcp443::Demand m_Demand443;
+    /// The end of its grace.
+    QTimer* m_Grace443 = nullptr;
+    /// The number of the last look at 443 sent to the worker, and of the one
+    /// that first asked for it as wanted: what the worker tells back of an
+    /// earlier look says nothing of that ask.
+    uint32_t m_Look443 = 0;
+    uint32_t m_Opening443 = 0;
     bool m_StaleRefused = false;
     QHash<quint64, Pending> m_Pending;
     quint64 m_NextToken = 1;

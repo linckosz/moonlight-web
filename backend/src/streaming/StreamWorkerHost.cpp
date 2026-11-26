@@ -49,6 +49,19 @@
 #include <unistd.h>
 #endif
 
+namespace {
+std::function<void(bool)>& on443Hook()
+{
+    static std::function<void(bool)> hook;
+    return hook;
+}
+} // namespace
+
+void StreamWorkerHost::setOn443(std::function<void(bool arrived)> on443)
+{
+    on443Hook() = std::move(on443);
+}
+
 StreamWorkerHost::StreamWorkerHost(QObject* parent)
     : QObject(parent)
 {}
@@ -367,6 +380,10 @@ QByteArray StreamWorkerHost::withSharedSockets(const QByteArray& configLine, Lau
     QJsonObject config = QJsonDocument::fromJson(configLine).object();
     // The guests' shared feed is an engine and a pipe: no browser reaches it.
     if (config[QStringLiteral("role")].toString() == QLatin1String("feed")) return configLine;
+    // Offered the copy on the router's TCP 443 (main.cpp,
+    // withSharedPortsAnnounced): a connection handed to it may have come that way
+    m_MuxBy443 =
+        config[QStringLiteral("iceMuxPublic")].toObject().contains(QStringLiteral("tcp443"));
 
     std::string why;
 #ifdef Q_OS_WIN
@@ -762,6 +779,8 @@ void StreamWorkerHost::onStdoutData(const QByteArray& data)
                 m_ViewerConnectedEmitted = true;
                 emit viewerConnected();
             }
+            // Up after a connection by the shared TCP port: a browser on 443
+            count443IfUp();
         } else if (type == QLatin1String("hidAdopted")) {
             // The worker holds its copies of the kept devices: ours go.
             if (m_HidBatch) HidParkingTransfer::settle(m_HidBatch, true);
@@ -881,11 +900,34 @@ void StreamWorkerHost::handConnection(quint32 number)
     // Not handed: this process's end goes at once. Handed: when the worker
     // says it has its own; or after two seconds, unless it was named
     // (IceMuxTcp).
-    if (!handed) mux->tcp().letGo(number);
+    if (!handed) {
+        mux->tcp().letGo(number);
+        return;
+    }
+    // Handed after the shared port's gate found its agent named in its first
+    // frame, to a stream that was offered 443. The gate admits nothing: the
+    // agent's own decides, on the frame's integrity. So the stream counts as a
+    // browser on 443 once its browser's end is up (viewerUp), and not before
+    if (m_MuxBy443) m_TookBy443 = true;
+    count443IfUp();
+}
+
+void StreamWorkerHost::count443IfUp()
+{
+    if (!m_TookBy443 || !m_ViewerConnectedEmitted || m_CountedOn443) return;
+    m_CountedOn443 = true;
+    if (on443Hook()) on443Hook()(true);
 }
 
 void StreamWorkerHost::releaseMuxSockets()
 {
+    // No browser on 443 through this worker from here on
+    if (m_CountedOn443) {
+        m_CountedOn443 = false;
+        if (on443Hook()) on443Hook()(false);
+    }
+    m_MuxBy443 = false;
+    m_TookBy443 = false;
     dropMuxAgent();
     // No agent of this worker from here on, whatever it still says
     m_MuxSockets.clear();

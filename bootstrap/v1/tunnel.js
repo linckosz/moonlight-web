@@ -161,6 +161,80 @@ const DIAG_SAMPLE_MS = 2000;
 const DIAG_MAX_PAIRS = 512;
 
 const DIAG_TYPES = new Set(['host', 'srflx', 'prflx', 'relay']);
+
+/** How long the hello waits for the STUN probe of this network (udpGetsOut). */
+const UDP_PROBE_MS = 1500;
+
+/**
+ * A try of this page's found no way through to its machine (it sent the
+ * failure report): the next one says it needs TCP 443 (needs443 in the
+ * hello), the one port some networks let out. In memory only: a new page
+ * asks again.
+ */
+let noRouteBefore = false;
+
+/**
+ * Whether UDP gets out of this network, asked of the introduction server's
+ * own STUN (the one server this page already talks to): true when it
+ * answers, false when nothing came back within `timeoutMs`, null when this
+ * browser cannot ask. A network that lets no UDP out may let out nothing but
+ * TCP 443: the hello then says the page needs it, and the machine asks its
+ * router for it. Advice, and nothing more: a yes, never a port.
+ */
+export async function udpGetsOut(stunHost, timeoutMs = UDP_PROBE_MS) {
+    const PC = globalThis.RTCPeerConnection;
+    if (typeof PC !== 'function') return null;
+    let pc;
+    try {
+        pc = new PC({ iceServers: [{ urls: `stun:${stunHost}:3478` }] });
+    } catch {
+        return null;
+    }
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (verdict) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            try {
+                pc.close();
+            } catch {
+                /* already closed */
+            }
+            resolve(verdict);
+        };
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        pc.onicecandidate = (ev) => {
+            const c = ev.candidate;
+            // The end of gathering: every server was asked and none answered.
+            if (!c) return finish(false);
+            const type = c.type || (/ typ (\w+)/.exec(c.candidate || '') || [])[1];
+            const udp = (c.protocol || '').toLowerCase() === 'udp' || / udp /i.test(c.candidate);
+            if (type === 'srflx' && udp) finish(true);
+        };
+        try {
+            pc.createDataChannel('probe');
+            pc.createOffer()
+                .then((offer) => pc.setLocalDescription(offer))
+                .catch(() => finish(null));
+        } catch {
+            finish(null);
+        }
+    });
+}
+
+/**
+ * The hello, and whether it says this page needs TCP 443: a try before it
+ * found no way through, or UDP does not get out of this network.
+ */
+export function helloWith443(hello, udpOut, failedBefore) {
+    return failedBefore || udpOut === false ? { ...hello, needs443: true } : hello;
+}
+
+/** FOR THE TESTS ONLY: forget that a try failed. */
+export function forgetNoRoute() {
+    noRouteBefore = false;
+}
 const DIAG_PROTOCOLS = new Set(['udp', 'tcp']);
 
 /**
@@ -631,6 +705,9 @@ export class Tunnel {
         }
 
         this._status('calling');
+        // Asked while the line comes up: the hello waits for it, a few hundred
+        // milliseconds where UDP gets out, UDP_PROBE_MS where it does not.
+        this._udpOut = udpGetsOut(location.hostname).catch(() => null);
         await new Promise((resolve, reject) => {
             const deadline = setTimeout(() => {
                 this.overdue = true;
@@ -754,6 +831,8 @@ export class Tunnel {
     async _reportNoRoute(why) {
         if (this._diagSent || this._answeredAt === null || !this._pc) return;
         this._diagSent = true;
+        // The next try of this page says it needs 443 (helloWith443)
+        noRouteBefore = true;
         this._stopCheckSampler();
         const pc = this._pc;
         const checks = await checkCounts(pc, this._checkTally);
@@ -801,7 +880,8 @@ export class Tunnel {
         if (frame.t === 'ready') {
             this.hostProto = Number.isInteger(frame.v) && frame.v > 0 ? frame.v : 1;
             this._status('binding');
-            this._sendSignal(helloMessage(this.identity));
+            const udpOut = await this._udpOut;
+            this._sendSignal(helloWith443(helloMessage(this.identity), udpOut, noRouteBefore));
             return;
         }
         if (frame.t !== 'msg' || !frame.d) return;

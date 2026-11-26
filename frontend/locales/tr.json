@@ -796,7 +796,6 @@
         "internet": "İnternet",
         "enableInternet": "İnternet Erişimini Etkinleştir",
         "sharedPortsBox": "Yayınlar için tek bir ortak bağlantı noktası",
-        "tcp443Box": "TCP 443 üzerinden de",
         "sharedPortsRestartWaiting": "Bunu uygulamak için sunucu, çalışan yayın kalmadığında yeniden başlar.",
         "sharedPortsRestarting": "Bunu uygulamak için sunucu yeniden başlatılıyor…",
         "sharedPortsConfirm": "Bunu uygulamak sunucuyu yeniden başlatır. Bu sayfa kendiliğinden yeniden bağlanır; süren bir yayın kesilmez, yeniden başlatma onun bitmesini bekler.",

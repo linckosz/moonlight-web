@@ -173,6 +173,7 @@
 #include "network/MdnsAdvertiser.h"
 #include "network/PortIdentity.h"
 #include "network/RendezvousClient.h"
+#include "network/AllowedPorts.h"
 #include "network/RouterPortAllocator.h"
 #include "network/RouterPortPools.h"
 #include "network/Tcp443Probe.h"
@@ -1747,6 +1748,25 @@ static void dropUdpRungsWhenBlocked(QStringList& chain, const QJsonObject& body,
     chain = kept;
 }
 
+// The router's allocator, for what asks for TCP 443 outside main()'s scope.
+// Cleared with it (QPointer).
+static QPointer<RouterPortAllocator> g_RouterPorts443;
+
+// Such a browser (its STUN probe got no answer, and it is planned for the
+// internet, as above) may sit on a network that lets out nothing but TCP 443:
+// its stream is marked (cfg "wants443"), and once it really starts, past every
+// refusal of its launch, the router's 443 is asked for
+// (RouterPortAllocator::need443(), in withSharedPortsAnnounced) and the stream
+// is offered the copy on 443. Both launches that get here come from a
+// signed-in session or an invited player's: POST /api/hosts/:id/start behind
+// the API's session check (HttpServer), the player's join behind its
+// mw_player cookie (ShareRoutes). A yes, never a port. Asks nothing itself.
+static bool streamWants443(const QJsonObject& body, NetClassify::Kind clientKind, bool viaTunnel)
+{
+    if (!body.value(QStringLiteral("udp_blocked")).toBool(false)) return false;
+    return viaTunnel || clientKind == NetClassify::Kind::Public;
+}
+
 // Default ports of a DEV identity (the DEV build, or --dev): see Edition.h.
 using mw::edition::kDevHttpPort;
 using mw::edition::kDevHttpsPort;
@@ -1814,8 +1834,14 @@ static QJsonObject withSharedPortsAnnounced(QJsonObject cfg)
         tcpPorts.append(static_cast<int>(port));
     QJsonObject told{{"ip", announced.publicIp}, {"ports", ports}, {"tcpPorts", tcpPorts}};
     // The router's TCP 443 leads to one of them as well: that one's listener
-    // is reached by the one port some networks let out
-    if (g_Tcp443LeadsTo != 0 && announced.tcpPorts.contains(g_Tcp443LeadsTo))
+    // is reached by the one port some networks let out. Offered to a stream
+    // whose browser said it may need it (streamWants443), and to no other;
+    // for such a stream, which starts now, 443 is asked for (one that is not
+    // held yet serves the stream's next try)
+    if (cfg["wants443"].toBool() && g_RouterPorts443)
+        g_RouterPorts443->need443(mw::tcp443::Asker::Session);
+    if (cfg["wants443"].toBool() && g_Tcp443LeadsTo != 0 &&
+        announced.tcpPorts.contains(g_Tcp443LeadsTo))
         told["tcp443"] = static_cast<int>(g_Tcp443LeadsTo);
     cfg["iceMuxPublic"] = told;
     return cfg;
@@ -3695,6 +3721,44 @@ int main(int argc, char* argv[])
                                  .arg(base)
                                  .arg(base + mw::routerports::kMediaPortCount - 1);
     }
+    // The ports the router may forward, when the owner lists them
+    // (settings.json router_ports_allowed, network/AllowedPorts.h): read once,
+    // here, before anything asks a router or binds a shared port, against the
+    // ports this server really listens on. Refused whole on any doubt, said
+    // once with the rule it breaks; never mended.
+    {
+        using mw::routerports::Forbidden;
+        const QList<Forbidden> local = {
+            {httpPort, httpPort, QStringLiteral("this server's HTTP port")},
+            {httpsPort, httpsPort, QStringLiteral("this server's HTTPS port")},
+            {signalingPort, static_cast<quint16>(qMin(65535, signalingPort + 2)),
+             QStringLiteral("this server's signaling ports")},
+            {kSlotPlan.extraBase,
+             static_cast<quint16>(qMin(65535, kSlotPlan.extraBase + 2 * kSlotPlan.maxSlots - 1)),
+             QStringLiteral("this server's signaling ports")},
+        };
+        const mw::routerports::AllowedPorts allowed = mw::routerports::parseAllowedPorts(
+            appSettings.readAll().value(QLatin1String(mw::routerports::kAllowedKey)), local);
+        mw::routerports::setAllowedPorts(allowed);
+        if (allowed.state == mw::routerports::AllowedPorts::State::Invalid)
+            qWarning().noquote() << "[Ports]" << allowed.why
+                                 << "— the whole list is refused: nothing is asked of the router "
+                                    "until it is mended";
+        else if (allowed.valid())
+            qInfo().noquote() << "[Ports] The router may forward only the ports of"
+                              << mw::routerports::kAllowedKey << "(" << allowed.ports().size()
+                              << "ports); TCP 443 is never asked for";
+        // What an earlier list gave, which the settings still remember: this
+        // host's to take back from the router (RouterHoles' allowed())
+        QSet<uint16_t> remembered;
+        for (const quint16 p : appSettings.rememberedTunnelPorts())
+            remembered.insert(p);
+        for (const auto& slotPort : appSettings.rememberedMediaPorts())
+            remembered.insert(slotPort.second);
+        for (const int which : {RouterPortCore::kMuxStandard, RouterPortCore::kMuxBlock})
+            if (const quint16 p = appSettings.rememberedMuxPort(which)) remembered.insert(p);
+        mw::routerports::setRememberedForRemoval(remembered);
+    }
 
     InternetAccessManager internetAccess(&appSettings);
     // What dials for the guard of TCP 443 (network/Tcp443Guard): it knows a
@@ -3712,6 +3776,13 @@ int main(int argc, char* argv[])
     routerPorts.setTcp443(&tcp443Probe, [&internetAccess]() { return internetAccess.publicIp(); });
     QObject::connect(&routerPorts, &RouterPortAllocator::tcp443Changed, &app,
                      [](quint16 leadsTo) { g_Tcp443LeadsTo = leadsTo; });
+    // Asked for only when a browser needs it: a stream whose browser's STUN
+    // probe got no answer (dropUdpRungsWhenBlocked), the tunnel's browser
+    // (ControlTunnel); kept while one is on it, a stream included.
+    g_RouterPorts443 = &routerPorts;
+    StreamWorkerHost::setOn443([](bool arrived) {
+        if (g_RouterPorts443) g_RouterPorts443->peer443(arrived);
+    });
     // The one UPnP discovery of the process: Internet Access reads the
     // gateway from the allocator rather than looking for it a second time.
     internetAccess.setRouterPorts(&routerPorts);
@@ -5243,6 +5314,7 @@ int main(int argc, char* argv[])
             }
         }
         dropUdpRungsWhenBlocked(transportChain, body, clientKind, req.viaTunnel);
+        const bool wants443 = streamWants443(body, clientKind, req.viaTunnel);
         // A TV on plain HTTP (issue #42): its page has no WebCodecs, so the
         // picture goes to a <video> element, and its input travels on that
         // stream's data channel. Never the WebSocket relay, which would carry
@@ -5789,6 +5861,7 @@ int main(int argc, char* argv[])
             for (const QString& m : transportChain)
                 chainArr.append(m);
             cfg["transportChain"] = chainArr;
+            cfg["wants443"] = wants443;
             cfg["transportIndex"] = reqTransportIndex;
 
             auto* worker = new StreamWorkerHost(qApp);
@@ -7768,6 +7841,8 @@ int main(int argc, char* argv[])
         if (req.viaTunnel) chain.removeAll(QStringLiteral("wss"));
         dropUdpRungsWhenBlocked(chain, QJsonDocument::fromJson(req.body).object(),
                                 streamClientKind(req), req.viaTunnel);
+        const bool wants443 = streamWants443(QJsonDocument::fromJson(req.body).object(),
+                                             streamClientKind(req), req.viaTunnel);
         if (chain.isEmpty()) {
             respond(HttpResponse::error(502, "No usable transport"));
             return;
@@ -8022,6 +8097,7 @@ int main(int argc, char* argv[])
         for (const QString& m : chain)
             chainArr.append(m);
         cfg["transportChain"] = chainArr;
+        cfg["wants443"] = wants443;
         cfg["transportIndex"] = transportIndex;
 
         // The guests' shared feed (plan « flux commun des invités »): on this
@@ -8468,6 +8544,27 @@ int main(int argc, char* argv[])
 
         quint16 activeHttp = server.httpPort();
         if (appSettings.httpPort(0) != activeHttp) appSettings.setHttpPort(activeHttp);
+
+        // A port taken in place of the one asked for may be one of the
+        // owner's list of router ports (router_ports_allowed): the list is
+        // refused from here on, as it would have been at the start. No hole
+        // already held can lead to this listener: a TCP forward of X to X
+        // exists only while the mux holds X, and then HTTPS cannot bind X.
+        const mw::routerports::AllowedPorts& allowed = mw::routerports::allowedPorts();
+        for (const quint16 active : {activeHttp, activeHttps}) {
+            if (active == 0 || !allowed.contains(active)) continue;
+            mw::routerports::AllowedPorts refused;
+            refused.state = mw::routerports::AllowedPorts::State::Invalid;
+            refused.why = QStringLiteral("%1: %2 is this server's own port, taken in place of the "
+                                         "one asked for")
+                              .arg(QLatin1String(mw::routerports::kAllowedKey))
+                              .arg(active);
+            mw::routerports::setAllowedPorts(refused);
+            qWarning().noquote() << "[Ports]" << refused.why
+                                 << "— the whole list is refused: nothing more is asked of the "
+                                    "router until it is mended";
+            break;
+        }
     }
 
     // Tell the manager which ports the server actually listens on, so its

@@ -16,6 +16,7 @@
  */
 
 #include "RouterHoles.h"
+#include "AllowedPorts.h"
 #include "RouterPortCore.h"
 #include "RouterPortPools.h"
 
@@ -231,12 +232,18 @@ bool dottedIpv4(const QString& text)
 bool allowed(bool devInstance, const Hole& hole)
 {
     if (hole.external == 0 || hole.internal == 0) return false;
+    // A number of the owner's list (router_ports_allowed), or one an earlier
+    // list gave and the settings remember: this host's to take back, as one
+    // of its own kind's lists (AllowedPorts.h). Never asked for by that: what
+    // is asked for goes by RouterPortCore's *Asked() alone.
+    const bool listed = !hole.old && mw::routerports::removableByList(hole.external);
     switch (hole.kind) {
     case Kind::Tunnel:
         return hole.slot == -1 && hole.internal == hole.external &&
-               RouterPortCore::tunnelPortAllowed(devInstance, hole.external);
+               (listed || RouterPortCore::tunnelPortAllowed(devInstance, hole.external));
     case Kind::Streams:
         if (hole.slot != -1 || hole.internal != hole.external) return false;
+        if (listed) return true;
         if (RouterPortCore::muxPortAllowed(devInstance, RouterPortCore::kMuxStandard,
                                            hole.external) ||
             RouterPortCore::muxPortAllowed(devInstance, RouterPortCore::kMuxBlock, hole.external))
@@ -247,7 +254,7 @@ bool allowed(bool devInstance, const Hole& hole)
     case Kind::Media:
         if (hole.slot < 0 || hole.slot >= mw::routerports::kMediaPortCount) return false;
         if (mw::routerports::inMediaBlock(devInstance, hole.internal) &&
-            RouterPortCore::mediaPortAllowed(devInstance, hole.external))
+            (listed || RouterPortCore::mediaPortAllowed(devInstance, hole.external)))
             return true;
         // A slot's hole of a DEV identity from when it bound the installed
         // host's block and drew from its pool: its own to take back (by its

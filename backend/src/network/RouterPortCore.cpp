@@ -16,6 +16,7 @@
  */
 
 #include "RouterPortCore.h"
+#include "AllowedPorts.h"
 #include "RouterPortPools.h"
 
 #include <QDebug>
@@ -99,6 +100,13 @@ bool RouterPortCore::tunnelPortAllowed(bool devInstance, uint16_t port)
     return port >= kTunnelPoolBegin && port <= kTunnelPoolEnd;
 }
 
+bool RouterPortCore::tunnelPortAsked(bool devInstance, uint16_t port)
+{
+    const mw::routerports::AllowedPorts& list = mw::routerports::allowedPorts();
+    if (list.valid()) return list.contains(port);
+    return tunnelPortAllowed(devInstance, port);
+}
+
 RouterPortCore::Request RouterPortCore::tunnelRequest(bool devInstance,
                                                       const QList<uint16_t>& remembered)
 {
@@ -106,7 +114,15 @@ RouterPortCore::Request RouterPortCore::tunnelRequest(bool devInstance,
     Request request;
     request.purpose = Purpose::Tunnel;
     for (const uint16_t p : remembered)
-        if (tunnelPortAllowed(devInstance, p)) request.remembered.append(p);
+        if (tunnelPortAsked(devInstance, p)) request.remembered.append(p);
+    // The owner's list, when there is one, and nothing else. One that was
+    // refused leaves the request as without it: the allocator asks the router
+    // nothing then (RouterPortAllocator::refusal()), and what binds locally
+    // binds where it always has (AllowedPorts.h)
+    if (const AllowedPorts& list = allowedPorts(); list.valid()) {
+        request.preferred = list.ports();
+        return request;
+    }
     if (devInstance) {
         request.poolBegin = kDevTunnelPoolBegin;
         request.poolEnd = kDevTunnelPoolEnd;
@@ -131,6 +147,13 @@ bool RouterPortCore::muxPortAllowed(bool devInstance, int which, uint16_t port)
     return which == kMuxBlock && inMuxBlockStretch(devInstance, port);
 }
 
+bool RouterPortCore::muxPortAsked(bool devInstance, int which, uint16_t port)
+{
+    const mw::routerports::AllowedPorts& list = mw::routerports::allowedPorts();
+    if (list.valid()) return (which == kMuxStandard || which == kMuxBlock) && list.contains(port);
+    return muxPortAllowed(devInstance, which, port);
+}
+
 RouterPortCore::Request RouterPortCore::muxRequest(bool devInstance, int which,
                                                    const QList<uint16_t>& remembered)
 {
@@ -143,7 +166,14 @@ RouterPortCore::Request RouterPortCore::muxRequest(bool devInstance, int which,
     // asks takes it off where nothing will listen (ice_tcp_passive off).
     request.tcp = true;
     for (const uint16_t p : remembered)
-        if (muxPortAllowed(devInstance, which, p)) request.remembered.append(p);
+        if (muxPortAsked(devInstance, which, p)) request.remembered.append(p);
+
+    // The owner's list: both shared ports are drawn from it, the first free
+    // ports of it, each bound by the mux at that very number
+    if (const AllowedPorts& list = allowedPorts(); list.valid()) {
+        if (which == kMuxStandard || which == kMuxBlock) request.preferred = list.ports();
+        return request;
+    }
 
     if (which == kMuxStandard) {
         // No pool behind the eight: a host that finds them all taken streams
@@ -169,6 +199,13 @@ bool RouterPortCore::mediaPortAllowed(bool devInstance, uint16_t port)
     return inMediaBlock(devInstance, port) || inMediaPool(devInstance, port);
 }
 
+bool RouterPortCore::mediaPortAsked(bool devInstance, uint16_t port)
+{
+    const mw::routerports::AllowedPorts& list = mw::routerports::allowedPorts();
+    if (list.valid()) return list.contains(port);
+    return mediaPortAllowed(devInstance, port);
+}
+
 RouterPortCore::Request RouterPortCore::mediaRequest(bool muxInUse, bool devInstance, int slot,
                                                      uint16_t internalPort, uint16_t remembered,
                                                      bool muxHoldsPort)
@@ -179,6 +216,14 @@ RouterPortCore::Request RouterPortCore::mediaRequest(bool muxInUse, bool devInst
     request.slot = slot;
     request.internalPort = internalPort;
     if (muxHoldsPort) return request;
+    // The owner's list: the router-side number is one of it, the slot's own
+    // port stays the one it binds. A number the mux or another hole holds is
+    // skipped as it is asked (holds())
+    if (const AllowedPorts& list = allowedPorts(); list.valid()) {
+        if (list.contains(remembered)) request.remembered.append(remembered);
+        request.preferred = list.ports();
+        return request;
+    }
     // A number of the other identity's block or pool is never asked for: a
     // DEV that remembers what it had before it had a block of its own
     const auto free = [&](uint16_t port) {

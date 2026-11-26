@@ -55,6 +55,12 @@ export class AdminView {
     static STALE_FORWARD_NOTICE =
         'A port forward to an old address of this PC could not be removed: remove it in your box.';
 
+    // Shown while the list of router ports in settings.json
+    // (router_ports_allowed) is refused: nothing is asked of the box until it is
+    // mended. A fixed text, in English only; the rule it breaks is in the log.
+    static PORT_LIST_REFUSED_NOTICE =
+        'The router port list in settings.json (router_ports_allowed) is refused, so nothing is asked of your box: the server log says why.';
+
     // Mirrors AuthManager::MIN_ADMIN_PASSWORD_LEN — checked here only to fail
     // fast; the backend refuses anything shorter regardless.
     static MIN_ADMIN_PASSWORD_LEN = 8;
@@ -137,6 +143,8 @@ export class AdminView {
         this._router443StaleRefused = false;
         // The same of any other forward (STALE_FORWARD_NOTICE).
         this._routerStaleRefused = false;
+        // The list of router ports is refused (PORT_LIST_REFUSED_NOTICE).
+        this._portListRefused = false;
 
         // Activation loader: live step reported by the backend (statusJson.phase).
         this._activating = false;
@@ -322,14 +330,10 @@ export class AdminView {
             this._hostLayout = admin.keyboard_host_layout === true;
             this._autostartSupported = admin.autostart_supported === true;
             this._autostartEnabled = admin.autostart_enabled === true;
-            // The two boxes of the router's ports: what the file asks, and
-            // whether the shared ports run in this process. The first box is
-            // applied by a restart of the server (restart_pending while it
-            // waits for the streams); the second at once, while they run.
+            // The box of the router's ports: what the file asks. It is applied
+            // by a restart of the server (restart_pending while it waits for
+            // the streams).
             this._sharedPorts = admin.ice_udp_mux !== false;
-            this._tcp443 = admin.ice_tcp_443 !== false;
-            this._sharedPortsRunning = admin.shared_ports_running === true;
-            this._tcp443Applies = admin.tcp443_applies === true;
             this._sharedPortsRestartPending = admin.restart_pending === true;
             // Two values, not one: what was chosen (often nothing) and what the
             // PC is called. The field shows the first and offers the second as
@@ -432,6 +436,7 @@ export class AdminView {
             // are this page's own (see the notice in render()).
             this._router443StaleRefused = status.router443_stale_removal_refused === true;
             this._routerStaleRefused = status.router_stale_removal_refused === true;
+            this._portListRefused = status.router_ports_allowed_refused === true;
             this._lastError = status.last_error || '';
             // Auto-uncheck the toggle when the backend reports an error: an error
             // means the feature is not operational, so the checkbox must not look
@@ -763,15 +768,13 @@ export class AdminView {
         return prefix;
     }
 
-    // "One shared port for streams" and "Also through TCP 443" (settings.json
-    // ice_udp_mux, ice_tcp_443). The second only while the shared ports run
-    // and where it can apply (not a DEV identity): hidden otherwise, its stored
-    // value kept. Both read-only for a view that may not write them. The first
-    // is applied by a restart of the server, so ticking it only asks, just
-    // under the box: Apply writes it, Cancel puts the box back.
+    // "One shared port for streams" (settings.json ice_udp_mux), read-only for
+    // a view that may not write it. It is applied by a restart of the server,
+    // so ticking it only asks, just under the box: Apply writes it, Cancel puts
+    // the box back. TCP 443 has no box: the server asks for it when a browser
+    // needs it.
     _renderRouterPortBoxes() {
         const disabled = this._isLocalhost() ? '' : 'disabled';
-        const show443 = this._sharedPortsRunning && this._tcp443Applies;
         const asking = this._sharedPortsAsk !== null;
         const sharedShown = asking ? this._sharedPortsAsk : this._sharedPorts;
         return `
@@ -796,16 +799,6 @@ export class AdminView {
                         ${
                             this._sharedPortsRestartPending
                                 ? `<p class="settings-hint" id="shared-ports-waiting">${t('admin.sharedPortsRestartWaiting')}</p>`
-                                : ''
-                        }
-                        ${
-                            show443
-                                ? `
-                        <label class="settings-checkbox-label">
-                            <input type="checkbox" id="chk-tcp443" ${disabled}
-                                   ${this._tcp443 ? 'checked' : ''} />
-                            <span class="settings-checkbox-text">${t('admin.tcp443Box')}</span>
-                        </label>`
                                 : ''
                         }
                     </div>`;
@@ -862,20 +855,6 @@ export class AdminView {
                     console.error('[Admin] Failed to save the shared ports box:', err);
                     Toast.error(t('admin.saveFailed', { message: err.message }));
                     sharedApply.disabled = false; // the question stays open
-                }
-            });
-        }
-        const tcp443Chk = this.container.querySelector('#chk-tcp443');
-        if (tcp443Chk) {
-            tcp443Chk.addEventListener('change', async () => {
-                const on = tcp443Chk.checked;
-                try {
-                    await BackendClient.saveAdminSettings({ ice_tcp_443: on });
-                    this._tcp443 = on;
-                } catch (err) {
-                    console.error('[Admin] Failed to save the TCP 443 box:', err);
-                    Toast.error(t('admin.saveFailed', { message: err.message }));
-                    tcp443Chk.checked = !on; // revert
                 }
             });
         }
@@ -1286,6 +1265,19 @@ export class AdminView {
                             ? `
                         <div class="internet-info-box internet-info-error">
                             <p>${AdminView.STALE_FORWARD_NOTICE}</p>
+                        </div>
+                    `
+                            : ''
+                    }
+
+                    <!-- The list of router ports in settings.json is refused
+                         (PORT_LIST_REFUSED_NOTICE): a yes from the server, the
+                         words this page's own. -->
+                    ${
+                        this._portListRefused
+                            ? `
+                        <div class="internet-info-box internet-info-error" id="port-list-refused">
+                            <p>${AdminView.PORT_LIST_REFUSED_NOTICE}</p>
                         </div>
                     `
                             : ''
