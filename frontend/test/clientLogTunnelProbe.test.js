@@ -65,7 +65,7 @@ describe('ClientLog through a tunnel', () => {
         expect(console.log).toBe(wrapped);
     });
 
-    it('an answer that says debug is off still gives the console back', async () => {
+    it('an answer that says debug is off is heard as such: warnings and errors only', async () => {
         vi.stubGlobal(
             'fetch',
             vi.fn(async () => health({ debug: false })),
@@ -73,6 +73,8 @@ describe('ClientLog through a tunnel', () => {
         const log = await import('../js/util/ClientLog.js');
         await log.refreshClientLog();
         expect(log.serverDiag.debug).toBe(false);
-        expect(console.log).toBe(saved.log);
+        // An owner's page keeps its mirror, for its warnings and errors
+        // (clientLogQuiet.test.js); a guest's gives the console back.
+        expect(console.log).not.toBe(saved.log);
     });
 });

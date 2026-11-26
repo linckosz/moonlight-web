@@ -655,7 +655,7 @@ void run_log_scrubber_tests()
                         {"m", "join failed: https://192.168.1.66:8443/p/" + token + "?x=1"}});
         lines.append(QJsonObject{{"t", 0.0}, {"l", "info"}, {"m", "two\nlines /p/" + token}});
         lines.append(QJsonObject{
-            {"t", 0.0}, {"l", "error"}, {"m", QString(8 * 1024 - 5, 'a') + "/p/" + token}});
+            {"t", 0.0}, {"l", "error"}, {"m", QString(2 * 1024 - 5, 'a') + "/p/" + token}});
         lines.append(
             QJsonObject{{"t", 0.0},
                         {"l", "warn"},
@@ -678,9 +678,9 @@ void run_log_scrubber_tests()
         CHECK(out.value(1).text.endsWith(" 2 earlier lines dropped (the page's buffer was full)"));
         CHECK_EQ(out.value(2).level, Logger::Warning);
         CHECK(out.value(2).text.endsWith(" join failed: https://192.168.1.66:8443/p/(link)?x=1"));
-        CHECK(out.value(3).text.endsWith(" two\n    lines /p/(link)"));
+        CHECK(out.value(3).text.endsWith(" two ⏎ lines /p/(link)"));
         CHECK_EQ(out.value(4).level, Logger::Error);
-        CHECK(out.value(4).text.endsWith(QString(8 * 1024 - 5, 'a') + "/p/(l […]"));
+        CHECK(out.value(4).text.endsWith(QString(2 * 1024 - 5, 'a') + "/p/(l […]"));
         CHECK(out.value(5).text.endsWith(" GET /api/share/player/info?token=(hidden)&x=1 failed"));
 
         // A later batch: no page line. A page's address cut to 200 characters
@@ -693,5 +693,170 @@ void run_log_scrubber_tests()
         const QString page = clientLogLines(body, "owner", "127.0.0.1").value(0).text;
         CHECK(page.contains(QString(195, 'x') + "/p/(l — Mozilla/5.0"));
         CHECK(!leaks(page));
+    }
+
+    // A page's text is data: it stays on one line, and cannot draw a line of
+    // the server's own (a forged time stamp and level after a line break).
+    SECTION("Client log lines: one line each, whatever the page wrote");
+    {
+        CHECK_EQ(neutralizeClientText("a\nb\r\nc\rd\te"), QString("a ⏎ b ⏎ c ⏎ d e"));
+        CHECK_EQ(neutralizeClientText(QString("x") + QChar(0x1b) + "[31m" + QChar(0x7f) +
+                                      QChar(0x85) + QChar(0x2028) + QChar(0x2029) + "y"),
+                 QString("x") + QChar(0xfffd) + "[31m" + QString(4, QChar(0xfffd)) + "y");
+        CHECK_EQ(neutralizeClientText("é ⏎ 中文 🙂"), QString("é ⏎ 中文 🙂"));
+
+        QJsonObject body;
+        body["id"] = "p1";
+        body["seq"] = 1;
+        QJsonArray lines;
+        lines.append(
+            QJsonObject{{"t", 0.0},
+                        {"l", "info"},
+                        {"m", QString("ok\n2026-11-26 19:00:00.000 [ERROR] [Session] forged") +
+                                  QChar(0) + "end"}});
+        lines.append(QJsonObject{{"t", 0.0}, {"l", "warn"}, {"m", QString(5000, 'b')}});
+        body["lines"] = lines;
+        const QList<ClientLogLine> out = clientLogLines(body, "owner", "10.0.0.2");
+        CHECK_EQ(out.size(), 2);
+        for (const ClientLogLine& line : out) {
+            CHECK(!line.text.contains('\n'));
+            CHECK(!line.text.contains('\r'));
+            CHECK(!line.text.contains(QChar(0)));
+            CHECK(line.text.startsWith("[p1 owner@10.0.0.2] "));
+        }
+        CHECK(out.value(0).text.contains("ok ⏎ 2026-11-26 19:00:00.000 [ERROR] [Session] forged"));
+        CHECK(out.value(1).text.endsWith(QString(kClientLineChars, 'b') + " […]"));
+        CHECK(out.value(1).text.size() <
+              kClientLineChars + 64); // the tag, the page's time, the mark
+    }
+
+    // What a page prints may carry what is no one's business: the owner link's
+    // fragment keys, a share PIN, a cookie, a token. Hidden, by the server.
+    SECTION("Client log lines: a page's secrets are hidden");
+    {
+        const QString k = "AbCdEf0123456789xyzXYZ";
+        struct Case
+        {
+            QString in;
+            QString out;
+        };
+        const QList<Case> cases = {
+            {"open https://app.moonlightweb.top/" + k + "#k=" + k + "&n=" + k,
+             "open https://app.moonlightweb.top/" + k + "#k=(hidden)&n=(hidden)"},
+            {"GET /api/booth/join?code=482913&x=1", "GET /api/booth/join?code=(hidden)&x=1"},
+            {"POST /x?Token=" + k, "POST /x?Token=(hidden)"},
+            {"{\"pin\":\"4829\",\"name\":\"tv\"}", "{\"pin\":\"(hidden)\",\"name\":\"tv\"}"},
+            {"{\"pin\": 4829}", "{\"pin\": \"(hidden)\"}"},
+            // An owner link's exchange answers its keys in a JSON body.
+            {"answer {\"k\":\"" + k + "\",\"n\":\"" + k + "\",\"host\":\"x\"}",
+             "answer {\"k\":\"(hidden)\",\"n\":\"(hidden)\",\"host\":\"x\"}"},
+            {"{\"sid\":\"" + k + "\",\"pwd\":\"" + k + "\",\"passwd\":\"" + k + "\"}",
+             "{\"sid\":\"(hidden)\",\"pwd\":\"(hidden)\",\"passwd\":\"(hidden)\"}"},
+            {"Cookie: mw_session=" + k + "; other=1", "Cookie: (hidden)"},
+            {"authorization=Bearer " + k, "authorization=(hidden)"},
+            {"sent mw_session=" + k + " back", "sent mw_session=(hidden) back"},
+            {"nothing here: n=5 without a separator", "nothing here: n=5 without a separator"},
+        };
+        for (const Case& c : cases)
+            CHECK_EQ(hideClientSecrets(c.in), c.out);
+
+        QJsonObject body;
+        body["id"] = "p2";
+        body["seq"] = 0;
+        body["page"] = "/#k=" + k;
+        body["ua"] = "UA";
+        QJsonArray lines;
+        lines.append(QJsonObject{{"t", 0.0}, {"l", "error"}, {"m", "join …?code=482913 failed"}});
+        lines.append(QJsonObject{{"t", 0.0}, {"l", "warn"}, {"m", "link …#k=" + k}});
+        body["lines"] = lines;
+        for (const ClientLogLine& line : clientLogLines(body, "owner", "10.0.0.2")) {
+            CHECK(!line.text.contains(k));
+            CHECK(!line.text.contains("482913"));
+        }
+    }
+
+    // Per sender and per minute, in lines and in bytes; what goes past is
+    // counted once, as the sender's next minute begins.
+    SECTION("Client log budget");
+    {
+        ClientLogBudget budget;
+        const ClientLogBudget::Limits limits{3, 100};
+        auto many = [](int n, int size) {
+            QList<ClientLogLine> out;
+            for (int i = 0; i < n; i++)
+                out.append({Logger::Error, QString(size, 'e')});
+            return out;
+        };
+        CHECK_EQ(budget.admit("s1", many(5, 10), limits, 1000).size(), 3); // lines
+        CHECK_EQ(budget.admit("s1", many(1, 10), limits, 2000).size(), 0);
+        CHECK_EQ(budget.admit("s2", many(1, 10), limits, 2000).size(), 1); // its own budget
+        CHECK_EQ(budget.admit("s3", many(3, 60), limits, 2000).size(), 1); // bytes
+        // The next minute: the count first, then the new minute's lines.
+        const QList<ClientLogLine> next = budget.admit("s1", many(1, 10), limits, 61000);
+        CHECK_EQ(next.size(), 2);
+        CHECK_EQ(next.value(0).level, Logger::Warning);
+        CHECK(next.value(0).text.startsWith("[s1] 3 client lines dropped"));
+        // Nothing dropped: no count.
+        CHECK_EQ(budget.admit("s2", many(1, 10), limits, 70000).size(), 1);
+        // A minute with nothing dropped after one that did: one count only.
+        CHECK_EQ(budget.admit("s1", many(1, 10), limits, 130000).size(), 1);
+        // The real budgets hold what they say.
+        CHECK(ClientLogBudget::kQuiet.lines < ClientLogBudget::kDebug.lines);
+        CHECK(ClientLogBudget::kQuiet.bytes < ClientLogBudget::kDebug.bytes);
+        // A clock that goes back starts a new minute: the count, then the lines.
+        CHECK_EQ(budget.admit("s4", many(4, 10), limits, 500000).size(), 3);
+        const QList<ClientLogLine> back = budget.admit("s4", many(1, 10), limits, 400000);
+        CHECK_EQ(back.size(), 2);
+        CHECK(back.value(0).text.startsWith("[s4] 1 client lines dropped"));
+
+        // Out of debug mode, a line the page marked as an error counts like any
+        // other: the level bounds nothing.
+        {
+            ClientLogBudget quiet;
+            QList<ClientLogLine> errors;
+            for (int i = 0; i < ClientLogBudget::kQuiet.lines + 30; i++)
+                errors.append({i % 2 ? Logger::Error : Logger::Warning, QStringLiteral("x")});
+            CHECK_EQ(quiet.admit("s", errors, ClientLogBudget::kQuiet, 0).size(),
+                     ClientLogBudget::kQuiet.lines);
+            QList<ClientLogLine> big{{Logger::Error, QString(40 * 1024, 'e')},
+                                     {Logger::Error, QString(40 * 1024, 'e')}};
+            CHECK_EQ(quiet.admit("t", big, ClientLogBudget::kQuiet, 0).size(), 1); // 64 KB
+        }
+
+        // Senders are bounded: past kMaxSenders, the stalest goes, and comes
+        // back with a new minute.
+        {
+            ClientLogBudget crowd;
+            CHECK_EQ(crowd.admit("first", many(5, 1), limits, 1000).size(), 3);
+            CHECK_EQ(crowd.admit("first", many(1, 1), limits, 1001).size(), 0); // spent
+            for (int i = 1; i < ClientLogBudget::kMaxSenders; i++)
+                CHECK_EQ(crowd.admit(QString::number(i), many(1, 1), limits, 2000 + i).size(), 1);
+            // Still remembered with 256 senders: still spent.
+            CHECK_EQ(crowd.admit("first", many(1, 1), limits, 3000).size(), 0);
+            // The 257th pushes the stalest out: "first", whose window began first.
+            CHECK_EQ(crowd.admit("newcomer", many(1, 1), limits, 4000).size(), 1);
+            CHECK_EQ(crowd.admit("first", many(1, 1), limits, 4001).size(), 1);
+        }
+    }
+
+    // A guest's page out of debug mode is answered 404, as before; an owner's
+    // is heard, for its warnings and errors.
+    SECTION("Client log: who is heard out of debug mode");
+    {
+        CHECK(clientLogHeard(true, false));   // a guest, in debug mode
+        CHECK(clientLogHeard(true, true));    // an owner, in debug mode
+        CHECK(!clientLogHeard(false, false)); // a guest, out of it: 404
+        CHECK(clientLogHeard(false, true));   // an owner, out of it
+    }
+
+    SECTION("Client log sender: a digest of the session, never its token");
+    {
+        const QString token = "k9f8e7d6c5b4a3210fedcba9876543210";
+        const QString a = clientLogSender(token, "10.0.0.2");
+        CHECK(a.startsWith("session "));
+        CHECK(!a.contains(token.left(8)));
+        CHECK_EQ(a, clientLogSender(token, "10.0.0.3")); // one session, any address
+        CHECK(a != clientLogSender(token + "x", "10.0.0.2"));
+        CHECK_EQ(clientLogSender("", "127.0.0.1"), QString("host@127.0.0.1"));
     }
 }

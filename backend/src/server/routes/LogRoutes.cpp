@@ -96,9 +96,11 @@ QJsonObject statusJson(const LogArchive::Status& s)
 
 } // namespace
 
-HttpResponse writeClientLog(const HttpRequest& req, const QString& who)
+HttpResponse writeClientLog(const HttpRequest& req, const QString& who, const QString& sender,
+                            bool outOfDebug)
 {
-    if (!mw::run::debug()) return HttpResponse::error(404, "Debug mode is off");
+    const bool debug = mw::run::debug();
+    if (!clientLogHeard(debug, outOfDebug)) return HttpResponse::error(404, "Debug mode is off");
     if (req.body.size() > kMaxBody) return HttpResponse::error(413, "Batch too large");
     const QJsonObject body = QJsonDocument::fromJson(req.body).object();
     const QJsonArray lines = body.value(QStringLiteral("lines")).toArray();
@@ -109,15 +111,23 @@ HttpResponse writeClientLog(const HttpRequest& req, const QString& who)
     if (log->logFilePath().isEmpty()) {
         // This process's log directory (common/PrivilegedPlace.h); none means
         // the lines are not kept.
-        if (const QString dir = mw::place::logDir(); !dir.isEmpty()) {
-            // Every level the page sent: the page already chose what to print.
-            log->setMinLevel(Logger::Debug);
+        if (const QString dir = mw::place::logDir(); !dir.isEmpty())
             log->setLogFile(dir + QStringLiteral("/moonlightweb-client.log"));
-        }
     }
+    // In debug mode, every level the page sent; out of it, warnings and errors
+    // only, whatever the page sent. Set on every batch, so debug mode switched
+    // during the run takes effect at the next one.
+    const Logger::Level floor = debug ? Logger::Debug : Logger::Warning;
+    log->setMinLevel(floor);
 
-    // Share links in them are written /p/(link) (ClientLogLines.h).
+    // Share links and secrets in them are hidden (ClientLogLines.h).
+    QList<ClientLogLine> kept;
     for (const ClientLogLine& line : clientLogLines(body, who, req.clientAddress))
+        if (line.level >= floor) kept.append(line);
+    static ClientLogBudget budget;
+    for (const ClientLogLine& line :
+         budget.admit(sender, kept, debug ? ClientLogBudget::kDebug : ClientLogBudget::kQuiet,
+                      QDateTime::currentMSecsSinceEpoch()))
         log->log(line.level, line.text);
 
     QJsonObject obj;
@@ -130,11 +140,14 @@ void registerLogRoutes(HttpServer& server, LogArchive& archive,
 {
     RestRouter* router = server.router();
 
-    // Any session: the owner's pages, here or remote. A guest's go through
-    // /api/share/player/log, which checks their own cookie instead.
+    // Any session: the owner's pages, here or remote. One without a session
+    // never gets here (HttpServer's check before any route answers 401). A
+    // guest's go through /api/share/player/log, which checks their own cookie
+    // instead. Out of debug mode too, for their warnings and errors.
     router->post(QStringLiteral("/api/logs/client"), [](const HttpRequest& req) {
-        return writeClientLog(req,
-                              req.isHostMachine ? QStringLiteral("host") : QStringLiteral("owner"));
+        return writeClientLog(
+            req, req.isHostMachine ? QStringLiteral("host") : QStringLiteral("owner"),
+            clientLogSender(HttpServer::sessionTokenFromRequest(req), req.clientAddress), true);
     });
 
     router->get(QStringLiteral("/api/logs/archive"), [&archive](const HttpRequest& req) {

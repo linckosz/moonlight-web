@@ -828,7 +828,8 @@ void registerShareRoutes(HttpServer& server, ShareManager& share, const ShareRou
     router->post(QStringLiteral("/api/share/player/log"), [&share](const HttpRequest& req) {
         const int slot = share.slotForCookie(HttpServer::cookieFromRequest(req, kPlayerCookie));
         if (slot < 0) return HttpResponse::error(403, "Forbidden");
-        return writeClientLog(req, QStringLiteral("guest %1").arg(slot));
+        return writeClientLog(req, QStringLiteral("guest %1").arg(slot),
+                              QStringLiteral("guest %1").arg(slot), false);
     });
 
     Logger::info(QStringLiteral("[Share] Session sharing enabled (slots %1-%2)")

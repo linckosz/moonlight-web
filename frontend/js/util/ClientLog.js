@@ -16,15 +16,22 @@
  */
 
 /**
- * This page's console, sent to the server's client log while the server is in
- * debug mode (--debug, or the box in Admin → Advanced) — so the browser side
+ * This page's console, sent to the server's client log — so the browser side
  * of a problem ends up in the same "Download logs" archive as the host side,
- * without anyone opening the developer tools.
+ * without anyone opening the developer tools. In debug mode (--debug, or the box
+ * in Admin → Advanced), all of it; out of it, an owner's page sends its warnings
+ * and errors only ('quiet'), and a guest's page sends nothing.
  *
  * The FIRST import of app.js: modules print while they load, and those lines
  * must be caught too. Until /api/health has answered, lines are kept in a
- * bounded buffer; when the server says debug is off, the console is given
- * back untouched and the buffer dropped.
+ * bounded buffer; when the server says debug is off, an owner's page keeps
+ * only the warnings and errors of it, and a guest's gives the console back
+ * untouched and drops the buffer.
+ *
+ * What a line may carry that is no one's business — the owner link's fragment
+ * keys, a share PIN, a cookie, a token — is hidden as it is caught
+ * (hideSecrets); the server hides it again. A refused send backs off, up to
+ * BACKOFF_MAX_MS, and the buffer stays bounded: the oldest lines go first.
  *
  * Sent every few seconds, when a stream ends, and as the page goes away (a
  * beacon), so a tab that crashes or is closed still leaves what it printed.
@@ -53,6 +60,12 @@ const MAX_CHARS = 512 * 1024;
 /** One line's cap; a dumped object can be huge. */
 const MAX_LINE_CHARS = 8 * 1024;
 const FLUSH_MS = 5000;
+/** The most lines one batch carries: the server refuses more (LogRoutes.cpp). */
+const MAX_BATCH_LINES = 2000;
+/** Waits after a refused send: doubled each time, from one flush period. */
+const BACKOFF_MAX_MS = 5 * 60 * 1000;
+/** The levels a page out of debug mode sends. */
+const QUIET_LEVELS = new Set(['warn', 'error']);
 /** A beacon's body is capped by the browser (64 KB in Chrome). */
 const BEACON_MAX_CHARS = 60 * 1024;
 
@@ -62,7 +75,7 @@ const ENDPOINT = IS_GUEST ? '/api/share/player/log' : '/api/logs/client';
 /** What the server said at the last /api/health. */
 export const serverDiag = { debug: false, verbose: false };
 
-/** @type {'probing' | 'on' | 'off'} */
+/** @type {'probing' | 'on' | 'quiet' | 'off'} */
 let state = 'probing';
 /** A TV on plain HTTP (keepClientLogOff): never heard, so never mirrored. */
 let plainHttpTv = false;
@@ -74,6 +87,9 @@ let seq = 0;
 let authed = IS_GUEST; // a guest's cookie is checked by the route itself
 let timer = 0;
 let sending = false;
+/** After a refused send: no new one before this, and the wait it came from. */
+let retryAt = 0;
+let backoffMs = 0;
 /** refreshClientLog calls made so far: only the latest one's answer counts. */
 let probes = 0;
 const pageId = Math.random().toString(36).slice(2, 10);
@@ -105,17 +121,45 @@ function stringify(arg) {
     }
 }
 
-function capture(level, args) {
-    let text = args.map(stringify).join(' ');
-    if (text.length > MAX_LINE_CHARS) text = text.slice(0, MAX_LINE_CHARS) + ' […]';
-    buffer.push({ t: Date.now(), l: level, m: text });
-    chars += text.length;
+/**
+ * The line without what it may carry that is no one else's business: the value
+ * of a link fragment's k= and n= (the owner link's keys), of a code=, pin=,
+ * key=, token=, password=, session= or auth= parameter, of a Cookie or
+ * Authorization header, and of an mw_ cookie. The server hides the same again
+ * (server/ClientLogLines.cpp, hideClientSecrets): a page may not.
+ * @param {string} text
+ */
+export function hideSecrets(text) {
+    return text
+        .replace(
+            /([#?&;]\s*(?:k|n|code|pin|key|token|password|passwd|pwd|session|auth|sid)\s*=\s*)[^&#\s"'<>;,]+/gi,
+            '$1(hidden)',
+        )
+        .replace(
+            /("(?:k|n|code|pin|key|token|password|passwd|pwd|session|auth|sid|cookie)"\s*:\s*)(?:"[^"]*"|[^,}\]\s]+)/gi,
+            '$1"(hidden)"',
+        )
+        .replace(/\b((?:set-)?cookie|authorization)(\s*[:=]\s*)[^\n]*/gi, '$1$2(hidden)')
+        .replace(/\b(mw_[a-z_]+=)[^;\s"']+/gi, '$1(hidden)');
+}
+
+/** Keep the buffer within its bounds, the oldest lines going first. */
+function trim() {
     while (buffer.length > MAX_LINES || chars > MAX_CHARS) {
         const old = buffer.shift();
         if (!old) break;
         chars -= old.m.length;
         dropped++;
     }
+}
+
+function capture(level, args) {
+    if (state === 'quiet' && !QUIET_LEVELS.has(level)) return;
+    let text = hideSecrets(args.map(stringify).join(' '));
+    if (text.length > MAX_LINE_CHARS) text = text.slice(0, MAX_LINE_CHARS) + ' […]';
+    buffer.push({ t: Date.now(), l: level, m: text });
+    chars += text.length;
+    trim();
 }
 
 function wrap() {
@@ -149,7 +193,11 @@ function takeBatch(maxChars = Infinity) {
     // page going away.
     let start = buffer.length;
     let size = 0;
-    while (start > 0 && size + buffer[start - 1].m.length <= maxChars) {
+    while (
+        start > 0 &&
+        buffer.length - start < MAX_BATCH_LINES &&
+        size + buffer[start - 1].m.length <= maxChars
+    ) {
         start--;
         size += buffer[start].m.length;
     }
@@ -169,12 +217,24 @@ function takeBatch(maxChars = Infinity) {
     return batch;
 }
 
-/** Put a batch back at the front after a refused send. */
+/** Put a batch back at the front after a refused send, within the bounds. */
 function giveBack(batch) {
     seq = Math.max(0, seq - 1);
     dropped += batch.dropped;
     buffer = batch.lines.concat(buffer);
     chars = buffer.reduce((n, l) => n + l.m.length, 0);
+    trim();
+}
+
+/** A send that did not go through: the next one waits, longer each time. */
+function backOff() {
+    backoffMs = Math.min(BACKOFF_MAX_MS, backoffMs ? backoffMs * 2 : FLUSH_MS);
+    retryAt = Date.now() + backoffMs;
+}
+
+/** Whether this page sends its console at all now. */
+function sendingState() {
+    return state === 'on' || state === 'quiet';
 }
 
 async function checkAuth() {
@@ -195,7 +255,7 @@ async function checkAuth() {
  * @param {{beacon?: boolean}} [opts]
  */
 export async function flushClientLog({ beacon = false } = {}) {
-    if (state !== 'on' || !authed) return;
+    if (!sendingState() || !authed) return;
     if (beacon) {
         const batch = takeBatch(BEACON_MAX_CHARS);
         if (!batch || !navigator.sendBeacon) return;
@@ -205,7 +265,7 @@ export async function flushClientLog({ beacon = false } = {}) {
         );
         return;
     }
-    if (sending) return;
+    if (sending || Date.now() < retryAt) return;
     const batch = takeBatch();
     if (!batch) return;
     sending = true;
@@ -215,17 +275,29 @@ export async function flushClientLog({ beacon = false } = {}) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(batch),
         });
-        if (r.status === 404) {
-            // Debug mode was switched off meanwhile.
+        if (r.ok) {
+            backoffMs = 0;
+            retryAt = 0;
+        } else if (r.status === 404) {
+            // Debug mode was switched off meanwhile (a guest's page, or a
+            // server from before the quiet mode).
             stop();
-        } else if (!r.ok) {
-            // A guest before it holds its slot, a session gone: keep the lines
-            // for the next try, and ask again whether we can be heard.
+        } else if (r.status === 413) {
+            // Too much for one batch: sending it again would only be refused
+            // again. Counted, and let go.
+            dropped += batch.lines.length + batch.dropped;
+            backOff();
+        } else {
+            // A guest before it holds its slot, a session gone, a server
+            // asking for less: keep the lines for a later try, and ask again
+            // whether we can be heard.
             giveBack(batch);
-            if (!IS_GUEST) authed = false;
+            backOff();
+            if (!IS_GUEST && (r.status === 401 || r.status === 403)) authed = false;
         }
     } catch {
         giveBack(batch);
+        backOff();
     } finally {
         sending = false;
     }
@@ -261,7 +333,7 @@ export function keepClientLogOff() {
 }
 
 async function tick() {
-    if (state !== 'on') return;
+    if (!sendingState()) return;
     if (!authed && !(await checkAuth())) return;
     await flushClientLog();
 }
@@ -289,21 +361,30 @@ export async function refreshClientLog() {
     // The first probe through a tunnel can be held by the service worker
     // until it gives up (a 504, tens of seconds on), long after the call made
     // once the tunnel was up has switched the mirror on.
-    if (!health && state === 'on') return;
+    if (!health && sendingState()) return;
     serverDiag.debug = !!(health && health.debug === true);
     serverDiag.verbose = !!(health && health.verbose === true);
-    if (!serverDiag.debug || plainHttpTv) {
+    // No answer at all, or a guest's page out of debug mode: nothing is sent.
+    if (plainHttpTv || !health || (!serverDiag.debug && IS_GUEST)) {
         stop();
         return;
     }
-    if (state !== 'on') {
-        state = 'on';
-        wrap();
-        timer = setInterval(() => void tick(), FLUSH_MS);
+    const next = serverDiag.debug ? 'on' : 'quiet';
+    if (next === 'quiet') {
+        // What was caught before the answer, kept to what this mode sends.
+        buffer = buffer.filter((l) => QUIET_LEVELS.has(l.l));
+        chars = buffer.reduce((n, l) => n + l.m.length, 0);
+    }
+    if (next === 'on' && state !== 'on') {
         // What this browser can do, for the same archive (`[Caps]`, once per
         // page). Loaded only here: a page out of debug mode never fetches it.
         import('./BrowserCaps.js').then((m) => m.logBrowserCaps()).catch(() => {});
     }
+    if (!sendingState()) {
+        wrap();
+        timer = setInterval(() => void tick(), FLUSH_MS);
+    }
+    state = next;
     void tick();
 }
 
