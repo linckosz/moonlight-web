@@ -138,7 +138,8 @@ void run_feedback_tests()
         CHECK_EQ(r.transferTimeout(), Feedback::kTimeoutMs);
         // Only these headers, and none of them names a version or the machine.
         for (const QByteArray& h : r.rawHeaderList()) {
-            CHECK(h == "User-Agent" || h == "Accept");
+            // Qt 6.7+ keeps header names lowercase (QHttpHeaders).
+            CHECK(h.toLower() == "user-agent" || h.toLower() == "accept");
             CHECK(!r.rawHeader(h).contains("0.4"));
         }
     }
