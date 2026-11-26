@@ -32,6 +32,22 @@ import { t } from '../i18n/i18n.js';
 /** Below this many characters (trimmed), Send stays off: the server's own floor. */
 export const MIN_MESSAGE = 10;
 const MAX_EMAIL = 254;
+// The server's and the relay's own rule (Feedback.cpp and discord.go, emailRe):
+// ASCII only, a dotted domain ending in letters. The browser's type=email check
+// is looser ("a@b" passes it), and an address the server then refused would
+// read as "unavailable".
+const EMAIL_RE =
+    /^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,63}$/;
+
+/**
+ * Whether the server would take this address: empty (none given) or within
+ * its rule, once the spaces around it are gone.
+ * @param {string} value
+ */
+export function emailAccepted(value) {
+    const v = value.trim();
+    return v === '' || (v.length <= MAX_EMAIL && EMAIL_RE.test(v));
+}
 
 /**
  * The words the dialog says when the server did not send it: too many
@@ -154,7 +170,7 @@ export function showFeedbackDialog(o) {
 
     let busy = false;
     const ready = () =>
-        !busy && message.value.trim().length >= MIN_MESSAGE && email.checkValidity();
+        !busy && message.value.trim().length >= MIN_MESSAGE && emailAccepted(email.value);
     const paint = () => {
         count.textContent = `${message.value.length} / ${o.maxMessage}`;
         message.disabled = email.disabled = include.disabled = busy;

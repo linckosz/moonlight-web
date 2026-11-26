@@ -22,7 +22,12 @@ vi.mock('../js/i18n/i18n.js', () => ({
     getLanguage: () => 'en',
 }));
 
-import { showFeedbackDialog, attachmentText, feedbackErrorText } from '../js/ui/FeedbackDialog.js';
+import {
+    showFeedbackDialog,
+    attachmentText,
+    feedbackErrorText,
+    emailAccepted,
+} from '../js/ui/FeedbackDialog.js';
 import { AdminView } from '../js/ui/AdminView.js';
 import { BackendClient } from '../js/api/BackendClient.js';
 import { Toast } from '../js/ui/Toast.js';
@@ -96,6 +101,35 @@ describe('the feedback dialog', () => {
         type(f.email, EMAIL);
         expect(f.sendBtn.disabled).toBe(false);
         type(f.email, '');
+        expect(f.sendBtn.disabled).toBe(false);
+    });
+
+    it("keeps Send off on what the server would refuse, though the browser's check passes it", () => {
+        // The server's and the relay's rule, not type=email's.
+        expect(emailAccepted('')).toBe(true);
+        expect(emailAccepted('  ' + EMAIL + '  ')).toBe(true);
+        expect(emailAccepted('first.last+tag@mail.example.co.uk')).toBe(true);
+        expect(emailAccepted('a@b')).toBe(false); // no top-level domain
+        expect(emailAccepted('josé@example.org')).toBe(false); // not ASCII
+        expect(emailAccepted('someone@exämple.org')).toBe(false);
+        expect(emailAccepted('a@b.c')).toBe(false);
+        expect(emailAccepted('a b@example.org')).toBe(false);
+        expect(emailAccepted('`@example.org')).toBe(false);
+        expect(emailAccepted('a'.repeat(64) + '@' + 'b'.repeat(63) + '.org')).toBe(true);
+        expect(emailAccepted('a'.repeat(65) + '@example.org')).toBe(false);
+        // Within every label's bound, over the 254 of the whole.
+        const domain = ['b', 'c', 'd', 'e'].map((c) => c.repeat(60)).join('.');
+        const long = 'a'.repeat(64) + '@' + domain + '.org';
+        expect(long.length).toBeGreaterThan(254);
+        expect(emailAccepted(long)).toBe(false);
+
+        const f = open();
+        type(f.message, MESSAGE);
+        for (const bad of ['a@b', 'josé@example.org']) {
+            type(f.email, bad);
+            expect(f.sendBtn.disabled).toBe(true);
+        }
+        type(f.email, EMAIL);
         expect(f.sendBtn.disabled).toBe(false);
     });
 
