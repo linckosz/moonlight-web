@@ -72,7 +72,13 @@ function view() {
         _clientCursorActive: () => true,
         _pictureWidth: () => 1920,
         _pictureHeight: () => 1080,
-        _mediaRect: () => ({ left: 0, top: 0, width: 960, height: 540 }),
+        // A picture that fills the window: no black above or below it.
+        _mediaRect: () => ({
+            left: 0,
+            top: 0,
+            width: window.innerWidth,
+            height: window.innerHeight,
+        }),
         _sendToHost: (m) => sent.push(m),
         _noteMouseSent() {},
         _applyLocalCursor() {},
@@ -101,6 +107,20 @@ function approachBottom(v, x = 500) {
         now += 10;
         move(v, x, bottom() - 100 + (i + 1) * 6 - 6, 0, 6);
     }
+}
+/** Ten moves of 6 px towards the edge dir (-1 up, 1 down), the last at y = end. */
+function approachTo(v, end, dir, x = 500) {
+    for (let i = 0; i < 10; i++) {
+        now += 10;
+        move(v, x, end - (9 - i) * 6 * dir, 0, 6 * dir);
+    }
+}
+/** A 16:9 picture in the window, as on a 4:3 iPad: black above and below it. */
+function letterbox(v) {
+    const h = Math.round((window.innerWidth * 9) / 16);
+    const top = (window.innerHeight - h) / 2;
+    v._mediaRect = () => ({ left: 0, top, width: window.innerWidth, height: h });
+    return { top, bottom: top + h };
 }
 /** Past the rest, and a few frames of turning. */
 function restThenTurn(n = 10) {
@@ -296,6 +316,60 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         }
         expect(sideways(sent)).toBeGreaterThan(0);
         expect(vertical(sent)).toBe(0);
+    });
+
+    it('turns up from anywhere in the black above the picture (VERTBAND)', () => {
+        const { v, sent } = view();
+        const pic = letterbox(v);
+        // Deeper than the 48 px band, still in the black.
+        expect(pic.top).toBeGreaterThan(StreamView.EDGE_TURN_BAND_PX + 10);
+        approachTo(v, pic.top - 4, -1);
+        sent.length = 0;
+        restThenTurn();
+        expect(vertical(sent)).toBeLessThan(0);
+    });
+
+    it('turns down from anywhere in the black below the picture (VERTBAND)', () => {
+        const { v, sent } = view();
+        const pic = letterbox(v);
+        expect(bottom() - pic.bottom).toBeGreaterThan(StreamView.EDGE_TURN_BAND_PX + 10);
+        approachTo(v, pic.bottom + 4, 1);
+        sent.length = 0;
+        restThenTurn();
+        expect(vertical(sent)).toBeGreaterThan(0);
+    });
+
+    it('never turns over the picture when there is black around it (VERTBAND)', () => {
+        const { v, sent } = view();
+        const pic = letterbox(v);
+        approachTo(v, pic.top + 4, -1);
+        approachTo(v, pic.bottom - 4, 1);
+        sent.length = 0;
+        restThenTurn(20);
+        expect(vertical(sent)).toBe(0);
+        expect(v._edgeTurn ?? null).toBe(null);
+    });
+
+    it('keeps the 48 px band where there is no black (VERTBAND)', () => {
+        const { v, sent } = view();
+        approachTo(v, StreamView.EDGE_TURN_BAND_PX + 12, -1);
+        sent.length = 0;
+        restThenTurn(20);
+        expect(vertical(sent)).toBe(0);
+        approachTo(v, StreamView.EDGE_TURN_BAND_PX - 4, -1);
+        sent.length = 0;
+        restThenTurn();
+        expect(vertical(sent)).toBeLessThan(0);
+    });
+
+    it('keeps the 48 px band where the black is thinner than it (VERTBAND)', () => {
+        const { v, sent } = view();
+        const height = bottom() - 40;
+        v._mediaRect = () => ({ left: 0, top: 20, width: window.innerWidth, height });
+        approachTo(v, StreamView.EDGE_TURN_BAND_PX - 4, -1);
+        sent.length = 0;
+        restThenTurn();
+        expect(vertical(sent)).toBeLessThan(0);
     });
 
     it('sends nothing for a guest whose mouse is taken back', () => {

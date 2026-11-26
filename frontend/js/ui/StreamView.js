@@ -10396,7 +10396,11 @@ export class StreamView {
     static EDGE_TURN_MAX_SPEED = 1500;
     /** The motion before the edge that sets the speed. */
     static EDGE_TURN_SAMPLE_MS = 100;
-    /** The band before the top and bottom edges the vertical turn runs in. */
+    /**
+     * The band before the top and bottom edges the vertical turn runs in, at
+     * the least: the black above and below the picture is the band where it
+     * is deeper (VERTBAND = C, _edgeTurnBands).
+     */
     static EDGE_TURN_BAND_PX = 48;
     /** How long the pointer rests in that band before the vertical turn starts. */
     static EDGE_TURN_REST_MS = 200;
@@ -10480,6 +10484,23 @@ export class StreamView {
         );
     }
 
+    /**
+     * How deep the top and bottom bands are, from each edge of the window of
+     * height h (VERTBAND = C, Bruno 26/11/2026): all the black above or below
+     * the picture (a 16:9 stream on a 4:3 iPad leaves some), so that none of
+     * it is dead and the picture's edge is where the turn begins; and
+     * EDGE_TURN_BAND_PX where there is less black, or none.
+     */
+    _edgeTurnBands(h) {
+        const min = StreamView.EDGE_TURN_BAND_PX;
+        const r = this._mediaRect();
+        if (!r || !(r.height > 0)) return { top: min, bottom: min };
+        return {
+            top: Math.max(min, r.top),
+            bottom: Math.max(min, h - (r.top + r.height)),
+        };
+    }
+
     /** Whether the page is in full screen now (the vertical turn's condition). */
     static _edgeTurnFullscreen() {
         return !!(document.fullscreenElement || document.webkitFullscreenElement);
@@ -10514,8 +10535,8 @@ export class StreamView {
             this._edgeVertSpent = true;
             return;
         }
-        const band = StreamView.EDGE_TURN_BAND_PX;
-        const dir = cy <= band ? -1 : cy >= h - band ? 1 : 0;
+        const band = this._edgeTurnBands(h);
+        const dir = cy <= band.top ? -1 : cy >= h - band.bottom ? 1 : 0;
         if (!dir) {
             stopY();
             this._edgeVertSpent = false;
