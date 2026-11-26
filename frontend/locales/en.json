@@ -971,6 +971,7 @@
         "email": "Email (optional, so we can reply)",
         "includeVersion": "Include version ({{details}})",
         "notice": "Sent to the MoonlightWeb team through our server, and read by the moderators in a private Discord channel. Discord hosts it; it is deleted once handled, within 12 months at most. To have it deleted, ask by replying to our email or on Discord.",
+        "privacy": "Privacy",
         "send": "Send",
         "sending": "Sending…",
         "sent": "Thanks, your message was sent",

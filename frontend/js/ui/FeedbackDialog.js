@@ -27,7 +27,21 @@
  * the server drops whatever arrives with it filled.
  */
 
-import { t } from '../i18n/i18n.js';
+import { t, getLanguage } from '../i18n/i18n.js';
+
+// The site's languages besides English, which lives at the root.
+const SITE_LANGS = ['fr', 'de', 'zh'];
+
+/**
+ * The FAQ's answer to "What data does MoonlightWeb collect?", in the
+ * reader's language where the site has it. Nothing about this instance or
+ * its owner goes with it: a fixed address and the question's anchor.
+ * @param {string} lang
+ */
+export function privacyUrl(lang) {
+    const dir = SITE_LANGS.includes(lang) ? '/' + lang : '';
+    return `https://moonlightweb.top${dir}/faq.html#q16`;
+}
 
 /** Below this many characters (trimmed), Send stays off: the server's own floor. */
 export const MIN_MESSAGE = 10;
@@ -144,7 +158,14 @@ export function showFeedbackDialog(o) {
 
     const notice = document.createElement('p');
     notice.className = 'settings-hint feedback-notice';
-    notice.textContent = t('feedback.notice');
+    notice.textContent = t('feedback.notice') + ' ';
+    const privacy = document.createElement('a');
+    privacy.className = 'feedback-privacy';
+    privacy.href = privacyUrl(getLanguage());
+    privacy.target = '_blank';
+    privacy.rel = 'noopener noreferrer';
+    privacy.textContent = t('feedback.privacy');
+    notice.append(privacy);
 
     const status = document.createElement('p');
     status.className = 'feedback-status';

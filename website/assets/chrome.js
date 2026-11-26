@@ -531,6 +531,19 @@
   slots = document.querySelectorAll('[data-bmc-full-logo]');
   for (i = 0; i < slots.length; i++) slots[i].innerHTML = BMC_FULL_LOGO;
 
+  /* A link to one question (faq.html#q16, from the app's feedback dialog)
+     opens its answer: a closed <details> would show the question alone. */
+  function openTarget() {
+    var id = location.hash.slice(1);
+    var el = /^[a-z0-9-]{1,32}$/i.test(id) ? document.getElementById(id) : null;
+    if (el && el.tagName === 'DETAILS') {
+      el.open = true;
+      el.scrollIntoView();
+    }
+  }
+  openTarget();
+  window.addEventListener('hashchange', openTarget);
+
   /* Language: every language has its own URL (/fr/…, /de/…, /zh/…), written
      by scripts/website/build-site.mjs, and each <option> of the switcher
      carries the address of this same page in its language. Picking one goes

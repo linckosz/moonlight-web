@@ -27,6 +27,7 @@ import {
     attachmentText,
     feedbackErrorText,
     emailAccepted,
+    privacyUrl,
 } from '../js/ui/FeedbackDialog.js';
 import { AdminView } from '../js/ui/AdminView.js';
 import { BackendClient } from '../js/api/BackendClient.js';
@@ -148,6 +149,22 @@ describe('the feedback dialog', () => {
         document.body.innerHTML = '';
         const g = open({ attachment: null });
         expect(g.d.el.querySelector('.feedback-include')).toBeNull();
+    });
+
+    it("ends its notice on a Privacy link to the FAQ's answer, in a new tab", () => {
+        expect(privacyUrl('en')).toBe('https://moonlightweb.top/faq.html#q16');
+        expect(privacyUrl('fr')).toBe('https://moonlightweb.top/fr/faq.html#q16');
+        expect(privacyUrl('zh')).toBe('https://moonlightweb.top/zh/faq.html#q16');
+        // A language the site does not have reads the English page.
+        expect(privacyUrl('tr')).toBe('https://moonlightweb.top/faq.html#q16');
+
+        const f = open();
+        const a = /** @type {HTMLAnchorElement} */ (f.d.el.querySelector('.feedback-notice a'));
+        expect(a.textContent).toBe('feedback.privacy');
+        expect(a.href).toBe('https://moonlightweb.top/faq.html#q16');
+        expect(a.target).toBe('_blank');
+        expect(a.rel).toBe('noopener noreferrer');
+        expect(a.href).not.toContain('?');
     });
 
     it('sends the message, the trimmed address, the box and the trap field', async () => {
