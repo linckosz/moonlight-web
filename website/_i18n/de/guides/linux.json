@@ -32,7 +32,7 @@
   "step4.p": "Dieser Rechner steht sofort in der Liste, mit einer Karte pro Bildschirm — nichts zu koppeln, keine PIN. Andere Hosts in deinem Netzwerk (Sunshine, Wolf, MultiSeat) werden daneben per mDNS gefunden: Die koppelst du einmal — bei Sunshine, indem du die PIN, die MoonlightWeb anzeigt, auf der Weboberfläche von Sunshine eingibst — und die Kopplung bleibt für immer gespeichert.",
   "step5.h": "Drück auf Play",
   "step5.p": "Wähle einen Bildschirm, ein Spiel oder den ganzen Desktop. Vollbild, Gamepad in der Hand — bis zu 4K mit 240 fps, bei unter 20 ms Latenz über WLAN. (HDR von einem Linux-Host ist noch nicht implementiert.)",
-  "dl.btn": "⬇ Für Linux herunterladen",
+  "dl.btn": "Für Linux herunterladen",
   "tr.h": "Fehlerbehebung",
   "trOld.h": "Die Installation klappt, aber ein Klick auf die App bewirkt rein gar nichts",
   "trOld.p": "Fast immer eine Distribution, die älter ist als die Voraussetzung oben. Der Menüeintrag startet ohne Terminal, also kann der Fehler des Loaders nirgends angezeigt werden, und der Klick wirkt, als hätte er nichts getan. Starte <code>/opt/moonlightweb/bin/MoonlightWeb</code> aus einem Terminal: Eine Zeile mit <code>GLIBC_</code> oder <code>GLIBCXX_</code> <em>not found</em> bestätigt es. Die einzige Lösung ist ein Upgrade der Distribution — ein Programm kann seine eigene C-Laufzeitbibliothek nicht mitbringen.",

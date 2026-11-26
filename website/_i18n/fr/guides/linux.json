@@ -32,7 +32,7 @@
   "step4.p": "Cette machine est listée d’emblée, une carte par écran — rien à appairer, aucun code PIN. Les autres hôtes de votre réseau (Sunshine, Wolf, MultiSeat) sont découverts à côté via mDNS : ceux-là s’appairent une fois — pour Sunshine, en saisissant dans sa page web le PIN qu’affiche MoonlightWeb — et c’est mémorisé pour toujours.",
   "step5.h": "Appuyez sur play",
   "step5.p": "Choisissez un écran, un jeu ou le bureau complet. Plein écran, manette en main — jusqu’à 4K à 240 fps, avec moins de 20 ms de latence en Wi-Fi. (Le HDR depuis un hôte Linux n’est pas encore implémenté.)",
-  "dl.btn": "⬇ Télécharger pour Linux",
+  "dl.btn": "Télécharger pour Linux",
   "tr.h": "Dépannage",
   "trOld.h": "Il s’installe très bien, mais cliquer sur l’application ne fait absolument rien",
   "trOld.p": "Presque toujours une distribution plus ancienne que le prérequis ci-dessus. L’entrée de menu se lance sans terminal : l’erreur du chargeur n’a nulle part où s’afficher et le clic semble sans effet. Lancez <code>/opt/moonlightweb/bin/MoonlightWeb</code> depuis un terminal : une ligne mentionnant <code>GLIBC_</code> ou <code>GLIBCXX_</code> <em>not found</em> le confirme. Le seul remède est de mettre à jour la distribution — un programme ne peut pas embarquer sa propre bibliothèque C.",

@@ -32,7 +32,7 @@
   "step4.p": "这台机器一开始就列在那里，每块屏幕一张卡片——无需配对，也没有 PIN 码。你网络上的其他主机（Sunshine、Wolf、MultiSeat）会通过 mDNS 出现在旁边：那些只需配对一次——对于 Sunshine，在其网页中输入 MoonlightWeb 显示的 PIN 码——之后永久记住。",
   "step5.h": "按下开始",
   "step5.p": "选择一块屏幕、一款游戏或完整桌面。全屏、手柄在手——最高 4K、240 fps，Wi-Fi 下延迟低于 20 毫秒。（Linux 主机的 HDR 尚未实现。）",
-  "dl.btn": "⬇ 下载 Linux 版",
+  "dl.btn": "下载 Linux 版",
   "tr.h": "疑难解答",
   "trOld.h": "安装很顺利，但点击应用毫无反应",
   "trOld.p": "几乎都是发行版比上面的要求更旧。菜单项在没有终端的情况下启动，加载器的报错无处显示，点击看起来就像什么都没发生。请在终端中运行 <code>/opt/moonlightweb/bin/MoonlightWeb</code>：若出现包含 <code>GLIBC_</code> 或 <code>GLIBCXX_</code> <em>not found</em> 的行即可确认。唯一的办法是升级发行版——程序无法自带 C 运行库。",

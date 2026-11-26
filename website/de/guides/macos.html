@@ -115,7 +115,8 @@
     </div>
   </div>
 
-  <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-macos" data-i18n="dl.btn">⬇ Für macOS herunterladen</a></p>
+  <p style="text-align:center"><a class="btn btn-primary" data-dl-os="mac" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-macos" data-i18n="dl.btn">Für Mac herunterladen</a></p>
+  <p class="muted" style="text-align:center; font-size:.85rem" data-i18n-html="dl.note">Apple Silicon (M1 oder neuer) · <a href="#blocked">Von macOS blockiert? Siehe unten</a></p>
 
   <h2 id="permissions" data-i18n="perm.h">Was du unter macOS erlauben musst</h2>
   <p data-i18n-html="perm.p">Apple lässt keinen Installer diese Berechtigungen für dich erteilen — jeder Streaming-Server unter macOS fragt nach denselben. Es sind <strong>zwei</strong>, und MoonlightWeb fragt beim ersten Start nach beiden — direkt nach der Installation, während du noch vor dem Mac sitzt:</p>
@@ -133,7 +134,7 @@
   <p data-i18n="cli.note">Beide fragen nach deinem Administratorpasswort, installieren nach /Applications und öffnen den Einrichtungsassistenten — derselbe Installer, dasselbe Ergebnis, ein Schritt weniger.</p>
 
   <h2 data-i18n="tr.h">Fehlerbehebung</h2>
-  <h3 data-i18n="tr0.h">macOS verweigert das Öffnen des Installers: „nicht verifizierter Entwickler“</h3>
+  <h3 id="blocked" data-i18n="tr0.h">macOS verweigert das Öffnen des Installers: „nicht verifizierter Entwickler“</h3>
   <p data-i18n-html="tr0.p">Erwartet und harmlos: Um diesen Dialog loszuwerden, braucht es eine kostenpflichtige Apple Developer ID. Nutze einen der beiden Befehle oben, dann erscheint er nie. Willst du lieber die bereits heruntergeladene Datei verwenden: Unter <strong>macOS 15 Sequoia und neuer</strong> doppelklickst du sie einmal, lässt sie abweisen, öffnest dann <strong>Systemeinstellungen → Datenschutz &amp; Sicherheit</strong>, scrollst ganz nach unten und klickst auf <strong>Dennoch öffnen</strong> — der alte Trick mit Control-Klick → Öffnen funktioniert nicht mehr. Das Gegenstück im Terminal ist <code>xattr -dr com.apple.quarantine ~/Downloads/moonlightweb-*.pkg</code>.</p>
   <h3 data-i18n="tr4.h">Das Bild ist da, aber Maus und Tastatur tun nichts</h3>
   <p data-i18n-html="tr4.p">Das ist die Berechtigung <strong>Bedienungshilfen</strong>: Fehlt sie, verwirft macOS eingespeiste Klicks und Tastenanschläge völlig stillschweigend. Aktiviere <em>MoonlightWeb</em> unter <strong>Systemeinstellungen → Datenschutz &amp; Sicherheit → Bedienungshilfen</strong>, dann beende die App und öffne sie erneut.</p>
@@ -164,5 +165,6 @@ tccutil reset Accessibility com.moonlightweb.server</code></pre>
 <footer id="site-footer"><div class="wrap"><span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL‑3.0</span><span><a href="/de/">Start</a> · <a href="/de/guides/">Anleitungen</a> · <a href="/de/faq.html">FAQ</a> · <a href="/de/contact.html">Kontakt</a> · <a href="/de/server-access/">Verbinden</a> · <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> · <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer" class="bmc-link"><span data-bmc-logo></span><span>Kaffee</span></a></span><span class="foot-play">Spielen auf: <a href="/de/play/chromebook.html">Chromebook</a> · <a href="/de/play/iphone-ipad.html">iPhone und iPad</a> · <a href="/de/play/tv.html">TV</a> · <a href="/de/sunshine-web-client.html">Web-Client für Sunshine</a> · <a href="/de/browser-game-streaming.html">Warum ein Browser-Client</a></span></div></footer>
 
 <script src="/assets/chrome.js?v={{(fileStat `/assets/chrome.js`).ModTime.Unix}}"></script>
+<script src="/assets/download.js?v={{(fileStat `/assets/download.js`).ModTime.Unix}}"></script>
 </body>
 </html>

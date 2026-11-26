@@ -115,7 +115,8 @@
     </div>
   </div>
 
-  <p style="text-align:center"><a class="btn btn-primary" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-macos" data-i18n="dl.btn">⬇ 下载 macOS 版</a></p>
+  <p style="text-align:center"><a class="btn btn-primary" data-dl-os="mac" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="guide-macos" data-i18n="dl.btn">下载 Mac 版</a></p>
+  <p class="muted" style="text-align:center; font-size:.85rem" data-i18n-html="dl.note">Apple Silicon（M1 或更新机型）· <a href="#blocked">被 macOS 拦截？见下文</a></p>
 
   <h2 id="permissions" data-i18n="perm.h">macOS 会请你允许什么</h2>
   <p data-i18n-html="perm.p">苹果不允许任何安装程序代你授予这些权限——macOS 上的每个串流服务器都要求同样的权限。一共<strong>两项</strong>，MoonlightWeb 会在安装后的首次启动时一次性请求两项，那时你还坐在这台 Mac 前面：</p>
@@ -133,7 +134,7 @@
   <p data-i18n="cli.note">两者都会要求输入管理员密码，安装到 /Applications 并打开设置向导——同一个安装程序，同样的结果，少一个步骤。</p>
 
   <h2 data-i18n="tr.h">疑难解答</h2>
-  <h3 data-i18n="tr0.h">macOS 拒绝打开安装程序：“身份不明的开发者”</h3>
+  <h3 id="blocked" data-i18n="tr0.h">macOS 拒绝打开安装程序：“身份不明的开发者”</h3>
   <p data-i18n-html="tr0.p">这是预期行为，也无害：要消除该提示需要付费的 Apple Developer ID。使用上面两条命令之一就不会出现。如果你想用已经下载好的文件：在 <strong>macOS 15 Sequoia 及更新版本</strong>上先双击一次、让它被拒绝，然后打开<strong>系统设置 → 隐私与安全性</strong>，滚动到底部并点击<strong>仍要打开</strong>——旧的 Control-点按 → 打开的快捷方式已失效。终端等效命令：<code>xattr -dr com.apple.quarantine ~/Downloads/moonlightweb-*.pkg</code>。</p>
   <h3 data-i18n="tr4.h">画面有了，但鼠标和键盘没有反应</h3>
   <p data-i18n-html="tr4.p">这是<strong>辅助功能</strong>权限：缺少它时，macOS 会完全静默地丢弃注入的点击和按键。请在<strong>系统设置 → 隐私与安全性 → 辅助功能</strong>中勾选 <em>MoonlightWeb</em>，然后退出并重新打开应用。</p>
@@ -164,5 +165,6 @@ tccutil reset Accessibility com.moonlightweb.server</code></pre>
 <footer id="site-footer"><div class="wrap"><span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL‑3.0</span><span><a href="/zh/">首页</a> · <a href="/zh/guides/">指南</a> · <a href="/zh/faq.html">常见问题</a> · <a href="/zh/contact.html">联系</a> · <a href="/zh/server-access/">连接主机</a> · <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> · <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer" class="bmc-link"><span data-bmc-logo></span><span>咖啡</span></a></span><span class="foot-play">畅玩设备： <a href="/zh/play/chromebook.html">Chromebook</a> · <a href="/zh/play/iphone-ipad.html">iPhone 和 iPad</a> · <a href="/zh/play/tv.html">电视</a> · <a href="/zh/sunshine-web-client.html">Sunshine 网页客户端</a> · <a href="/zh/browser-game-streaming.html">为什么选择浏览器客户端</a></span></div></footer>
 
 <script src="/assets/chrome.js?v={{(fileStat `/assets/chrome.js`).ModTime.Unix}}"></script>
+<script src="/assets/download.js?v={{(fileStat `/assets/download.js`).ModTime.Unix}}"></script>
 </body>
 </html>

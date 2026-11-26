@@ -21,7 +21,7 @@
   "step4.p": "这台机器一开始就列在那里，每块屏幕一张卡片——无需配对，也没有 PIN 码。你网络上的其他主机（Sunshine、Wolf、MultiSeat）会通过 mDNS 出现在旁边：那些只需配对一次——对于 Sunshine，在其网页中输入 MoonlightWeb 显示的 PIN 码——之后永久记住。",
   "step5.h": "按下开始",
   "step5.p": "选择一块屏幕、一款游戏或完整桌面。全屏、手柄在手——最高 4K HDR、240 fps，Wi-Fi 下延迟低于 20 毫秒。",
-  "dl.btn": "⬇ 下载 Windows 版",
+  "dl.btn": "下载 Windows 版",
   "tr.h": "疑难解答",
   "tr1.h": "主机没有出现在浏览器里",
   "tr1.p": "请确保客户端设备与游戏 PC 处于同一网络，并且 Windows 防火墙仍允许 MoonlightWeb（安装程序会自行添加规则）。你也可以通过 IP 手动添加主机。",

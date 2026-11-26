@@ -21,7 +21,7 @@
   "step4.p": "Dieser Rechner steht sofort in der Liste, mit einer Karte pro Bildschirm — nichts zu koppeln, keine PIN. Andere Hosts in deinem Netzwerk (Sunshine, Wolf, MultiSeat) werden daneben per mDNS gefunden: Die koppelst du einmal — bei Sunshine, indem du die PIN, die MoonlightWeb anzeigt, auf der Weboberfläche von Sunshine eingibst — und die Kopplung bleibt für immer gespeichert.",
   "step5.h": "Drück auf Play",
   "step5.p": "Wähle einen Bildschirm, ein Spiel oder den ganzen Desktop. Vollbild, Gamepad in der Hand — bis zu 4K HDR mit 240 fps, bei unter 20 ms Latenz über WLAN.",
-  "dl.btn": "⬇ Für Windows herunterladen",
+  "dl.btn": "Für Windows herunterladen",
   "tr.h": "Fehlerbehebung",
   "tr1.h": "Der Host erscheint nicht im Browser",
   "tr1.p": "Stell sicher, dass das Client-Gerät im selben Netzwerk ist wie der Gaming-PC und dass die Windows-Firewall MoonlightWeb weiterhin zulässt (das Installationsprogramm legt die Regel selbst an). Du kannst einen Host auch manuell per IP hinzufügen.",

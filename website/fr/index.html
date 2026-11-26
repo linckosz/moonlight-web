@@ -522,7 +522,7 @@
     <h1 data-i18n-html="hero.h1">Votre PC gamer.<br><span class="grad">Streamé dans le navigateur.</span></h1>
     <p class="lead" data-i18n-html="hero.lead">MoonlightWeb streame votre PC gamer vers n’importe quel appareil doté d’un navigateur<br>téléphone, tablette, ordinateur, TV. <strong>Gratuit et open source. Rien à installer côté client. Juste une URL.</strong></p>
     <div class="cta cta-hero">
-      <a class="btn btn-primary" href="#download" data-i18n="hero.cta1" data-umami-event="download-cta" data-umami-event-loc="hero">Télécharger gratuitement</a>
+      <a class="btn btn-primary" href="#download" data-dl="hero" data-i18n="hero.cta1" data-umami-event="download-cta" data-umami-event-loc="hero">Télécharger gratuitement</a>
       <a class="btn btn-yellow" href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="hero"><span data-bmc-full-logo></span><span class="sr-only" data-i18n="hero.cta2">Offrez‑moi un café</span></a>
     </div>
 
@@ -756,10 +756,11 @@
       <p data-i18n="dl.p">Un seul téléchargement, sur le PC gamer uniquement. Tous les autres appareils ouvrent juste un navigateur.</p>
     </div>
     <div class="dl-main reveal">
-      <a class="btn btn-primary" id="dl-btn" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="main">⬇ Download MoonlightWeb</a>
+      <a class="btn btn-primary" id="dl-btn" data-dl="main" href="https://github.com/linckosz/moonlight-web/releases" target="_blank" rel="noopener" data-umami-event="download" data-umami-event-loc="main">Download MoonlightWeb</a>
       <span class="dl-meta" id="dl-meta">Latest release on GitHub</span>
-      <!-- Linux only: which package the button resolved to, and where the others are. -->
-      <span class="dl-meta" id="dl-hint" style="margin-top:-.55rem; min-height:0"></span>
+      <!-- Linux: which package the button resolved to, and where the others are.
+           Mac: Apple Silicon only, and the guide for the Gatekeeper prompt. -->
+      <span class="dl-meta" id="dl-hint" style="margin-top:-.55rem; min-height:0" hidden></span>
     </div>
     <div class="dl-grid">
       <div class="dl-card cyb reveal">
@@ -846,6 +847,7 @@
 
 <div id="lb"><img alt=""></div>
 <script src="/assets/chrome.js?v={{(fileStat `/assets/chrome.js`).ModTime.Unix}}"></script>
+<script src="/assets/download.js?v={{(fileStat `/assets/download.js`).ModTime.Unix}}"></script>
 <script>
   // Lightbox for screenshots.
   const lb = document.getElementById('lb'), lbImg = lb.querySelector('img');
@@ -869,130 +871,6 @@
     range.addEventListener('input', ()=> setPos(range.value));
     setPos(50);
   }
-
-  // Download section — resolve the latest GitHub release asset for this platform.
-  // Button + meta text follow the page language (<html lang>). Any failure
-  // (offline, rate-limit, no release yet) keeps the /releases fallback links.
-  (async () => {
-    const REPO = 'linckosz/moonlight-web';
-    const btn = document.getElementById('dl-btn'), meta = document.getElementById('dl-meta'),
-          hint = document.getElementById('dl-hint');
-    const ua = navigator.userAgent;
-    let os = null;
-    if (/Android|iPhone|iPad|iPod/i.test(ua) || navigator.maxTouchPoints > 2 && /Mac/.test(ua)) os = 'mobile';
-    else if (/Windows/i.test(ua)) os = 'win';
-    else if (/Mac/i.test(ua)) os = 'mac';
-    else if (/Linux|X11/i.test(ua)) os = 'linux';
-    // Linux package family. The UA rarely names the distro (Firefox does on
-    // Ubuntu/Fedora, Chrome never), so the fallback is .deb: it covers the
-    // Debian family — by far the biggest desktop share — and it installs by
-    // double-click. The AppImage is NOT a safe default: it needs chmod +x
-    // (without it GNOME just offers to "search for software") and FUSE 2,
-    // which Ubuntu >= 22.04 no longer ships.
-    const pkg = /Fedora|Red Hat|CentOS|Rocky|Alma|SUSE|Nobara/i.test(ua) ? 'rpm'
-              : /Arch|Manjaro|EndeavourOS|SteamOS|Bazzite/i.test(ua) ? 'appimage'
-              : 'deb';
-    let arch = 'x64';
-    try {
-      const hints = await navigator.userAgentData?.getHighEntropyValues?.(['architecture']);
-      if (/arm/i.test(hints?.architecture || '')) arch = 'arm64';
-    } catch {}
-
-    // Localised copy for the dynamic button + meta line.
-    const T = {
-      en: {
-        base: '⬇ Download MoonlightWeb',
-        os: {win:'⬇ Download for Windows', mac:'⬇ Download for macOS', linux:'⬇ Download for Linux'},
-        latest: 'Latest release on GitHub',
-        mobile: 'On this device, just open the URL of your server — the download goes on the gaming PC.',
-        all: t => `${t} — all downloads on GitHub`,
-        hint: {
-          deb: 'Debian · Ubuntu · Mint · Pop!_OS — other distros: .rpm or .AppImage below',
-          rpm: 'Fedora · RHEL · openSUSE — other distros: .deb or .AppImage below',
-          appimage: 'Portable — run chmod +x first. Debian/Ubuntu: prefer the .deb below',
-        },
-      },
-      fr: {
-        base: '⬇ Télécharger MoonlightWeb',
-        os: {win:'⬇ Télécharger pour Windows', mac:'⬇ Télécharger pour macOS', linux:'⬇ Télécharger pour Linux'},
-        latest: 'Dernière version sur GitHub',
-        mobile: 'Sur cet appareil, ouvrez simplement l’URL de votre serveur — le téléchargement se fait sur le PC gamer.',
-        all: t => `${t} — tous les téléchargements sur GitHub`,
-        hint: {
-          deb: 'Debian · Ubuntu · Mint · Pop!_OS — autres distros : .rpm ou .AppImage ci‑dessous',
-          rpm: 'Fedora · RHEL · openSUSE — autres distros : .deb ou .AppImage ci‑dessous',
-          appimage: 'Portable — faites d’abord chmod +x. Debian/Ubuntu : préférez le .deb ci‑dessous',
-        },
-      },
-      de: {
-        base: '⬇ MoonlightWeb herunterladen',
-        os: {win:'⬇ Für Windows herunterladen', mac:'⬇ Für macOS herunterladen', linux:'⬇ Für Linux herunterladen'},
-        latest: 'Neueste Version auf GitHub',
-        mobile: 'Auf diesem Gerät öffnest du einfach die URL deines Servers — der Download gehört auf den Gaming-PC.',
-        all: t => `${t} — alle Downloads auf GitHub`,
-        hint: {
-          deb: 'Debian · Ubuntu · Mint · Pop!_OS — andere Distros: .rpm oder .AppImage unten',
-          rpm: 'Fedora · RHEL · openSUSE — andere Distros: .deb oder .AppImage unten',
-          appimage: 'Portabel — zuerst chmod +x ausführen. Debian/Ubuntu: lieber die .deb unten',
-        },
-      },
-      zh: {
-        base: '⬇ 下载 MoonlightWeb',
-        os: {win:'⬇ 下载 Windows 版', mac:'⬇ 下载 macOS 版', linux:'⬇ 下载 Linux 版'},
-        latest: 'GitHub 上的最新版本',
-        mobile: '在本设备上，只需打开你服务器的 URL——下载在游戏 PC 上进行。',
-        all: t => `${t} — 全部下载见 GitHub`,
-        hint: {
-          deb: 'Debian · Ubuntu · Mint · Pop!_OS — 其他发行版：下方的 .rpm 或 .AppImage',
-          rpm: 'Fedora · RHEL · openSUSE — 其他发行版：下方的 .deb 或 .AppImage',
-          appimage: '便携版——请先执行 chmod +x。Debian/Ubuntu：建议用下方的 .deb',
-        },
-      },
-    };
-    let best = null, rel = null;                       // filled once the fetch resolves
-    const render = () => {
-      const L = T[document.documentElement.lang] || T.en;
-      btn.textContent = (os && L.os[os]) || L.base;
-      if (best && rel) meta.textContent = `${rel.tag_name} · ${best.name} · ${(best.size / 1048576).toFixed(0)} MB`;
-      else if (os === 'mobile') meta.textContent = L.mobile;
-      else if (rel) meta.textContent = L.all(rel.tag_name);
-      else meta.textContent = L.latest;
-      hint.textContent = os === 'linux' ? L.hint[pkg] : '';
-      hint.hidden = !hint.textContent;                 // no empty flex row elsewhere
-    };
-    render();
-
-    try {
-      const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
-      if (!r.ok) throw new Error(r.status);
-      rel = await r.json();
-      const find = re => (rel.assets || []).find(a => re.test(a.name));
-      // Asset names produced by .github/workflows/release.yml (version-stamped,
-      // matched here by their platform/arch/extension suffix):
-      //   MoonlightWeb-installer-<ver>-win-{x64,arm64}.exe
-      //   moonlightweb-<ver>-linux-x64.{deb,rpm}, moonlightweb-<ver>-x86_64.AppImage
-      //   moonlightweb-<ver>-macos-arm64.pkg
-      const assets = {
-        'win-x64': find(/win-x64\.exe$/i),
-        'win-arm64': find(/win-arm64\.exe$/i),
-        'mac': find(/\.pkg$/i),
-        'linux-deb': find(/\.deb$/i),
-        'linux-rpm': find(/\.rpm$/i),
-        'linux-appimage': find(/\.appimage$/i),
-      };
-      document.querySelectorAll('[data-asset]').forEach(a => {
-        const m = assets[a.dataset.asset];
-        if (m) a.href = m.browser_download_url;
-      });
-      best = {
-        win: assets[`win-${arch}`] || assets['win-x64'],
-        mac: assets.mac,
-        linux: assets[`linux-${pkg}`] || assets['linux-deb'],
-      }[os] || null;
-      if (best) btn.href = best.browser_download_url;
-    } catch { /* keep the /releases fallback */ }
-    render();
-  })();
 
   // Click-to-copy on the install commands. The button holds an icon, so the
   // command is read from data-copy rather than the DOM — and stays exact even
