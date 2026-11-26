@@ -35,6 +35,7 @@ import { escapeHtml } from '../util/escapeHtml.js';
 import { refreshClientLog } from '../util/ClientLog.js';
 import { GamepadDriverNotice } from './GamepadDriverNotice.js';
 import { showFeedbackDialog } from './FeedbackDialog.js';
+import { titleVersionHtml } from './titleVersion.js';
 
 export class AdminView {
     // Backend statusJson "phase" values that mean activation is still running.
@@ -982,7 +983,7 @@ export class AdminView {
             this.container.innerHTML = `
                 <div class="admin-view" id="view-admin">
                     <div class="admin-header">
-                        <h2>${t('admin.title')}</h2>
+                        <h2>${t('admin.title')}${titleVersionHtml()}</h2>
                         <button class="view-close-btn" id="btn-admin-close"
                                 title="${this.esc(t('common.close'))}">&times;</button>
                     </div>
@@ -1069,7 +1070,7 @@ export class AdminView {
         this.container.innerHTML = `
             <div class="admin-view" id="view-admin">
                 <div class="admin-header">
-                    <h2>${t('admin.title')}</h2>
+                    <h2>${t('admin.title')}${titleVersionHtml()}</h2>
                     <button class="view-close-btn" id="btn-admin-close"
                             title="${this.esc(t('admin.closeDiscard'))}">&times;</button>
                 </div>

@@ -101,6 +101,21 @@ html.remote-nav:has(.settings-header, .admin-header) {
     font-size: var(--fs-xl);
     font-weight: 700;
 }
+/* The version beside the title, on a phone only: there the app header has no
+   room for its own badge (layout.css), and these are the pages where one looks
+   for it (ui/titleVersion.js). Wider, the header shows it. */
+.title-version {
+    display: none;
+    margin-left: var(--space-2);
+    vertical-align: middle;
+    text-transform: none;
+    letter-spacing: normal;
+}
+@media (max-width: 600px) {
+    .version.title-version {
+        display: inline-block;
+    }
+}
 
 .settings-section {
     padding: var(--space-5);

@@ -31,6 +31,7 @@ import { BackendClient } from '../api/BackendClient.js';
 import { Toast } from './Toast.js';
 import { t, getLanguage, setLanguage, AVAILABLE_LANGUAGES } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
+import { titleVersionHtml } from './titleVersion.js';
 import { shortcutsGridHtml, shortcutsTitle } from '../util/shortcutsHelp.js';
 import { noticeDetailsHtml } from './PrivacyNotice.js';
 import { BMC_FULL_LOGO } from './bmcLogo.js';
@@ -2257,7 +2258,7 @@ export class SettingsView {
         this.container.innerHTML = `
             <div class="settings-view" id="view-settings">
                 <div class="settings-header">
-                    <h2>${t('settings.title')}</h2>
+                    <h2>${t('settings.title')}${titleVersionHtml()}</h2>
                     <button class="view-close-btn" id="btn-settings-close"
                             title="${this.esc(t('common.close'))}">&times;</button>
                 </div>
