@@ -17,6 +17,7 @@
 
 #include "HostUploadCap.h"
 
+#include "common/ChildStdio.h"
 #include "common/DetachedProcess.h"
 
 #include <QByteArray>
@@ -326,6 +327,7 @@ bool runTc(const QString& tc, const QStringList& args, const std::string& input 
            QString* out = nullptr)
 {
     QProcess p;
+    mw::passOnlyStdio(p);
     p.start(tc, args);
     if (!p.waitForStarted(3000)) return false;
     if (!input.empty()) p.write(input.data(), static_cast<qint64>(input.size()));
@@ -389,6 +391,7 @@ void Cap::start(unsigned mbps, const std::array<unsigned int, 3>& dscp)
     // or two to start. The thread holds nothing of this object.
     std::thread([program, args]() {
         QProcess p;
+        mw::passOnlyStdio(p);
         p.start(program, args);
         const bool done = p.waitForFinished(30000);
         const QString out = QString::fromLocal8Bit(p.readAllStandardOutput()).trimmed();

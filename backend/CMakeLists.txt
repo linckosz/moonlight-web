@@ -406,6 +406,8 @@ add_executable(mw-server
     src/common/LinuxCapabilities.cpp
     src/common/RendezvousId.cpp
     src/common/InheritedEnvironment.cpp
+    # A child of the server gets its standard channels and nothing else.
+    src/common/ChildStdio.cpp
     # A stop by signal quits as the quit route does (Unix), and no worker starts after it.
     src/common/QuitSignals.cpp
     src/network/RendezvousClient.cpp

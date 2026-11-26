@@ -31,6 +31,7 @@ extern "C" {
 #include "InputMessageCodec.h"
 #include "SdpFingerprint.h"
 #include "SignalingWait.h"
+#include "common/ChildStdio.h"
 #include "common/Edition.h"
 #include "common/PairingCrypto.h"
 #include "network/RouterPortPools.h"
@@ -101,6 +102,7 @@ static QString hostFirewallName()
             return QStringLiteral("ufw");
     }
     QProcess systemctl;
+    mw::passOnlyStdio(systemctl);
     systemctl.start(
         QStringLiteral("systemctl"),
         {QStringLiteral("is-active"), QStringLiteral("--quiet"), QStringLiteral("firewalld")});

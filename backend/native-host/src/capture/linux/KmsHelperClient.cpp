@@ -124,6 +124,8 @@ bool KmsHelperClient::start(std::string& error)
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, theirs, MW_KMS_FD);
+    // Its standard channels and its channel to this process, nothing else
+    posix_spawn_file_actions_addclosefrom_np(&actions, MW_KMS_FD + 1);
     char* const argv[] = {const_cast<char*>(path.c_str()), nullptr};
     char* const envp[] = {nullptr}; // it reads none
     pid_t pid = -1;

@@ -17,6 +17,7 @@
 
 #include "backend/GamepadDriver.h"
 
+#include "common/ChildStdio.h"
 #include "common/Logger.h"
 #include "common/PrivilegedPlace.h"
 #include "common/WinSystemPath.h"
@@ -172,6 +173,7 @@ void runInstaller(QNetworkAccessManager* nam, const DoneFn& done)
 
     Logger::info(QStringLiteral("[gamepad] running the ViGEmBus installer silently"));
     deadline->start(kInstallTimeoutMs);
+    mw::passOnlyStdio(*proc);
     proc->start(stagedPath(), kSilentArgs);
 }
 

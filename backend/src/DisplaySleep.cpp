@@ -17,6 +17,7 @@
 
 #include "DisplaySleep.h"
 
+#include "common/ChildStdio.h"
 #include "common/DesktopSession.h"
 #include "common/Logger.h"
 
@@ -56,6 +57,7 @@ bool runGsettings(const QStringList& args, QString* out = nullptr)
 
     QProcess proc;
     proc.setProcessChannelMode(QProcess::MergedChannels);
+    mw::passOnlyStdio(proc);
     proc.start(bin, args);
     if (!proc.waitForStarted(5000)) return false;
     if (!proc.waitForFinished(10000)) {

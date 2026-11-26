@@ -18,6 +18,7 @@
 #include "SunshineInstaller.h"
 
 #include "../common/DesktopSession.h"
+#include "../common/ChildStdio.h"
 #include "../common/DetachedProcess.h"
 #include "../common/Logger.h"
 
@@ -43,7 +44,7 @@ int run(const QString& program, const QStringList& args, int timeoutMs = 120000,
     QProcess proc;
     proc.setProcessChannelMode(QProcess::MergedChannels);
     // pkexec waits on a password here for up to ten minutes.
-    mw::closeInheritedDescriptors(proc);
+    mw::passOnlyStdio(proc);
     proc.start(program, args);
     if (!proc.waitForStarted(10000)) return -1;
     if (!proc.waitForFinished(timeoutMs)) {

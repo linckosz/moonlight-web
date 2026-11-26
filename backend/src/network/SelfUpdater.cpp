@@ -19,6 +19,7 @@
 #include "AddressRace.h"
 #include "RelaunchScript.h"
 #include "UpdateChecker.h"
+#include "common/ChildStdio.h"
 #include "common/Edition.h"
 #include "common/DetachedProcess.h"
 #include "common/Logger.h"
@@ -64,6 +65,7 @@ QString updateTaskName()
 bool updateTaskExists()
 {
     QProcess p;
+    mw::passOnlyStdio(p);
     p.start(QStringLiteral("schtasks.exe"),
             {QStringLiteral("/Query"), QStringLiteral("/TN"), updateTaskName()});
     if (!p.waitForFinished(10000)) {
@@ -597,6 +599,7 @@ QString SelfUpdater::startViaSystemTask(const QString& program, const QStringLis
 
     const QString name = serviceTaskName();
     QProcess reg;
+    mw::passOnlyStdio(reg);
     reg.start(QStringLiteral("schtasks.exe"),
               {QStringLiteral("/Create"), QStringLiteral("/TN"), name, QStringLiteral("/XML"),
                xmlPath, QStringLiteral("/F")});
@@ -607,6 +610,7 @@ QString SelfUpdater::startViaSystemTask(const QString& program, const QStringLis
     // /Run returns as soon as the task is queued. Its own child is the installer,
     // so nothing here is in our process tree any more.
     QProcess run;
+    mw::passOnlyStdio(run);
     run.start(QStringLiteral("schtasks.exe"),
               {QStringLiteral("/Run"), QStringLiteral("/TN"), name});
     if (!run.waitForFinished(20000) || run.exitCode() != 0)
@@ -815,6 +819,7 @@ void SelfUpdater::prepareBundle()
     {
         QProcess cs;
         cs.setProcessChannelMode(QProcess::MergedChannels);
+        mw::passOnlyStdio(cs);
         cs.start(QStringLiteral("/usr/bin/codesign"),
                  {QStringLiteral("-d"), QStringLiteral("-r-"), bundle});
         if (cs.waitForFinished(10000)) {
@@ -877,6 +882,7 @@ void SelfUpdater::prepareBundle()
                              shQuote(work));
                 if (launchDetached(swap)) m_state = State::Restarting;
             });
+    mw::passOnlyStdio(*m_installer);
     m_installer->start(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), script});
 }
 #endif

@@ -98,6 +98,8 @@ void run_keyboard_layout_tests();
 void run_native_capabilities_json_tests();
 void run_edition_tests();
 void run_detached_process_tests();
+void run_child_stdio_tests();
+int run_child_stdio_probe(int argc, char** argv);
 void run_autostart_entry_tests();
 void run_launch_env_tests();
 void run_kms_helper_protocol_tests();
@@ -155,6 +157,10 @@ void run_takeover_notice_tests();
 
 int main(int argc, char** argv)
 {
+    // The second process of the ChildStdio test: it reads what it holds as
+    // its very first act, says it, and ends. Not a run of the suite.
+    if (argc > 1 && std::strcmp(argv[1], "--child-stdio-probe") == 0)
+        return run_child_stdio_probe(argc, argv);
     // As the package's launcher starts a native worker: that mode first,
     // then what the second process is to do (test_ice_mux_handles.cpp).
     if (argc > 2 && std::strcmp(argv[1], "--stream-worker") == 0) {
@@ -287,6 +293,7 @@ int main(int argc, char** argv)
     run_native_capabilities_json_tests();
     run_edition_tests();
     run_detached_process_tests();
+    run_child_stdio_tests();
     run_autostart_entry_tests();
     run_launch_env_tests();
     run_kms_helper_protocol_tests();

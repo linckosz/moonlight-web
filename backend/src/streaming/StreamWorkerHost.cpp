@@ -26,6 +26,7 @@
 #include "TakeoverNotice.h"
 #include "WorkerService.h"
 #include "worker/RelayGraphWatch.h"
+#include "common/ChildStdio.h"
 #include "common/Edition.h"
 #include "common/LaunchLock.h"
 #include "common/LinuxCapabilities.h"
@@ -268,15 +269,18 @@ bool StreamWorkerHost::startInProcess(const QStringList& args, const QByteArray&
     // The UDP ports every stream shares go to this child by being left open
     // across its start, and across the launcher's own when it comes through
     // one: taken for it now, named in its config line, and let through in the
-    // child alone, between its fork and its exec. Every other process this
-    // one starts still gets none. A child that gets none binds a port of its
-    // own, as without the mux.
+    // child alone, between its fork and its exec. Every other descriptor of
+    // this process is marked close-on-exec there (common/ChildStdio.h), and
+    // every other process this one starts gets none of them. A child that
+    // gets none binds a port of its own, as without the mux.
     std::vector<int> acrossStart;
     const QByteArray line = withSharedSockets(configLine, Launch::Plain, false, 0, &acrossStart);
-    if (!acrossStart.empty())
-        m_Proc->setChildProcessModifier([acrossStart]() {
-            mw::icemuxhandles::leaveOpenAcrossExec(acrossStart.data(), acrossStart.size());
-        });
+    mw::passOnlyStdio(*m_Proc, acrossStart, [acrossStart]() {
+        mw::icemuxhandles::leaveOpenAcrossExec(acrossStart.data(), acrossStart.size());
+    });
+#else
+    // Its three pipes, and no other handle of this process
+    mw::passOnlyStdio(*m_Proc);
 #endif
 
     {

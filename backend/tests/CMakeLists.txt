@@ -133,6 +133,8 @@ add_executable(run_tests
     test_native_capabilities_json.cpp
     test_edition.cpp
     test_detached_process.cpp
+    # A child of the server gets its standard channels and nothing else.
+    test_child_stdio.cpp
     test_autostart_entry.cpp
     test_launch_env.cpp
     test_kms_helper_protocol.cpp
@@ -230,6 +232,7 @@ add_executable(run_tests
     ${_src}/src/server/GuestProfile.cpp
     # The bench's cap on the host's other uploads: its scripts, built and read.
     ${_src}/src/streaming/HostUploadCap.cpp
+    ${_src}/src/common/ChildStdio.cpp
     # The HID passthrough's hidattach, read and rebuilt into a descriptor.
     ${_src}/src/streaming/HidCollectionsJson.cpp
     # Its wheels kept between two streams, as they travel between processes.

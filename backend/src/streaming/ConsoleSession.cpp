@@ -752,10 +752,18 @@ bool ConsoleProcess::start(const QString& program, const QStringList& args, QStr
     ::InitializeProcThreadAttributeList(nullptr, 1, 0, &attrSize);
     std::vector<unsigned char> attrStorage(attrSize);
     auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attrStorage.data());
-    bool attrsOk = ::InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize) != 0;
-    if (attrsOk) {
-        attrsOk = ::UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherit,
-                                              sizeof(inherit), nullptr, nullptr) != 0;
+    const bool listMade = ::InitializeProcThreadAttributeList(attrs, 1, 0, &attrSize) != 0;
+    if (!listMade || !::UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                                  inherit, sizeof(inherit), nullptr, nullptr)) {
+        // The child receives these three handles or is not started
+        const DWORD listError = ::GetLastError();
+        if (listMade) ::DeleteProcThreadAttributeList(attrs);
+        in.closeBoth();
+        out.closeBoth();
+        err.closeBoth();
+        if (token) ::CloseHandle(token);
+        return fail(
+            QStringLiteral("the child's handle list could not be made (error %1)").arg(listError));
     }
 
     // ── Environment and desktop ──────────────────────────────────────────────
@@ -772,7 +780,7 @@ bool ConsoleProcess::start(const QString& program, const QStringList& args, QStr
     si.StartupInfo.hStdInput = in.read;
     si.StartupInfo.hStdOutput = out.write;
     si.StartupInfo.hStdError = err.write;
-    si.lpAttributeList = attrsOk ? attrs : nullptr;
+    si.lpAttributeList = attrs;
 
     QString commandLine = quoteArg(program);
     for (const QString& arg : args)
@@ -781,8 +789,8 @@ bool ConsoleProcess::start(const QString& program, const QStringList& args, QStr
     const std::wstring app = program.toStdWString();
     const std::wstring cwd = QFileInfo(program).absolutePath().toStdWString();
 
-    DWORD flags = CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW;
-    if (attrsOk) flags |= EXTENDED_STARTUPINFO_PRESENT;
+    const DWORD flags =
+        CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT;
 
     PROCESS_INFORMATION pi = {};
     BOOL created;
@@ -802,7 +810,7 @@ bool ConsoleProcess::start(const QString& program, const QStringList& args, QStr
     }
 
     if (env) ::DestroyEnvironmentBlock(env);
-    if (attrsOk) ::DeleteProcThreadAttributeList(attrs);
+    ::DeleteProcThreadAttributeList(attrs);
     if (token) ::CloseHandle(token);
     // The child holds its own copies now; ours would only keep the pipes from
     // ever reporting end-of-file.

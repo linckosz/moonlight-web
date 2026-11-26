@@ -18,6 +18,7 @@
 #include "backend/VirtualDisplayJob.h"
 
 #include "backend/streambackend/NativeProbeService.h"
+#include "common/ChildStdio.h"
 #include "common/Logger.h"
 #include "common/PrivilegedPlace.h"
 #include "mw/native/VirtualDisplay.h"
@@ -687,6 +688,7 @@ void VirtualDisplayJob::runTask()
         proc->deleteLater();
         fail(QStringLiteral("schtasks.exe could not be started"));
     });
+    mw::passOnlyStdio(*proc);
     proc->start(QStringLiteral("schtasks.exe"),
                 {QStringLiteral("/Run"), QStringLiteral("/TN"), VirtualDisplay::taskName()});
 }
@@ -743,6 +745,7 @@ void VirtualDisplayJob::runHelper(const QStringList& args, bool inConsoleSession
         fail(QStringLiteral("The helper could not be started"));
     });
     m_Deadline.start(kHelperTimeoutMs);
+    mw::passOnlyStdio(*proc);
     proc->start(exe, args);
 }
 
