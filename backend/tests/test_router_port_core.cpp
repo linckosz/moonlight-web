@@ -7,9 +7,12 @@
  * that stopped working once.
  */
 #include "test_framework.h"
+#include "network/AllowedPorts.h"
 #include "network/RouterPortCore.h"
 #include "network/RouterPortPools.h"
 
+#include <QJsonArray>
+#include <QJsonValue>
 #include <QMap>
 #include <QSet>
 
@@ -1390,5 +1393,55 @@ void run_router_port_core_tests()
         CHECK(RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {}).hasCandidate());
         CHECK(
             !RouterPortCore::muxRequest(true, RouterPortCore::kMuxStandard, {3478}).hasCandidate());
+    }
+
+    // ── The owner's list (router_ports_allowed): three holes, three of its ports
+    {
+        using namespace mw::routerports;
+        using Hold = RouterPortCore::Hold;
+        const int kStandard = RouterPortCore::kMuxStandard;
+        const int kBlock = RouterPortCore::kMuxBlock;
+        // 20 ports, the one source of both shared ports and of the tunnel,
+        // in this order. As the server runs: the block port is bound at once
+        // on the list's first; the conferencing claim comes first and passes
+        // over it (IceMuxPorts' hold says Failed for a port the other role
+        // serves); the block's claim lands on the port it has; the tunnel's
+        // after them
+        setAllowedPorts(
+            parseAllowedPorts(QJsonValue(QJsonArray{QStringLiteral("11756-11775")}), {}));
+        const AllowedPorts list = allowedPorts();
+        CHECK(list.valid() && list.ports().size() == 20);
+        const uint16_t first = list.ports().value(0);
+        FakeGateway gw;
+        RouterPortCore core(gw, kAlwaysFree);
+        auto standard = RouterPortCore::muxRequest(false, kStandard, {});
+        standard.hold = [first](uint16_t p) {
+            return p == first ? Hold::Failed : Hold::NewlyBound;
+        };
+        standard.drop = [](uint16_t) {};
+        auto block = RouterPortCore::muxRequest(false, kBlock, {first});
+        block.hold = [first](uint16_t p) {
+            return p == first ? Hold::AlreadyHeld : Hold::NewlyBound;
+        };
+        block.drop = [](uint16_t) {};
+        const auto s = core.claim(standard);
+        const auto b = core.claim(block);
+        const auto t = core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(s.ok && b.ok && t.ok);
+        const QList<uint16_t> got = {s.claim.external, b.claim.external, t.claim.external};
+        CHECK_EQ(b.claim.external, first);
+        CHECK_EQ(s.claim.external, list.ports().value(1));
+        CHECK_EQ(t.claim.external, list.ports().value(2));
+        // Three distinct ports, each one of the list's, TCP 443 never asked
+        CHECK(QSet<uint16_t>(got.begin(), got.end()).size() == 3);
+        for (const uint16_t p : got)
+            CHECK(list.contains(p) && p != 443);
+        CHECK(!gw.table.contains(qMakePair(uint16_t(443), QStringLiteral("TCP"))));
+        for (auto it = gw.table.constBegin(); it != gw.table.constEnd(); ++it)
+            CHECK(list.contains(it.key().first));
+        // Nothing taken off, nothing given back
+        CHECK_EQ(gw.removes, 0);
+        CHECK_EQ(core.held().size(), 3);
+        setAllowedPorts({});
     }
 }

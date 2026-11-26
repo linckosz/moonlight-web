@@ -112,7 +112,16 @@ void IceMuxPorts::claim(int which)
     IceMux* mux = &m_Mux;
     m_Router.claim(
         which, m_Mux.port(which),
-        [mux](uint16_t port) {
+        [mux, which](uint16_t port) {
+            // A port that serves the other role is not this one's to take:
+            // passed over before anything is written, as a busy one is. The
+            // two roles walk different numbers, except with the owner's list
+            // (router_ports_allowed), where both draw from the same ports in
+            // the same order: the block port, bound at once, is the list's
+            // first, and the conferencing claim would land on it, only to give
+            // the hole back once serve() refuses it (claimed()).
+            const int other = which == IceMux::kStandard ? IceMux::kBlock : IceMux::kStandard;
+            if (mux->port(other) == port) return Hold::Failed;
             switch (mux->hold(port)) {
             case IceMux::Held::NewlyBound: return Hold::NewlyBound;
             case IceMux::Held::AlreadyHeld: return Hold::AlreadyHeld;

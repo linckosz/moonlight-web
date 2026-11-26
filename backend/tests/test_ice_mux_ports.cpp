@@ -500,5 +500,37 @@ void run_ice_mux_ports_tests()
         r.ports.routerChanged();
         CHECK(r.router.claims == 2 && r.mux.port(kStandard) == 0 && !r.mux.holds(s1));
     }
+
+    SECTION("IceMuxPorts: with the owner's list, the two shared ports are two of its ports");
+    {
+        // router_ports_allowed: both roles draw from the same 20 ports, in the
+        // same order. The block port is bound at once on the first; the
+        // conferencing claim passes over it, nothing is given back, and the
+        // two ports are distinct (the bench of 26/11 23:45 gave 47100 back
+        // and kept one shared port)
+        const std::vector<uint16_t> twenty = freePorts(20);
+        CHECK(twenty.size() == 20);
+        if (twenty.size() == 20) {
+            const QList<uint16_t> list(twenty.begin(), twenty.end());
+            Rig r(list, list);
+            CHECK(r.ports.start(&why));
+            CHECK(r.mux.port(kBlock) == list[0] && r.mux.port(kStandard) == 0);
+            r.router.state = Gateway::Ready;
+            r.ports.routerChanged();
+            CHECK(r.router.claims == 2);
+            CHECK(r.router.asked.front().which == kStandard);
+            r.router.answer();
+            CHECK(r.router.holes[kStandard] == list[1] && r.mux.port(kStandard) == list[1]);
+            CHECK(r.router.asked.front().which == kBlock &&
+                  r.router.asked.front().current == list[0]);
+            r.router.answer();
+            CHECK(r.router.holes[kBlock] == list[0] && r.mux.port(kBlock) == list[0]);
+            CHECK(r.router.releases == 0 && r.mux.serving().size() == 2);
+            CHECK(!r.mux.holds(list[2]));
+            // Held: nothing more is asked
+            r.ports.routerChanged();
+            CHECK(r.router.claims == 2 && r.router.releases == 0);
+        }
+    }
     qInstallMessageHandler(before);
 }
