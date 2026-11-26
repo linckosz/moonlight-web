@@ -387,6 +387,8 @@ add_executable(mw-server
     src/server/routes/LogRoutes.cpp
     src/server/routes/ErrorRoutes.cpp
     src/server/ErrorReports.cpp
+    src/server/Feedback.cpp
+    src/server/routes/FeedbackRoutes.cpp
     src/server/routes/PairRequestRoutes.cpp
     src/server/routes/LanHttpRoutes.cpp
     src/server/HouseLink.cpp

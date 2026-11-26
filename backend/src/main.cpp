@@ -73,9 +73,11 @@
 #include "common/PrivilegedPlace.h"
 #include "server/ClientUniqueId.h"
 #include "server/ErrorReports.h"
+#include "server/Feedback.h"
 #include "server/GuestProfile.h"
 #include "server/LogArchive.h"
 #include "server/routes/ErrorRoutes.h"
+#include "server/routes/FeedbackRoutes.h"
 #include "server/routes/LogRoutes.h"
 #include "common/RunFlags.h"
 #include "server/CertManager.h"
@@ -3872,6 +3874,12 @@ int main(int argc, char* argv[])
     ErrorReports errorReports(QCoreApplication::applicationVersion(),
                               appSettings.errorReportsAllowed(), reportNames);
     errorReports.attach(Logger::instance());
+
+    // "Send feedback" (server settings): the owner's message to the moderators,
+    // through our relay on the rendezvous' host. Nothing leaves until the owner
+    // presses Send; see Feedback.h for what leaves then.
+    Feedback feedback(QCoreApplication::applicationVersion(), mw::edition::isDev());
+
     QObject::connect(&sessionMetrics, &SessionMetrics::sessionEnded, &errorReports,
                      &ErrorReports::streamEnded);
     QObject::connect(&sessionMetrics, &SessionMetrics::sessionFailed, &errorReports,
@@ -8404,6 +8412,8 @@ int main(int argc, char* argv[])
     // The names the archive replaces (LogScrubber): the hosts, this PC, the
     // instance and the account the server runs as (scrubNames, above).
     registerLogRoutes(server, logArchive, scrubNames);
+    // The owner's "Send feedback" (Feedback.h).
+    registerFeedbackRoutes(server, feedback);
     // A page's error lines at a stream's end; a guest's by its slot's cookie.
     registerErrorRoutes(server, errorReports, [&shareManager](const HttpRequest& req) {
         return shareManager.slotForCookie(
