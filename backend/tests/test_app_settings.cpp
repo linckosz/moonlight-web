@@ -3,6 +3,7 @@
  */
 #include "test_framework.h"
 #include "server/AppSettings.h"
+#include "common/Edition.h"
 #include "common/Logger.h"
 
 #include "mw/native/VideoPipeline.h"
@@ -1242,5 +1243,58 @@ void run_app_settings_tests()
             b.setHttpPort(83); // starts from the defaults
             CHECK_EQ(b.httpPort(1), quint16(83));
         }
+    }
+
+    SECTION("AppSettings: one Debug box, and the old verbose_logs still turns it on");
+    {
+        const QString dir = tmp.path() + "/diag";
+        QDir().mkpath(dir);
+        AppSettings d;
+        d.m_FilePath = dir + "/settings.json";
+        const bool edition = mw::edition::isDevBuild();
+        auto write = [&](const QJsonObject& obj) {
+            QFile f(d.m_FilePath);
+            CHECK(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+            f.write(QJsonDocument(obj).toJson());
+            f.close();
+        };
+        auto read = [&]() {
+            QFile f(d.m_FilePath);
+            CHECK(f.open(QIODevice::ReadOnly));
+            return QJsonDocument::fromJson(f.readAll()).object();
+        };
+
+        // Neither key: the edition's default, and no second default behind it.
+        write(QJsonObject{});
+        CHECK_EQ(d.debugMode(), edition);
+        // Only the old key: it is what this file asked for.
+        write(QJsonObject{{"verbose_logs", true}});
+        CHECK(d.debugMode());
+        write(QJsonObject{{"verbose_logs", false}});
+        CHECK_EQ(d.debugMode(), edition);
+        // Both keys: either one on is on.
+        write(QJsonObject{{"debug_mode", false}, {"verbose_logs", true}});
+        CHECK(d.debugMode());
+        write(QJsonObject{{"debug_mode", true}, {"verbose_logs", false}});
+        CHECK(d.debugMode());
+        write(QJsonObject{{"debug_mode", false}, {"verbose_logs", false}});
+        CHECK(!d.debugMode());
+        // A DEV tester's unticked box holds: the old key's absence adds nothing.
+        write(QJsonObject{{"debug_mode", false}});
+        CHECK(!d.debugMode());
+
+        // Saving the box leaves one key, and the rest of the file as it was.
+        write(QJsonObject{{"debug_mode", false}, {"verbose_logs", true}, {"http_port", 81}});
+        d.setDebugMode(false);
+        QJsonObject saved = read();
+        CHECK(!saved.contains("verbose_logs"));
+        CHECK_EQ(saved.value("debug_mode").toBool(true), false);
+        CHECK_EQ(saved.value("http_port").toInt(), 81);
+        CHECK(!d.debugMode());
+        d.setDebugMode(true);
+        saved = read();
+        CHECK(saved.value("debug_mode").toBool(false));
+        CHECK(!saved.contains("verbose_logs"));
+        CHECK(d.debugMode());
     }
 }

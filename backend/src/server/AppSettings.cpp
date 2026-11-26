@@ -953,32 +953,27 @@ void AppSettings::setRemoteDesktopReturn(bool enabled)
     writeAll(obj);
 }
 
-// Both modes start on in the DEV edition, and only there: whoever installs it
+// Debug mode starts on in the DEV edition, and only there: whoever installs it
 // is testing for us, and the logs they send back are the point (issue #48: a
 // zip without the page's pipeline lines could not tell the link from the
 // decoder). A box unticked in the admin page writes false and holds. A release,
-// and a release build started with --dev, keep both off.
+// and a release build started with --dev, keep it off.
+//
+// The old second box, verbose_logs, counts only where the file holds it: its
+// own default was the DEV edition's too, and letting an absent key default to
+// true would tick again the box a DEV tester had just unticked.
 bool AppSettings::debugMode() const
 {
-    return readAll().value("debug_mode").toBool(mw::edition::isDevBuild());
+    const QJsonObject obj = readAll();
+    return obj.value("debug_mode").toBool(mw::edition::isDevBuild()) ||
+           obj.value("verbose_logs").toBool(false);
 }
 
 void AppSettings::setDebugMode(bool enabled)
 {
     QJsonObject obj = readAll();
     obj["debug_mode"] = enabled;
-    writeAll(obj);
-}
-
-bool AppSettings::verboseLogs() const
-{
-    return readAll().value("verbose_logs").toBool(mw::edition::isDevBuild());
-}
-
-void AppSettings::setVerboseLogs(bool enabled)
-{
-    QJsonObject obj = readAll();
-    obj["verbose_logs"] = enabled;
+    obj.remove("verbose_logs");
     writeAll(obj);
 }
 

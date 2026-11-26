@@ -32,7 +32,6 @@ namespace {
 std::atomic<bool> g_DebugCli{false};
 std::atomic<bool> g_DebugSetting{false};
 std::atomic<bool> g_VerboseCli{false};
-std::atomic<bool> g_VerboseSetting{false};
 
 // libdatachannel's lines, into ours. Its errors are ours to see in any mode;
 // everything below them is the chatter --verbose asked for.
@@ -71,11 +70,6 @@ void setVerboseFromCli(bool on)
     g_VerboseCli = on;
 }
 
-void setVerboseSetting(bool on)
-{
-    g_VerboseSetting = on;
-}
-
 bool verboseFromCli()
 {
     return g_VerboseCli;
@@ -83,7 +77,7 @@ bool verboseFromCli()
 
 bool verbose()
 {
-    return g_VerboseCli || g_VerboseSetting;
+    return g_VerboseCli || debug();
 }
 
 void applyVerboseLogging()

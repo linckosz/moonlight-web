@@ -1290,25 +1290,24 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
             hadChange = true;
         }
 
-        // ── Diagnostic modes ─────────────────────────────────────────────
+        // ── Diagnostic mode ──────────────────────────────────────────────
         // In force at once: pages read debug from /api/health when they load,
         // the log switches level on the spot, and the next stream worker is
-        // told through its config line. Echoed back as the mode in force,
+        // told through its config line. Echoed back as the modes in force,
         // which --debug / --verbose may be holding on whatever the box says.
-        if (body.contains("debug_mode")) {
-            const bool enabled = body["debug_mode"].toBool();
+        // verbose_logs is the old second box, now the same one: a page from
+        // before the two merged, still open, is heard as it meant.
+        const QString diagKey = body.contains("debug_mode")     ? QStringLiteral("debug_mode")
+                                : body.contains("verbose_logs") ? QStringLiteral("verbose_logs")
+                                                                : QString();
+        if (!diagKey.isEmpty()) {
+            const bool enabled = body[diagKey].toBool();
             appSettings.setDebugMode(enabled);
             mw::run::setDebugSetting(enabled);
+            mw::run::applyVerboseLogging();
             Logger::info(QStringLiteral("Debug mode %1 from the admin page")
                              .arg(enabled ? QStringLiteral("on") : QStringLiteral("off")));
             obj["debug_mode"] = mw::run::debug();
-            hadChange = true;
-        }
-        if (body.contains("verbose_logs")) {
-            const bool enabled = body["verbose_logs"].toBool();
-            appSettings.setVerboseLogs(enabled);
-            mw::run::setVerboseSetting(enabled);
-            mw::run::applyVerboseLogging();
             obj["verbose_logs"] = mw::run::verbose();
             hadChange = true;
         }

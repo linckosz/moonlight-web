@@ -18,18 +18,20 @@
 #pragma once
 
 /**
- * The two diagnostic modes, each switched on from either of two places.
+ * The two diagnostic modes.
  *
  *   debug    the options a debug build shows (the VE shader list and the
- *            rest of `debug_build`), and every browser's console sent to the
- *            server's client log.
+ *            rest of `debug_build`), and every browser's whole console sent to
+ *            the server's client log. Brings verbose with it: one box records
+ *            everything a bug report needs.
  *   verbose  the log keeps its DEBUG lines and gains the libraries' own
  *            (libdatachannel, Qt's network categories); the browsers turn
  *            their pipeline diagnostics on.
  *
- * The admin page's boxes (Advanced) are kept in settings.json and hold across
- * restarts. --debug and --verbose turn a mode on for one run and leave the
- * file alone; the box then shows it on, and cannot turn it off.
+ * The admin page has one box, Debug (Advanced), kept in settings.json across
+ * restarts. --debug turns debug on for one run and leaves the file alone; the
+ * box then shows it on, and cannot turn it off. --verbose turns verbose alone on
+ * for one run, without the debug options: a developer's switch, with no box.
  *
  * Read from any thread. The stream worker is told through its config line
  * (StreamWorkerHost), since some of its launchers take fixed arguments.
@@ -43,14 +45,13 @@ bool debugFromCli();
 bool debug();
 
 void setVerboseFromCli(bool on);
-void setVerboseSetting(bool on);
 bool verboseFromCli();
-/// Either source.
+/// --verbose, or debug() from either of its sources.
 bool verbose();
 
 /// Bring the logging in line with verbose(): the Logger's threshold, Qt's
 /// network categories and libdatachannel's logger. Idempotent, and cheap when
-/// nothing changed; call it after either verbose setter.
+/// nothing changed; call it after any setter verbose() depends on.
 void applyVerboseLogging();
 
 } // namespace mw::run

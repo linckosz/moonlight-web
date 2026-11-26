@@ -18,8 +18,8 @@
 | `--log <path>` | Write the log to this file instead of the default log folder. Read before anything else, so the first line lands there. | — |
 | `--config <path>` | Read and write the settings from this file instead of `settings.json` in the data folder. Created if absent. | the whole file |
 | `--dev` | An isolated development instance: its own data folder (`…-dev`), its own ports (HTTP `48080`, HTTPS `48443`, signaling `48501`, its slots' signaling ports at 48598-48645, past both editions' stream blocks; its own stream block 48574-48597 and media pool 46200-46231), no single-instance lock, so it runs beside an installed server. | — |
-| `--debug` | Debug mode for this run: the options of a debug build, and the browsers' console sent to the client log ([§3.8](03-Backend.md#38-diagnostics-debug-mode-verbose-logs-the-logs-archive)). | `debug_mode` (either turns it on) |
-| `--verbose` | Verbose logs for this run: DEBUG lines, libdatachannel and Qt network diagnostics, the browsers' pipeline diagnostics. | `verbose_logs` (either turns it on) |
+| `--debug` | Debug mode for this run: the options of a debug build, the browsers' whole console sent to the client log, and the verbose logs ([§3.8](03-Backend.md#38-diagnostics-debug-mode-verbose-logs-the-logs-archive)). | `debug_mode` (either turns it on) |
+| `--verbose` | Verbose logs alone for this run, without the debug options: DEBUG lines, libdatachannel and Qt network diagnostics, the browsers' pipeline diagnostics. | `debug_mode` (which brings them too) |
 | `--autostart` | Started at login: no browser tab is opened, and a second launch does not surface the admin page. Used by the login item. | — |
 | `--noadmin` | Booth mode: the hosts already set up are streamed, with no admin page, no host change and no new device, even from this machine, until a restart without the flag. | `share_in_booth_mode` (sharing while in booth mode) |
 

@@ -601,15 +601,17 @@ public:
 
     // ── Diagnostic modes (admin page → Advanced) ────────────────────────────
     //
-    // "debug_mode" and "verbose_logs", JSON bools, default false — true in the
-    // DEV edition (mw::edition::isDevBuild()), whose testers send us logs. What
-    // they do is described in common/RunFlags.h; --debug and --verbose switch
-    // the same modes on for one run without writing here.
+    // "debug_mode", JSON bool, default false — true in the DEV edition
+    // (mw::edition::isDevBuild()), whose testers send us logs. What it does is
+    // described in common/RunFlags.h; --debug switches it on for one run
+    // without writing here.
+    //
+    // "verbose_logs" was the second box until the two became one. Still read,
+    // so a file where only it is true keeps the logs it asked for: it turns
+    // debug mode on. Removed by the first setDebugMode().
 
     bool debugMode() const;
     void setDebugMode(bool enabled);
-    bool verboseLogs() const;
-    void setVerboseLogs(bool enabled);
 
     // ── Chroma 4:4:4 ───────────────────────────────────────────────────────────
     //

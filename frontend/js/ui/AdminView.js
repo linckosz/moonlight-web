@@ -203,13 +203,11 @@ export class AdminView {
         this._hostAppsScreen = 'primary';
         /** @type {{source: string, name: string, listed: boolean, dismissed: boolean}[]} */
         this._hostAppsDetected = [];
-        // Diagnostics (Advanced): the two modes in force, and whether the
-        // command line holds each on for this run — its box then cannot
-        // turn it off. The logs archive, while it is being built.
+        // Diagnostics (Advanced): debug mode in force, and whether --debug
+        // holds it on for this run — the box then cannot turn it off. The logs
+        // archive, while it is being built.
         this._debugMode = false;
         this._debugModeCli = false;
-        this._verboseLogs = false;
-        this._verboseLogsCli = false;
         this._logsBusy = false;
         // Feedback: what GET /api/feedback answered, or null for no section.
         /** @type {{available: boolean, max_message: number, attachment: {version?: string, edition?: string, os?: string}}|null} */
@@ -341,8 +339,6 @@ export class AdminView {
             this._instanceNameMax = admin.instance_name_max || 32;
             this._debugMode = admin.debug_mode === true;
             this._debugModeCli = admin.debug_mode_cli === true;
-            this._verboseLogs = admin.verbose_logs === true;
-            this._verboseLogsCli = admin.verbose_logs_cli === true;
             // How long a remembered device stays signed in (issue #60), and the
             // value the owner acknowledged. Whole numbers only: anything else
             // reads as the default, so an older server shows no warning.
@@ -1911,11 +1907,11 @@ export class AdminView {
         // Apps on this PC: each change saved at once.
         this._bindHostApps();
 
-        // Diagnostics (Advanced): both modes saved at once, the archive on click.
-        for (const id of ['#chk-debug-mode', '#chk-verbose-logs']) {
-            const chk = /** @type {HTMLInputElement|null} */ (this.container.querySelector(id));
-            if (chk) chk.addEventListener('change', () => void this._saveDiagMode(chk));
-        }
+        // Diagnostics (Advanced): the box saved at once, the archive on click.
+        const debugChk = /** @type {HTMLInputElement|null} */ (
+            this.container.querySelector('#chk-debug-mode')
+        );
+        if (debugChk) debugChk.addEventListener('change', () => void this._saveDiagMode(debugChk));
         const historyLink = this.container.querySelector('#link-connection-history');
         if (historyLink)
             historyLink.addEventListener('click', (e) => {
@@ -3010,8 +3006,7 @@ export class AdminView {
                 <!-- Advanced -->
                 <div class="settings-section" id="admin-section-advanced">
                     <h3 class="settings-section-title">${t('admin.advanced')}</h3>
-                    ${this._renderDiagMode('chk-debug-mode', this._debugMode, this._debugModeCli, 'debugMode', '--debug')}
-                    ${this._renderDiagMode('chk-verbose-logs', this._verboseLogs, this._verboseLogsCli, 'verboseLogs', '--verbose')}
+                    ${this._renderDiagMode()}
                     <div class="settings-field">
                         <span class="settings-label">${t('admin.logs')}</span>
                         <p class="setting-desc">${t('admin.logsDesc')}</p>
@@ -3061,23 +3056,21 @@ export class AdminView {
     }
 
     /**
-     * One diagnostic mode's box. Locked on when the command line turned the
-     * mode on for this run: unticking it could not turn it off.
-     * @param {string} id
-     * @param {boolean} on
-     * @param {boolean} fromCli
-     * @param {'debugMode'|'verboseLogs'} key
-     * @param {string} flag
+     * The Debug box: the debug options and the detailed logs, one switch.
+     * Locked on when --debug turned it on for this run: unticking it could not
+     * turn it off. --verbose alone, a developer's switch, has no box.
      */
-    _renderDiagMode(id, on, fromCli, key, flag) {
+    _renderDiagMode() {
+        const on = this._debugMode;
+        const fromCli = this._debugModeCli;
         return `
                     <div class="settings-field">
                         <label class="settings-checkbox-label">
-                            <input type="checkbox" id="${id}" ${on ? 'checked' : ''} ${fromCli ? 'disabled' : ''} />
-                            <span class="settings-checkbox-text">${t('admin.' + key)}</span>
+                            <input type="checkbox" id="chk-debug-mode" ${on ? 'checked' : ''} ${fromCli ? 'disabled' : ''} />
+                            <span class="settings-checkbox-text">${t('admin.debugMode')}</span>
                         </label>
-                        <p class="setting-desc">${t('admin.' + key + 'Desc')}</p>
-                        ${fromCli ? `<p class="settings-hint">${t('admin.setByCommandLine', { flag })}</p>` : ''}
+                        <p class="setting-desc">${t('admin.debugModeDesc')}</p>
+                        ${fromCli ? `<p class="settings-hint">${t('admin.setByCommandLine', { flag: '--debug' })}</p>` : ''}
                     </div>
         `;
     }
@@ -3108,27 +3101,20 @@ export class AdminView {
     }
 
     /**
-     * Save one diagnostic mode from its box. The server answers with the mode
-     * in force, which the box then shows. Debug mode reaches this page at
-     * once; other pages pick it up the next time they load.
+     * Save the Debug box. The server answers with the mode in force, which the
+     * box then shows. It reaches this page at once; other pages pick it up the
+     * next time they load.
      * @param {HTMLInputElement} chk
      */
     async _saveDiagMode(chk) {
-        const debug = chk.id === 'chk-debug-mode';
         const enabled = chk.checked;
         try {
-            const resp = await BackendClient.saveAdminSettings(
-                debug ? { debug_mode: enabled } : { verbose_logs: enabled },
-            );
-            const inForce = (debug ? resp.debug_mode : resp.verbose_logs) === true;
-            if (debug) this._debugMode = inForce;
-            else this._verboseLogs = inForce;
+            const resp = await BackendClient.saveAdminSettings({ debug_mode: enabled });
+            const inForce = resp.debug_mode === true;
+            this._debugMode = inForce;
             chk.checked = inForce;
-            if (debug) void refreshClientLog();
-            let key;
-            if (debug) key = inForce ? 'admin.debugModeOn' : 'admin.debugModeOff';
-            else key = inForce ? 'admin.verboseLogsOn' : 'admin.verboseLogsOff';
-            Toast.success(t(key));
+            void refreshClientLog();
+            Toast.success(t(inForce ? 'admin.debugModeOn' : 'admin.debugModeOff'));
         } catch (err) {
             console.error('[Admin] Failed to save a diagnostic mode:', err);
             Toast.error(t('admin.saveFailed', { message: /** @type {Error} */ (err).message }));

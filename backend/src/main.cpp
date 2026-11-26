@@ -2687,9 +2687,8 @@ int main(int argc, char* argv[])
     appSettings.seedDocumentedDefaults(); // write documented file-only keys if absent
     appSettings.migrateHostApps();        // the betas' gamescope_apps → host_apps
 
-    // The admin page's diagnostic boxes, on top of this run's flags.
+    // The admin page's diagnostic box, on top of this run's flags.
     mw::run::setDebugSetting(appSettings.debugMode());
-    mw::run::setVerboseSetting(appSettings.verboseLogs());
     mw::run::applyVerboseLogging();
     if (mw::run::debug())
         Logger::info(mw::run::debugFromCli() ? "Debug mode on (--debug)"

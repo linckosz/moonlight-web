@@ -135,8 +135,8 @@ The consent is the master switch: `internet_access_enabled` gates the per-sessio
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `debug_mode` | bool | `false` | **Admin → Advanced**. The options of a debug build on any build, and every browser's console sent to `logs/moonlightweb-client.log` ([Backend §3.8](03-Backend.md#38-diagnostics-debug-mode-verbose-logs-the-logs-archive)). `--debug` turns it on for one run without writing here. |
-| `verbose_logs` | bool | `false` | **Admin → Advanced**. The log keeps its DEBUG lines and gains libdatachannel's and Qt's network diagnostics; browsers print their pipeline diagnostics. Applies at once, and to the next stream worker. `--verbose` turns it on for one run without writing here. |
+| `debug_mode` | bool | `false` | **Admin → Advanced → Debug mode**. The options of a debug build on any build, every browser's whole console sent to `logs/moonlightweb-client.log`, and the verbose logs: the log keeps its DEBUG lines and gains libdatachannel's and Qt's network diagnostics, browsers print their pipeline diagnostics ([Backend §3.8](03-Backend.md#38-diagnostics-debug-mode-verbose-logs-the-logs-archive)). Applies at once, and to the next stream worker. `--debug` turns it on for one run without writing here; `--verbose` turns the verbose logs alone on for one run. |
+| `verbose_logs` | bool | — | The second box until it merged into `debug_mode`. Still read: `true` turns debug mode on. Removed when the Debug box is saved. |
 | `latency_flag_enabled` | bool | `false` | **File-only** (no UI), seeded at startup, read at startup. A measuring instrument, not a preference: on a Windows, macOS or X11 host with a desktop session, the host draws a small flag on its screen for 100 ms at every injected click, and the browser's console probe (`mwLatency.run()`) measures click → flag in the stream ([Client presentation §15](15-Client-Presentation-Benchmarks.md)). Turn it off again after measuring: every click shows the flag to whoever plays. |
 
 ## 7.3 `.env` — environment configuration
