@@ -463,7 +463,7 @@ func TestContentWorstCaseFitsDiscord(t *testing.T) {
 	if _, code := validate(feedbackRequest{Message: strings.Repeat("😀", maxMessageUnits/2) + "a"}); code != "message_long" {
 		t.Fatalf("astral one over: %q", code)
 	}
-	if _, code := validate(feedbackRequest{Message: "  short‮  "}); code != "message_short" {
+	if _, code := validate(feedbackRequest{Message: "  short\u202E  "}); code != "message_short" {
 		t.Fatalf("short: %q", code)
 	}
 }
@@ -473,8 +473,8 @@ func TestContentWorstCaseFitsDiscord(t *testing.T) {
 func TestMessageNeutralised(t *testing.T) {
 	msg := "@everyone @here <@123> <@&456> [click](https://evil.example)\n" +
 		"```\nescaped?\n``` `inline` " +
-		"\x00\x07\x1b[31m‮evil‬⁦iso⁩​﻿‎" +
-		"\r\nnext line 👨‍👩"
+		"\x00\x07\x1b[31m\u202Eevil\u202C\u2066iso\u2069\u200B\uFEFF\u200E" +
+		"\r\nnext\u2028line 👨\u200D👩"
 	f, code := validate(feedbackRequest{Message: msg})
 	if code != "" {
 		t.Fatal(code)
@@ -488,7 +488,7 @@ func TestMessageNeutralised(t *testing.T) {
 		t.Fatalf("code block not intact: %q", c)
 	}
 	for _, r := range inner {
-		if r == '‍' || r == '\n' || r == '\t' {
+		if r == '\u200D' || r == '\n' || r == '\t' {
 			continue
 		}
 		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == '\r' ||
@@ -498,7 +498,7 @@ func TestMessageNeutralised(t *testing.T) {
 		}
 	}
 	// Mentions are inert text inside the block, and the payload forbids pings.
-	if !strings.Contains(inner, "@everyone") || !strings.Contains(inner, "👨‍👩") ||
+	if !strings.Contains(inner, "@everyone") || !strings.Contains(inner, "👨\u200D👩") ||
 		!strings.Contains(inner, "\nnext\nline") {
 		t.Fatalf("text altered beyond neutralising: %q", inner)
 	}
@@ -511,7 +511,7 @@ func TestMessageNeutralised(t *testing.T) {
 func TestEmailAndMetaTraps(t *testing.T) {
 	for _, e := range []string{
 		"@everyone", "a`b@example.org", "a@example.org\n```", "a@example.org```",
-		"<@123>@example.org", "a@b", "a b@example.org", "a@exa‮mple.org",
+		"<@123>@example.org", "a@b", "a b@example.org", "a@exa\u202Emple.org",
 		"[x](https://evil.example)@example.org", "a@example.org\x00",
 		strings.Repeat("a", 65) + "@example.org",
 	} {

@@ -78,13 +78,13 @@ func cleanMessage(s string) string {
 	b.Grow(len(s))
 	for _, r := range s {
 		switch {
-		case r == '\r' || r == ' ' || r == ' ':
+		case r == '\r' || r == '\u2028' || r == '\u2029':
 			b.WriteByte('\n')
 		case r == '\n' || r == '\t':
 			b.WriteRune(r)
 		case r == '`':
-			b.WriteRune('ˋ') // same width, cannot open or close a block
-		case r == '‍':
+			b.WriteRune('\u02CB') // same width, cannot open or close a block
+		case r == '\u200D':
 			b.WriteRune(r) // ZWJ: joins emoji, reorders nothing
 		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
 			// dropped: C0/C1 controls, bidi overrides/isolates, ZWSP, BOM…
