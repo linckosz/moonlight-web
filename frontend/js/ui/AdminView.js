@@ -46,6 +46,13 @@ export class AdminView {
         'configuring_ports',
     ];
 
+    // Shown while the router keeps a port forward this install made under an
+    // address this PC no longer has, and will not let it be removed from here
+    // (router_stale_removal_refused). A fixed text, in English only: nothing a
+    // router answered is ever shown, and no address.
+    static STALE_FORWARD_NOTICE =
+        'A port forward to an old address of this PC could not be removed: remove it in your box.';
+
     // Mirrors AuthManager::MIN_ADMIN_PASSWORD_LEN — checked here only to fail
     // fast; the backend refuses anything shorter regardless.
     static MIN_ADMIN_PASSWORD_LEN = 8;
@@ -126,6 +133,8 @@ export class AdminView {
         // The router keeps a 443 forward this install made under an address
         // this PC no longer has, and will not let it be removed from here.
         this._router443StaleRefused = false;
+        // The same of any other forward (STALE_FORWARD_NOTICE).
+        this._routerStaleRefused = false;
 
         // Activation loader: live step reported by the backend (statusJson.phase).
         this._activating = false;
@@ -406,6 +415,7 @@ export class AdminView {
             // A yes or a no from the server, sent to the admin alone; the words
             // are this page's own (see the notice in render()).
             this._router443StaleRefused = status.router443_stale_removal_refused === true;
+            this._routerStaleRefused = status.router_stale_removal_refused === true;
             this._lastError = status.last_error || '';
             // Auto-uncheck the toggle when the backend reports an error: an error
             // means the feature is not operational, so the checkbox must not look
@@ -1248,6 +1258,18 @@ export class AdminView {
                             ? `
                         <div class="internet-info-box internet-info-error">
                             <p>A 443 forward to an old address of this PC could not be removed: remove it in your box.</p>
+                        </div>
+                    `
+                            : ''
+                    }
+
+                    <!-- The same of any other forward this install made under
+                         such an address (STALE_FORWARD_NOTICE). -->
+                    ${
+                        this._routerStaleRefused
+                            ? `
+                        <div class="internet-info-box internet-info-error">
+                            <p>${AdminView.STALE_FORWARD_NOTICE}</p>
                         </div>
                     `
                             : ''

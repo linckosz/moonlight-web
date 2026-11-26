@@ -184,6 +184,11 @@ public:
     /// address this machine no longer has, and will not remove it: the person
     /// who runs the router has to. False again once it is seen to be gone.
     bool tcp443StaleRemovalRefused() const { return m_Tcp443Refused; }
+    /// The same of any other hole: the router keeps an entry this
+    /// installation wrote under an address this machine had before, and will
+    /// not remove it (RouterPortCore::formerStays()). Recomputed at each
+    /// start; false again once its line is struck.
+    bool staleRemovalRefused() const { return m_StaleRefused; }
 
     /// Renew every held hole now, as the half-hour timer does: the admin
     /// page's Force refresh, so a router that dropped its table gets the
@@ -267,6 +272,10 @@ private:
     /// now: the switches, the address, the shared block port and its hole.
     void consider443();
     void onTcp443(quint16 leadsTo, bool staleRemovalRefused);
+    /// The router was found again from another address of this machine
+    /// (RouterPortCore::followAddress()).
+    void onLanMoved(const QString& lanIp);
+    void onStale(bool refused);
     quint64 submit(RouterPortCore::Request request, QObject* context, Callback callback);
     /// Answer a claim without asking the router, on the next event-loop turn.
     void answerLater(Purpose purpose, int slot, QObject* context, Callback callback,
@@ -296,6 +305,7 @@ private:
     std::function<QString()> m_PublicAddress;
     quint16 m_Tcp443Port = 0;
     bool m_Tcp443Refused = false;
+    bool m_StaleRefused = false;
     QHash<quint64, Pending> m_Pending;
     quint64 m_NextToken = 1;
     /// Set by releaseBeforeExit(), read on both threads: the worker shuts the

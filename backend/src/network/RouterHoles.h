@@ -25,6 +25,8 @@
 #include <cstdint>
 #include <memory>
 
+class QJsonObject;
+
 /// The record of what this host wrote in the router's table.
 ///
 /// The entries are removed when the host stops. One that is killed leaves
@@ -124,6 +126,16 @@ public:
     /// The router no longer has the entry, or it is no longer this host's.
     virtual void strike(uint16_t external, bool tcp) = 0;
 };
+
+/// What the admin page is told of RouterPortCore::formerStays(): the router
+/// keeps an entry this installation wrote under an address this machine had
+/// before, and would not let it be removed. In the status the page reads,
+/// this one key, a yes or a no and nothing else (no address, no port, nothing
+/// a router answered; the page has the words). For the admin alone: whoever
+/// else asks gets a status without the key, whatever it held before. TCP 443
+/// has its own (Tcp443Guard.h).
+inline constexpr const char* kStaleRefusedKey = "router_stale_removal_refused";
+void tellAdmin(QJsonObject& status, bool admin, bool staleRemovalRefused);
 
 /// What a version that kept no record remembers in the settings.
 struct Earlier

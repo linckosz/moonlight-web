@@ -89,8 +89,14 @@ public:
     // Get the IGD gateway's address on the LAN (its control URL's host).
     QHostAddress gatewayAddress() const { return m_GatewayAddr; }
 
-    // Get the LAN IP address of this host on the IGD-facing interface.
+    // Get the LAN IP address of this host on the IGD-facing interface, as it
+    // was at discover(): every mapping names it as its client.
     std::string lanAddress() const { return std::string(m_LanAddr); }
+
+    // The address this host would send from towards the IGD now: another one
+    // than lanAddress() once a DHCP lease renumbered it. Nothing is sent.
+    // Empty when no IGD was discovered, or when the system does not say.
+    std::string addressTowardsGateway() const;
 
     // Check if a valid IGD was discovered and is available.
     bool isAvailable() const { return m_Available; }

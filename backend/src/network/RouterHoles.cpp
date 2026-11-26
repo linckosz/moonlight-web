@@ -202,6 +202,15 @@ bool validTag(const QString& tag)
     return lowerHex(tag, 6);
 }
 
+void tellAdmin(QJsonObject& status, bool admin, bool staleRemovalRefused)
+{
+    const QLatin1String key(kStaleRefusedKey);
+    if (admin)
+        status[key] = staleRemovalRefused;
+    else
+        status.remove(key);
+}
+
 bool dottedIpv4(const QString& text)
 {
     const QStringList parts = text.split(QLatin1Char('.'));

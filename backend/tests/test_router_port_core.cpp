@@ -320,13 +320,13 @@ void run_router_port_core_tests()
     }
 
     // ── An entry at the address this host had before a DHCP renumbering is
-    //    another machine's, unless its tag says otherwise: without a record
-    //    nothing does (the RouterSweep tests take one back by its tag) ──────
+    //    another machine's, unless its record and its tag say otherwise:
+    //    without a record nothing does (the RouterSweep tests take one back
+    //    by both) ────────────────────────────────────────────────────────────
     {
         FakeGateway gw;
         gw.foreign(3478, QStringLiteral("192.168.1.77")); // what we were
         RouterPortCore core(gw, kAlwaysFree);
-        core.setPreviousLanAddress(QStringLiteral("192.168.1.77"));
 
         const auto r = core.claim(tunnelRequest({3478}));
         CHECK(r.ok);

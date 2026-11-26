@@ -225,6 +225,20 @@ bool UPNPClient::discover(int timeoutMs)
 #endif
 }
 
+std::string UPNPClient::addressTowardsGateway() const
+{
+    if (!m_Available || m_GatewayAddr.protocol() != QAbstractSocket::IPv4Protocol) return {};
+    // Connecting a UDP socket makes the system pick the source address by its
+    // routing table, without a packet sent: the address a request to the IGD
+    // leaves from, which is the one discover() read (UPNP_GetValidIGD).
+    QUdpSocket probe;
+    probe.connectToHost(m_GatewayAddr, 1900);
+    const QHostAddress local = probe.localAddress();
+    probe.close();
+    if (local.isNull() || local.protocol() != QAbstractSocket::IPv4Protocol) return {};
+    return local.toString().toStdString();
+}
+
 // A description as the logs show it. An entry MoonlightWeb wrote ends with a
 // tag of its installation (RouterHoles.h): the log says there is one, not
 // which, so that no log carries a mark an installation keeps for life.

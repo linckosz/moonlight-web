@@ -21,6 +21,8 @@
 #include "SocketTables.h"
 
 #include <QList>
+#include <QPair>
+#include <QSet>
 #include <QString>
 
 #include <cstdint>
@@ -35,8 +37,14 @@ class IUpnpGateway
 public:
     virtual ~IUpnpGateway() = default;
 
-    /// This machine's address on the gateway-facing interface.
+    /// This machine's address on the gateway-facing interface, as it was when
+    /// the gateway was found: what every write names as its client.
     virtual QString lanAddress() const = 0;
+
+    /// The address the system would send from towards the gateway now. It
+    /// differs from lanAddress() once a DHCP lease has renumbered this
+    /// machine under a running server. Empty when the system does not say.
+    virtual QString addressNow() const { return lanAddress(); }
 
     /// AddPortMapping. `leaseSec` 0 = permanent.
     virtual bool add(uint16_t externalPort, uint16_t internalPort, uint32_t leaseSec,
@@ -140,6 +148,10 @@ public:
         /// installation's, on this machine. Never its address nor its tag in
         /// the log.
         OtherInstallation,
+        /// This installation's entry towards an address this host had before
+        /// (formerOurs()), which the router would not take off: it is not
+        /// written over, and the number is left. `owner` is that address.
+        FormerStays,
     };
 
     struct Skipped
@@ -208,8 +220,9 @@ public:
         bool ok = false;
         Claim claim;
         QList<Skipped> skipped;
-        /// Set when a remembered entry pointed at this host's PREVIOUS LAN
-        /// address and was taken back rather than treated as a neighbour's.
+        /// The address this host had before, when the router still had this
+        /// installation's entry for the number towards it: set only once that
+        /// entry was taken off, seen gone, and the number written here.
         QString reclaimedFrom;
     };
 
@@ -268,11 +281,6 @@ public:
     static Request mediaRequest(bool muxInUse, bool devInstance, int slot, uint16_t internalPort,
                                 uint16_t remembered, bool muxHoldsPort);
 
-    /// The address this host had when its remembered ports were obtained.
-    /// An entry the router still points there, under this installation's
-    /// tag, is ours to overwrite.
-    void setPreviousLanAddress(const QString& ip) { m_PreviousLan = ip; }
-
     /// The record of what this host writes (RouterHoles.h): every entry is
     /// noted in it before the router is asked, its description ends with the
     /// record's tag, and sweep() goes by it. Unset, nothing is noted, the
@@ -300,14 +308,51 @@ public:
     /// identity never takes over an untagged stream slot entry.
     void setDevInstance(bool devInstance) { m_DevInstance = devInstance; }
 
+    /// Looks for the gateway again, from the address this machine has now
+    /// (followAddress()). True once it answered: lanAddress() then says what
+    /// it sees. Unset, a renumbering under a running server is not followed.
+    void setRediscover(std::function<bool()> rediscover) { m_Rediscover = std::move(rediscover); }
+
     /// One port, from the first candidate the router lets this host have.
     /// Candidates already held by this core are passed over silently. An
     /// entry the router already has for a candidate is taken over only when
-    /// it is this installation's: at this host's address (or the one it had
-    /// before a renumbering) and under a description with this record's tag,
-    /// or, for an entry of a version that put no tag, under the rule of
-    /// earlierOurs(). Anyone else's is passed over, and left as it is.
+    /// it is this installation's: at this host's address and under a
+    /// description with this record's tag, or, for an entry of a version that
+    /// put no tag, under the rule of earlierOurs(). One towards an address
+    /// this host had before is taken off first, and seen gone, when it is
+    /// still as this installation wrote it there (formerOurs()); one the
+    /// router keeps leaves the number. Anyone else's is passed over, and left
+    /// as it is.
     Result claim(const Request& request);
+
+    /// This machine's address on the router's LAN is not the one the router
+    /// was found from (a DHCP lease renumbered it under a running server):
+    /// the gateway is looked for again (setRediscover()). Once it answers
+    /// from another address, every held hole is moved there: its entries
+    /// towards the address this host had are taken off, when still as this
+    /// installation wrote them (formerOurs()), and seen gone, then it is
+    /// written towards the address of now. Returns the holes that could not
+    /// be: one whose entry the router keeps towards the former address (its
+    /// line stays, formerStays() says so), and those the router shows as
+    /// another's once rewritten, as renew() does. Nothing when nothing moved.
+    /// `again`: look for the gateway even when it did not answer the last
+    /// time this same address was seen (a renewal); a claim does not wait for
+    /// a discovery that failed already.
+    QList<Lost> followAddress(bool again);
+
+    /// Whether this machine's address now is another than the one every
+    /// write names (lanAddress()): a renumbering not followed yet, because
+    /// the gateway did not answer from the new address. renew() writes
+    /// nothing meanwhile: it would aim every hole at an address this machine
+    /// no longer has.
+    bool addressMoved() const;
+
+    /// The router keeps an entry this installation wrote towards an address
+    /// this machine had before, after its removal was asked (at a claim, a
+    /// sweep or a move): the person who runs the router has to remove it.
+    /// False again once its line is struck. Never its address or its number
+    /// outside this core: the admin page has the words.
+    bool formerStays() const { return !m_FormerStays.isEmpty(); }
 
     /// Re-add every held mapping, then read each back. Each is read first:
     /// one the router now aims at another machine, or shows at this host's
@@ -373,8 +418,14 @@ public:
         /// The router refused the removal, or the entry was still there
         /// after it: asked again at the next start.
         Stayed,
-        /// Noted under another address than this host has now: not looked at.
+        /// Of a version that kept no record, or the entry on TCP 443, noted
+        /// under another address than this host has now: not looked at. 443
+        /// has a rule of its own (Tcp443Guard::formerAddress()).
         OtherAddress,
+        /// Noted under an address this machine had before, and still as this
+        /// installation wrote it there (formerOurs()): taken off the router,
+        /// and seen gone.
+        RemovedFormer,
         /// This run holds the port again: its claim wrote the entry anew.
         HeldAgain,
         /// Of a version that kept no record, and something on this machine
@@ -393,6 +444,8 @@ public:
         /// when another MoonlightWeb server runs here, or "server unknown"
         /// when the system does not say whether one does.
         QString detail;
+        /// The line was noted under an address this machine no longer has.
+        bool former = false;
     };
 
     /// What sweepList() left out, in numbers only (for the log).
@@ -402,12 +455,16 @@ public:
         int lines = 0;
         /// Noted under another address of this machine than the one it has now.
         int elsewhere = 0;
+        /// Of those, the ones the list has all the same (formerOurs()).
+        int former = 0;
         /// Of ports this run holds.
         int held = 0;
     };
 
     /// The lines of the record a sweep looks at: those noted under the
-    /// address this host has now, of ports this run does not hold.
+    /// address this host has now, of ports this run does not hold; then
+    /// those noted under an address this machine had before, all but the
+    /// lines of a version that kept no record and the line of TCP 443.
     QList<mw::routerholes::Hole> sweepList(SweepCount* count = nullptr) const;
 
     /// Asks the router the one question whose answer is known: a port no
@@ -428,6 +485,12 @@ public:
     /// before the removal), since every edition up to 0.4.3 wrote those
     /// words to those ports. The removal is read back. Whatever else the
     /// router says, nothing is removed.
+    ///
+    /// A line noted under an address this machine had before is taken back
+    /// under formerOurs() instead: the entry is towards that address, to the
+    /// noted port, under the noted description, this installation's tag
+    /// included. One that reads otherwise is another's, and no longer in the
+    /// record; one the router keeps stays, and formerStays() says so.
     SweepResult sweep(const mw::routerholes::Hole& hole);
 
     QList<Claim> held() const { return m_Held; }
@@ -459,15 +522,19 @@ private:
         Foreign,
         /// At this host's address, another installation's by its description.
         Other,
+        /// A candidate's entry towards an address this host had before, still
+        /// as this installation wrote it there (formerOurs()): to be taken
+        /// off, and seen gone, before the number is written here.
+        Former,
     };
     /// What the router shows of `external` in that protocol, and whose it is.
     /// For a held claim (`held`): at this host's address, to the port it
     /// binds, and under no other installation's words (its own text, the
     /// words the router showed at the claim, or words that are not a
     /// MoonlightWeb's at all). For a candidate (`held` null): at this host's
-    /// address, or the one it had before a renumbering, under this record's
-    /// tag; or an entry of a version that put no tag, under earlierOurs().
-    /// `shown` gets the entry when there is one.
+    /// address under this record's tag, or an entry of a version that put no
+    /// tag under earlierOurs(); or Former. `shown` gets the entry when there
+    /// is one.
     Whose judge(uint16_t external, bool tcp, const Claim* held, IUpnpGateway::Entry& shown);
     /// The same of an entry the router showed (Found, with a client).
     Whose whoseIs(const IUpnpGateway::Entry& shown, uint16_t external, bool tcp, const Claim* held);
@@ -486,6 +553,26 @@ private:
     /// is the installed host's identity, the only one that binds that block
     /// now.
     bool earlierOurs(uint16_t external, bool tcp, const IUpnpGateway::Entry& shown);
+    /// Whether an entry the router shows is the one this installation wrote
+    /// under an address this machine no longer has, by its record AND by its
+    /// words, never by the address alone. All of these must hold: the line is
+    /// this record's and not of a version that kept no record (an untagged
+    /// line proves nothing at another address), nor the line of TCP 443 (its
+    /// own rule: Tcp443Guard::formerAddress()); it was noted under another
+    /// address than lanAddress(); the entry reads as one, towards that very
+    /// address, to the noted port, under the noted description with this
+    /// record's tag. Another installation's carries another tag, and an
+    /// edition beside this one keeps another record: neither is ever touched.
+    bool formerOurs(const mw::routerholes::Hole& line, const IUpnpGateway::Entry& shown) const;
+    /// The same with the record's line of that number and protocol.
+    bool formerOurs(uint16_t external, bool tcp, const IUpnpGateway::Entry& shown) const;
+    /// Takes off an entry formerOurs() said is this installation's towards a
+    /// former address, and reads it back. True when the router has none any
+    /// more: the line is struck. False: the line stays, and formerStays()
+    /// says so until it is struck.
+    bool takeOffFormer(uint16_t external, bool tcp);
+    /// sweep() of a line noted under an address this machine had before.
+    SweepResult sweepFormer(const mw::routerholes::Hole& line);
     /// Whether another MoonlightWeb server runs here, as setOtherServer() says.
     mw::sockettables::Listens otherServer() const;
     /// Whether an entry read back just after a write still counts down the
@@ -530,8 +617,17 @@ private:
     std::function<mw::sockettables::Listens(uint16_t, bool)> m_Listens;
     std::function<mw::sockettables::Listens()> m_OtherServer;
     bool m_DevInstance = false;
-    QString m_PreviousLan;
+    std::function<bool()> m_Rediscover;
+    /// The address this machine had now when the gateway last did not answer
+    /// from it (followAddress()): a claim does not look again from there.
+    QString m_UnansweredFrom;
+    /// The address this machine had now when the gateway, found again from
+    /// it, still saw it at lanAddress(): not a move (addressMoved()).
+    QString m_SameFrom;
     QList<Claim> m_Held;
+    /// Lines whose entry towards a former address the router kept when its
+    /// removal was asked: (external port, TCP).
+    QSet<QPair<uint16_t, bool>> m_FormerStays;
     uint32_t m_LeaseSec;
     int m_RenewFailures = 0;
     bool m_Closed = false;

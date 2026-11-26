@@ -53,6 +53,15 @@ public:
 
     QString lanAddress() const override { return QString::fromStdString(m_Client->lanAddress()); }
 
+    QString addressNow() const override
+    {
+        return QString::fromStdString(m_Client->addressTowardsGateway());
+    }
+
+    /// The gateway found again, from the address this machine has now
+    /// (RouterPortCore::followAddress()): the policy talks to it from here on.
+    void setClient(UPNPClient* client) { m_Client = client; }
+
     bool add(uint16_t externalPort, uint16_t internalPort, uint32_t leaseSec,
              const QString& description, const QString& protocol) override
     {
@@ -148,11 +157,51 @@ QString holeName(const mw::routerholes::Hole& hole)
         .arg(what);
 }
 
+/// What became of an entry an earlier run left under an address this machine
+/// had before. The LAN address it was noted under is said; never a public
+/// address, never the tag.
+void logSweptFormer(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResult& result)
+{
+    using Swept = RouterPortCore::Swept;
+    const QString name = holeName(hole);
+    switch (result.outcome) {
+    case Swept::RemovedFormer:
+        Logger::info(
+            QStringLiteral("[UPNP] Left at an old address: %1 at %2 removed from the router")
+                .arg(name, hole.lan));
+        break;
+    case Swept::Stayed:
+        Logger::warning(QStringLiteral("[UPNP] Left at an old address: %1 at %2 could not be taken "
+                                       "off: it stays until the next start")
+                            .arg(name, hole.lan));
+        break;
+    case Swept::NotOurs:
+        Logger::info(QStringLiteral("[UPNP] Left at an old address: %1 now has another %2 on the "
+                                    "router — left as it is")
+                         .arg(name, result.detail));
+        break;
+    case Swept::Gone:
+        Logger::info(QStringLiteral("[UPNP] Left at an old address: %1 is no longer on the router "
+                                    "— nothing to take off")
+                         .arg(name));
+        break;
+    default:
+        Logger::info(QStringLiteral("[UPNP] Left at an old address: the router does not say what "
+                                    "%1 is — left as it is, asked again at the next start")
+                         .arg(name));
+        break;
+    }
+}
+
 /// What became of an entry an earlier run left on the router. Every removal
 /// is said; so is every entry that was looked at and left.
 void logSwept(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResult& result)
 {
     using Swept = RouterPortCore::Swept;
+    if (result.former) {
+        logSweptFormer(hole, result);
+        return;
+    }
     const QString name = holeName(hole);
     switch (result.outcome) {
     case Swept::Removed:
@@ -213,6 +262,8 @@ void logSwept(const mw::routerholes::Hole& hole, const RouterPortCore::SweepResu
         Logger::info(QStringLiteral("[UPNP] Left by an earlier run: %1 is held again by this run")
                          .arg(name));
         break;
+    // Only ever of a line noted under another address: logSweptFormer()
+    case Swept::RemovedFormer: break;
     }
 }
 
@@ -250,6 +301,10 @@ QString skipLine(const RouterPortCore::Skipped& s)
         return QStringLiteral("%1 (kept pointed at %2 after our write)").arg(s.port).arg(s.owner);
     case RouterPortCore::SkipReason::OtherInstallation:
         return QStringLiteral("%1 (another installation's on this machine)").arg(s.port);
+    case RouterPortCore::SkipReason::FormerStays:
+        return QStringLiteral("%1 (this host's old address %2: not taken off)")
+            .arg(s.port)
+            .arg(s.owner);
     }
     return QString::number(s.port);
 }
@@ -296,7 +351,10 @@ public:
         m_Upnp = std::move(upnp);
         m_Gateway = std::make_unique<UpnpGatewayAdapter>(m_Upnp.get());
         m_Core = std::make_unique<RouterPortCore>(*m_Gateway, &portIsFree);
-        m_Core->setPreviousLanAddress(startup.previousLan);
+        // A DHCP lease that renumbers this machine under a running server:
+        // the router is looked for again from the new address before any
+        // hole is written (RouterPortCore::followAddress())
+        m_Core->setRediscover([this]() { return rediscover(); });
         // What this host writes on the router is noted, so that what a run
         // that was killed left there can be taken back (RouterHoles.h). Opened
         // once: its lock is this process's for as long as it lives.
@@ -359,10 +417,12 @@ public:
         // Numbers only, never which of this machine's addresses was seen
         if (m_Record)
             Logger::info(QStringLiteral("[UPNP] Sweep: %1 line(s) to look at, of %2; %3 noted "
-                                        "under another address, %4 held by this run")
+                                        "under another address (%4 of them looked at), %5 held by "
+                                        "this run")
                              .arg(m_Sweep.size())
                              .arg(count.lines)
                              .arg(count.elsewhere)
+                             .arg(count.former)
                              .arg(count.held));
         if (!m_Sweep.isEmpty())
             QMetaObject::invokeMethod(this, [this]() { sweepFirst(); }, Qt::QueuedConnection);
@@ -399,6 +459,7 @@ public:
         if (!m_Core || m_Sweep.isEmpty()) return;
         const mw::routerholes::Hole hole = m_Sweep.takeFirst();
         logSwept(hole, m_Core->sweep(hole));
+        tellStale();
         if (!m_Sweep.isEmpty())
             QMetaObject::invokeMethod(this, [this]() { sweepNext(); }, Qt::QueuedConnection);
         else
@@ -418,16 +479,80 @@ public:
     {
         RouterPortCore::Result result;
         // Queued before the process began to quit, run after: nothing new.
-        if (m_Core && !closing()) result = m_Core->claim(request);
+        if (m_Core && !closing()) {
+            // Towards the address this machine has now, should it have moved
+            followAddress(false);
+            if (m_Core->addressMoved())
+                Logger::warning(QStringLiteral("[UPNP] This machine's address on the router's LAN "
+                                               "changed and the router was not found again from "
+                                               "the new one: no hole is asked for until it is"));
+            result = m_Core->claim(request);
+            tellStale();
+        }
         QMetaObject::invokeMethod(
             m_Owner, [o = m_Owner, token, result]() { o->onClaimed(token, result); },
             Qt::QueuedConnection);
     }
 
+    /// A renumbering of this machine under the running server is followed
+    /// (RouterPortCore::followAddress()); the holes it could not move are
+    /// told to the main thread as lost.
+    void followAddress(bool again)
+    {
+        const QList<RouterPortCore::Lost> lost = m_Core->followAddress(again);
+        if (!lost.isEmpty())
+            QMetaObject::invokeMethod(
+                m_Owner, [o = m_Owner, lost]() { o->onRenewed(lost); }, Qt::QueuedConnection);
+    }
+
+    /// The router is looked for again from the address this machine has now.
+    /// The client of before is kept until a new one answers.
+    bool rediscover()
+    {
+        Logger::info(QStringLiteral("[UPNP] This machine's address on the router's LAN is not the "
+                                    "one the router was found from: looking for it again"));
+        auto upnp = std::make_unique<UPNPClient>();
+        if (!upnp->discover(2000)) {
+            Logger::warning(QStringLiteral("[UPNP] This machine's address on the router's LAN "
+                                           "changed, and the router does not answer from the new "
+                                           "one: no hole is renewed until it does"));
+            return false;
+        }
+        const QString lan = QString::fromStdString(upnp->lanAddress());
+        m_Gateway->setClient(upnp.get());
+        m_Upnp = std::move(upnp);
+        QMetaObject::invokeMethod(
+            m_Owner, [o = m_Owner, lan]() { o->onLanMoved(lan); }, Qt::QueuedConnection);
+        return true;
+    }
+
+    /// Whether the router keeps an entry this installation wrote under an
+    /// address this machine had before (RouterPortCore::formerStays()): told
+    /// to the main thread when it changes, for the admin page, and said once
+    /// per start, without an address.
+    void tellStale()
+    {
+        if (!m_Core) return;
+        const bool stays = m_Core->formerStays();
+        if (stays && !m_StaleSaid) {
+            m_StaleSaid = true;
+            Logger::warning(QStringLiteral("[UPNP] The router keeps an entry this installation "
+                                           "wrote under an address this machine no longer has, "
+                                           "and will not remove it: it has to be removed on the "
+                                           "router itself"));
+        }
+        if (stays == m_StaleTold) return;
+        m_StaleTold = stays;
+        QMetaObject::invokeMethod(
+            m_Owner, [o = m_Owner, stays]() { o->onStale(stays); }, Qt::QueuedConnection);
+    }
+
     void renew()
     {
         if (!m_Core || closing()) return;
+        followAddress(true);
         const QList<RouterPortCore::Lost> lost = m_Core->renew();
+        tellStale();
         if (m_Core->renewFailures() == 2 && m_Core->leaseSec() == 0)
             Logger::warning(QStringLiteral("[UPNP] Renewal failed twice — switching to permanent "
                                            "mappings"));
@@ -467,6 +592,12 @@ public:
         // taken off, asked for, or left alone for now. A run it begins does
         // not end here: its dials are made elsewhere (dialled443()).
         now.leaseSec = m_Core->leaseSec();
+        m_Last443 = now;
+        // This machine's address moved and the router was not found again
+        // from the new one: every write would name the address it had, which
+        // may be another machine's by now. Until it is found, 443 is as with
+        // a switch off: an entry held is taken off, nothing is asked for.
+        if (m_Core->addressMoved()) ask = false;
         said443(m_Guard443->look(now, ask, monotonicMs()));
     }
 
@@ -476,6 +607,11 @@ public:
     {
         // Quitting: the run was given up with the release, its entry with it.
         if (!m_Guard443 || closing()) return;
+        // The address moved since the run began (look443()): the run is given
+        // up before its next step writes anything, and this answer is then
+        // dropped as one of a run given up
+        if (m_Core && m_Core->addressMoved())
+            said443(m_Guard443->look(m_Last443, false, monotonicMs()));
         said443(m_Guard443->dialled(run, result, monotonicMs()));
     }
 
@@ -499,7 +635,9 @@ public:
     void renew(uint16_t externalPort)
     {
         if (!m_Core || closing()) return;
+        followAddress(false);
         const QList<RouterPortCore::Lost> lost = m_Core->renew(externalPort);
+        tellStale();
         if (lost.isEmpty()) return;
         QMetaObject::invokeMethod(
             m_Owner, [o = m_Owner, lost]() { o->onRenewed(lost); }, Qt::QueuedConnection);
@@ -596,6 +734,12 @@ private:
     /// The lines of the record still to be looked at.
     QList<mw::routerholes::Hole> m_Sweep;
     QTimer* m_Renew = nullptr;
+    /// What the main thread was last told of RouterPortCore::formerStays().
+    bool m_StaleTold = false;
+    /// Said once per start.
+    bool m_StaleSaid = false;
+    /// What TCP 443 was last looked at with (look443()).
+    mw::tcp443::Situation m_Last443;
 };
 
 // ── The main-thread façade ──────────────────────────────────────────────────
@@ -735,6 +879,20 @@ void RouterPortAllocator::consider443()
         now.blockPort = block->external;
     QMetaObject::invokeMethod(
         m_Worker, [w = m_Worker, now, ask]() { w->tcp443(now, ask); }, Qt::QueuedConnection);
+}
+
+void RouterPortAllocator::onLanMoved(const QString& lanIp)
+{
+    if (lanIp == m_LanIp) return;
+    m_LanIp = lanIp;
+    Logger::info(QStringLiteral("[UPNP] The router now sees this host at %1").arg(lanIp));
+    // The address the remembered ports are obtained under, from now on
+    m_Settings->setRouterLanIp(lanIp);
+}
+
+void RouterPortAllocator::onStale(bool refused)
+{
+    m_StaleRefused = refused;
 }
 
 void RouterPortAllocator::onTcp443(quint16 leadsTo, bool staleRemovalRefused)

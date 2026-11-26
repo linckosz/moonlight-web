@@ -276,13 +276,156 @@ RouterPortCore::Whose RouterPortCore::whoseIs(const IUpnpGateway::Entry& shown, 
         // as some routers put, or what they show after a reboot.
         return moonlightText(text, nullptr) ? Whose::Other : Whose::Ours;
     }
-    // One this host had before a DHCP renumbering is its own only by its tag:
-    // the address may be another machine's by now.
-    const bool before = !m_PreviousLan.isEmpty() && shown.client == m_PreviousLan;
-    if (shown.client != lan && !before) return Whose::Foreign;
+    // Towards another address: another machine's, unless the record AND the
+    // words say this installation wrote it there, under an address this host
+    // had before a DHCP renumbering. That address may be another machine's by
+    // now, so such an entry is never written over: it is taken off first.
+    if (shown.client != lan)
+        return formerOurs(external, tcp, shown) ? Whose::Former : Whose::Foreign;
     if (taggedOurs(shown.description)) return Whose::Ours;
-    if (!before && earlierOurs(external, tcp, shown)) return Whose::Ours;
-    return before ? Whose::Foreign : Whose::Other;
+    if (earlierOurs(external, tcp, shown)) return Whose::Ours;
+    return Whose::Other;
+}
+
+bool RouterPortCore::formerOurs(const Hole& line, const IUpnpGateway::Entry& shown) const
+{
+    if (!m_Record || line.old || line.kind == Kind::Tcp443) return false;
+    const QString tag = m_Record->tag();
+    if (!mw::routerholes::validTag(tag)) return false;
+    if (!mw::routerholes::dottedIpv4(line.lan) || line.lan == m_Gateway.lanAddress()) return false;
+    if (!readsAsEntry(shown)) return false;
+    return shown.client == line.lan && shown.internalPort == line.internal &&
+           shown.description == mw::routerholes::describe(line.kind, line.slot, tag);
+}
+
+bool RouterPortCore::formerOurs(uint16_t external, bool tcp, const IUpnpGateway::Entry& shown) const
+{
+    Hole line;
+    return m_Record && m_Record->find(external, tcp, line) && formerOurs(line, shown);
+}
+
+bool RouterPortCore::takeOffFormer(uint16_t external, bool tcp)
+{
+    const QString& protocol = tcp ? kTcp : kUdp;
+    // Only "no such entry" read back says it is gone: a router that says it
+    // removed it, and still has it, keeps it
+    IUpnpGateway::Entry after;
+    if (m_Gateway.remove(external, protocol) &&
+        m_Gateway.entry(external, protocol, after) == Lookup::None) {
+        strike(external, tcp);
+        return true;
+    }
+    m_FormerStays.insert(qMakePair(external, tcp));
+    return false;
+}
+
+bool RouterPortCore::addressMoved() const
+{
+    const QString now = m_Gateway.addressNow();
+    // Found again from there, the gateway saw this machine where it saw it:
+    // what it goes by is the address every write names
+    return mw::routerholes::dottedIpv4(now) && now != m_Gateway.lanAddress() && now != m_SameFrom;
+}
+
+QList<RouterPortCore::Lost> RouterPortCore::followAddress(bool again)
+{
+    QList<Lost> lost;
+    if (m_Closed || !m_Rediscover || !addressMoved()) return lost;
+    const QString was = m_Gateway.lanAddress();
+    const QString now = m_Gateway.addressNow();
+    // Looked for from there already, in vain: a claim does not wait for that
+    // again, a renewal does
+    if (!again && now == m_UnansweredFrom) return lost;
+    if (!m_Rediscover()) {
+        m_UnansweredFrom = now;
+        return lost;
+    }
+    m_UnansweredFrom.clear();
+    // The router sees this machine where it saw it: nothing moved after all,
+    // and it is not looked for again from that address
+    if (m_Gateway.lanAddress() == was) {
+        m_SameFrom = now;
+        return lost;
+    }
+    m_SameFrom.clear();
+
+    // Every held hole: what it has towards the address this host had is taken
+    // off, then it is written towards the one it has now. Its line was noted
+    // under the former address, which is what formerOurs() goes by.
+    const QList<Claim> held = m_Held;
+    for (const Claim& c : held) {
+        bool kept = false;
+        bool tcpKept = false;
+        for (const bool isTcp : {false, true}) {
+            if (isTcp && !c.tcp) continue;
+            IUpnpGateway::Entry shown;
+            if (m_Gateway.entry(c.external, isTcp ? kTcp : kUdp, shown) == Lookup::Found &&
+                formerOurs(c.external, isTcp, shown) && !takeOffFormer(c.external, isTcp))
+                (isTcp ? tcpKept : kept) = true;
+        }
+        // Its TCP entry stays towards the former address: no longer this
+        // hole's, its line left for the next start
+        if (tcpKept && !kept)
+            for (Claim& h : m_Held)
+                if (h == c) h.tcp = false;
+        // The router keeps its entry towards the former address: the number
+        // is not this host's to write here. Its line stays for the next start.
+        if (kept) {
+            m_Held.removeAll(c);
+            lost.append({c, was, false});
+            continue;
+        }
+        QString owner;
+        bool here = false;
+        rewrite(c, owner, here);
+        if (!here && (owner.isEmpty() || owner == m_Gateway.lanAddress())) continue;
+        m_Held.removeAll(c);
+        strike(c.external, false);
+        dropTcpOf(c);
+        lost.append({c, owner, here});
+    }
+    return lost;
+}
+
+RouterPortCore::SweepResult RouterPortCore::sweepFormer(const Hole& line)
+{
+    SweepResult out;
+    out.former = true;
+    // Without this record's tag the words prove nothing
+    if (!mw::routerholes::validTag(m_Record->tag())) {
+        out.outcome = Swept::Unknown;
+        return out;
+    }
+    const QString& protocol = line.tcp ? kTcp : kUdp;
+    IUpnpGateway::Entry shown;
+    switch (m_Gateway.entry(line.external, protocol, shown)) {
+    case Lookup::None:
+        strike(line.external, line.tcp);
+        out.outcome = Swept::Gone;
+        return out;
+    case Lookup::Unknown: out.outcome = Swept::Unknown; return out;
+    case Lookup::Found: break;
+    }
+    if (!readsAsEntry(shown)) {
+        out.outcome = Swept::Unknown;
+        return out;
+    }
+    // Another machine's, another installation's, or what another program
+    // made of that number since: not this host's to touch, and no longer in
+    // its record
+    if (!formerOurs(line, shown)) {
+        strike(line.external, line.tcp);
+        out.outcome = Swept::NotOurs;
+        if (shown.client != line.lan)
+            out.detail = QStringLiteral("address");
+        else if (shown.internalPort != line.internal)
+            out.detail = QStringLiteral("internal port");
+        else
+            out.detail = QStringLiteral("description");
+        return out;
+    }
+    out.outcome = takeOffFormer(line.external, line.tcp) ? Swept::RemovedFormer : Swept::Stayed;
+    return out;
 }
 
 RouterPortCore::Whose RouterPortCore::judge(uint16_t external, bool tcp, const Claim* held,
@@ -362,12 +505,15 @@ bool RouterPortCore::write(const Write& w, bool afresh)
         else
             m_Record->strike(w.external, w.tcp);
     }
+    // The line is this write's now, whatever was noted of that number before
+    if (ok) m_FormerStays.remove(qMakePair(w.external, w.tcp));
     return ok;
 }
 
 void RouterPortCore::strike(uint16_t external, bool tcp)
 {
     if (m_Record) m_Record->strike(external, tcp);
+    m_FormerStays.remove(qMakePair(external, tcp));
 }
 
 void RouterPortCore::dropTcpOf(const Claim& lost)
@@ -435,8 +581,10 @@ bool RouterPortCore::takeOff(const Claim& claim, bool tcp, const std::function<b
 RouterPortCore::Result RouterPortCore::claim(const Request& request)
 {
     Result result;
-    // Quitting: nothing new on the router.
-    if (m_Closed) return result;
+    // Quitting: nothing new on the router. Nor while this machine has an
+    // address the router was not found again from (followAddress()): every
+    // write names the address it had, which may be another machine's by now.
+    if (m_Closed || addressMoved()) return result;
 
     // Remembered first, so a restart lands where it was; then the preferred
     // list; then the pool. Each list in its own order, nothing tried twice.
@@ -486,16 +634,26 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     // carries its tag, or is one a version that put no tag wrote here and
     // nothing uses any more (earlierOurs). Anything else stays.
     //
-    // One exception to the address: an entry that points at the address THIS
-    // host had before a DHCP renumbering, under its tag. Leaving it alone
-    // would strand the port until the lease runs out — forever, if it was
-    // permanent.
+    // One exception to the address: an entry this installation wrote towards
+    // the address THIS host had before a DHCP renumbering (formerOurs()).
+    // Leaving it would strand the port until the lease runs out — forever, if
+    // it was permanent, or on a router that keeps no lease. Writing over it
+    // is not enough either: a router that keeps one entry per number answers
+    // a write towards another client with a conflict (the Freebox: 718), and
+    // keeps the old one. So it is taken off first, and seen gone; one the
+    // router keeps leaves the number, as another's entry does.
     const QString lan = m_Gateway.lanAddress();
     IUpnpGateway::Entry seen;
+    QString reclaimed;
     switch (judge(external, false, nullptr, seen)) {
-    case Whose::Free: break;
-    case Whose::Ours:
-        if (seen.client != lan) result.reclaimedFrom = seen.client;
+    case Whose::Free:
+    case Whose::Ours: break;
+    case Whose::Former:
+        if (!takeOffFormer(external, false)) {
+            result.skipped.append({external, SkipReason::FormerStays, seen.client});
+            return false;
+        }
+        reclaimed = seen.client;
         break;
     case Whose::Foreign:
         result.skipped.append({external, SkipReason::Foreign, seen.client});
@@ -595,7 +753,13 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
         Write tcp = udp;
         tcp.tcp = true;
         IUpnpGateway::Entry there;
-        const Whose whose = judge(external, true, nullptr, there);
+        Whose whose = judge(external, true, nullptr, there);
+        // Its TCP entry towards the former address goes the same way. One the
+        // router keeps is left, with the TCP hole.
+        if (whose == Whose::Former) {
+            whose = takeOffFormer(external, true) ? Whose::Free : Whose::Foreign;
+            there = {};
+        }
         if (whose == Whose::Free || whose == Whose::Ours) {
             // An entry of this host's with another text is written afresh too
             const bool tcpOldText = !there.client.isEmpty() && keptOldText(tcp, there);
@@ -604,6 +768,9 @@ bool RouterPortCore::tryOne(uint16_t external, const Request& request, Result& r
     }
     m_Held.append(claim);
     result.claim = claim;
+    // Said only now: the entry towards the former address is gone, and the
+    // number is written here
+    result.reclaimedFrom = reclaimed;
     return true;
 }
 
@@ -619,6 +786,8 @@ bool RouterPortCore::rewrite(const Claim& c, QString& owner, bool& here)
     case Whose::Free:
     case Whose::Ours: break;
     case Whose::Other: here = true; [[fallthrough]];
+    // (Former is a candidate's: a held claim's entry elsewhere is Foreign)
+    case Whose::Former:
     case Whose::Foreign: owner = before.client; return true;
     }
 
@@ -651,7 +820,10 @@ bool RouterPortCore::rewrite(const Claim& c, QString& owner, bool& here)
 QList<RouterPortCore::Lost> RouterPortCore::renew()
 {
     QList<Lost> lost;
-    if (m_Closed) return lost;
+    // Nothing is written towards an address this machine no longer has: the
+    // renumbering is followed first (followAddress()), and until the gateway
+    // answers from the new address the holes are left as they are.
+    if (m_Closed || addressMoved()) return lost;
     bool ok = true;
 
     // Checked after the write, once per half hour, because a machine that comes
@@ -694,7 +866,7 @@ QList<RouterPortCore::Lost> RouterPortCore::renew()
 
 QList<RouterPortCore::Lost> RouterPortCore::renew(uint16_t externalPort)
 {
-    if (m_Closed) return {};
+    if (m_Closed || addressMoved()) return {};
     for (const Claim& held : std::as_const(m_Held)) {
         if (held.external != externalPort) continue;
         const Claim c = held;
@@ -712,12 +884,16 @@ QList<RouterPortCore::Lost> RouterPortCore::renew(uint16_t externalPort)
 
 void RouterPortCore::release(const Claim& claim)
 {
-    if (!m_Held.contains(claim)) return;
+    const qsizetype at = m_Held.indexOf(claim);
+    if (at < 0) return;
+    // As this core holds it: its TCP entry may have been left since, towards
+    // an address this host had before (followAddress())
+    const Claim held = m_Held.at(at);
     // Each entry only while it is this host's (takeOff)
     bool left = false;
-    takeOff(claim, false, {}, left);
-    if (claim.tcp) takeOff(claim, true, {}, left);
-    m_Held.removeAll(claim);
+    takeOff(held, false, {}, left);
+    if (held.tcp) takeOff(held, true, {}, left);
+    m_Held.removeAll(held);
 }
 
 void RouterPortCore::releaseAll()
@@ -758,21 +934,30 @@ RouterPortCore::Released RouterPortCore::releaseBeforeExit(const std::function<b
 QList<Hole> RouterPortCore::sweepList(SweepCount* count) const
 {
     QList<Hole> out;
+    QList<Hole> former;
     SweepCount counted;
     if (m_Record) {
         const QString lan = m_Gateway.lanAddress();
         for (const Hole& line : m_Record->holes()) {
             ++counted.lines;
-            if (line.lan != lan)
+            if (line.lan != lan) {
                 ++counted.elsewhere;
-            else if (holdsLine(line.external, line.tcp))
+                // Looked at by formerOurs(), after the others: an untagged
+                // line proves nothing at another address, and 443 has a rule
+                // of its own
+                if (!line.old && line.kind != Kind::Tcp443) {
+                    ++counted.former;
+                    former.append(line);
+                }
+            } else if (holdsLine(line.external, line.tcp)) {
                 ++counted.held;
-            else
+            } else {
                 out.append(line);
+            }
         }
     }
     if (count) *count = counted;
-    return out;
+    return out + former;
 }
 
 bool RouterPortCore::sweepBelieved(const QList<Hole>& holes)
@@ -802,7 +987,10 @@ RouterPortCore::SweepResult RouterPortCore::sweep(const Hole& hole)
     if (!m_Record->find(hole.external, hole.tcp, line)) return {Swept::Gone, {}};
 
     const QString lan = m_Gateway.lanAddress();
-    if (line.lan != lan) return {Swept::OtherAddress, {}};
+    if (line.lan != lan) {
+        if (line.old || line.kind == Kind::Tcp443) return {Swept::OtherAddress, {}};
+        return sweepFormer(line);
+    }
     // The words alone prove nothing of a line that should carry a tag
     const QString tag = line.old ? QString() : m_Record->tag();
     if (!line.old && !mw::routerholes::validTag(tag)) return {Swept::Unknown, {}};

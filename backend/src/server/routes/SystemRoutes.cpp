@@ -33,6 +33,7 @@
 #include "network/IceMux.h"
 #include "network/InternetAccessManager.h"
 #include "network/PortIdentity.h"
+#include "network/RouterHoles.h"
 #include "network/RouterPortAllocator.h"
 #include "network/Tcp443Guard.h"
 #include "backend/ComputerManager.h"
@@ -179,6 +180,9 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
         // no, for whoever holds the admin's privilege and for nobody else.
         const RouterPortAllocator* ports = internetAccess.routerPorts();
         mw::tcp443::tellAdmin(obj, req.isLocal, ports && ports->tcp443StaleRemovalRefused());
+        // The same of any other forward this installation made under such an
+        // address: a key of its own, with words of its own on the page.
+        mw::routerholes::tellAdmin(obj, req.isLocal, ports && ports->staleRemovalRefused());
         return HttpResponse::json(obj);
     });
 

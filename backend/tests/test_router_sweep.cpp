@@ -12,6 +12,8 @@
 #include "network/RouterPortCore.h"
 #include "network/RouterPortPools.h"
 
+#include <QDebug>
+#include <QJsonObject>
 #include <QMap>
 #include <QSet>
 #include <QStringList>
@@ -60,6 +62,8 @@ struct TableGateway : IUpnpGateway
     bool refusesRemoval = false;
     /// Says "removed" and removes nothing.
     bool keepsRemoved = false;
+    /// Refuses to remove these entries only.
+    QList<QPair<uint16_t, QString>> keeps;
     /// MiniUPnPd up to 1.9: a write over an entry of the same client and port
     /// succeeds and changes nothing, description included.
     bool keepsText = false;
@@ -68,13 +72,20 @@ struct TableGateway : IUpnpGateway
     /// A Livebox: a write over another machine's entry succeeds and the
     /// table keeps pointing at that machine.
     bool keepsForeign = false;
+    /// A Freebox: a write over an entry towards another client is refused
+    /// (ConflictInMappingEntry, 718), and the entry stays as it was.
+    bool conflictsOverClient = false;
     QSet<uint16_t> refuse;
     int adds = 0;
     int removes = 0;
     QStringList asked;
     std::function<void(uint16_t, const QString&)> beforeAdd;
+    /// The address the system would send from towards the router now: set
+    /// when a DHCP lease renumbers this machine. Empty: `lan`.
+    QString now;
 
     QString lanAddress() const override { return lan; }
+    QString addressNow() const override { return now.isEmpty() ? lan : now; }
 
     bool add(uint16_t ext, uint16_t in, uint32_t leaseSec, const QString& description,
              const QString& proto) override
@@ -85,6 +96,7 @@ struct TableGateway : IUpnpGateway
         const Key key{ext, proto};
         if (table.contains(key)) {
             const Row& there = table[key];
+            if (conflictsOverClient && there.client != lan) return false;
             if (keepsForeign && there.client != lan) return true;
             if (keepsText && there.client == lan && there.internal == in) return true;
         }
@@ -109,7 +121,7 @@ struct TableGateway : IUpnpGateway
     bool remove(uint16_t ext, const QString& proto) override
     {
         ++removes;
-        if (refusesRemoval) return false;
+        if (refusesRemoval || keeps.contains(Key{ext, proto})) return false;
         if (keepsRemoved) return true;
         return table.remove(Key{ext, proto}) > 0;
     }
@@ -221,11 +233,22 @@ struct Bench
     Listens server = Listens::No;
     QList<Listens> servers;
     int serverAsked = 0;
+    /// The router looked for again from the address of now: it answers, and
+    /// sees this machine there, unless told otherwise.
+    int rediscovers = 0;
+    bool rediscoverFails = false;
 
     Bench()
         : core(gw, kAlwaysFree)
     {
         core.setRecord(&record);
+        core.setRediscover([this]() {
+            ++rediscovers;
+            if (rediscoverFails) return false;
+            gw.lan = gw.addressNow();
+            gw.now.clear();
+            return true;
+        });
         core.setListens([this](uint16_t port, bool isTcp) {
             listenAsked.append({port, isTcp});
             return answer;
@@ -245,6 +268,8 @@ struct Bench
 };
 
 } // namespace
+
+static void run_router_former_address_tests();
 
 void run_router_sweep_tests()
 {
@@ -470,13 +495,27 @@ void run_router_sweep_tests()
         CHECK_EQ(b.gw.removes, 0);
         CHECK(b.record.lines.isEmpty());
     }
-    // A line noted under another address than this host has now is not
-    // looked at: the router is not even asked.
+    // A line noted under another address than this host has now is looked at
+    // all the same, by the rule of the former address (formerOurs); the
+    // RouterSweep OLDADDR tests go through that rule. One of a version that
+    // kept no record is not: an untagged entry proves nothing at another
+    // address, and the router is not even asked.
     {
         Bench b;
         Hole line = tunnelLine(3478);
         line.lan = QStringLiteral("192.168.1.77");
         b.left(line);
+        CHECK(b.core.sweepList() == QList<Hole>{line});
+        const auto r = b.core.sweep(line);
+        CHECK(r.outcome == Swept::RemovedFormer && r.former);
+        CHECK(b.gw.table.isEmpty() && b.record.lines.isEmpty());
+    }
+    {
+        Bench b;
+        Hole line = tunnelLine(3478);
+        line.lan = QStringLiteral("192.168.1.77");
+        line.old = true;
+        b.left(line, QString());
         CHECK(b.core.sweepList().isEmpty());
         kept(b, line, Swept::OtherAddress);
         CHECK(b.gw.asked.isEmpty());
@@ -1040,17 +1079,18 @@ void run_router_sweep_tests()
         CHECK(b.gw.table.value(tcp(3478)) == theirs);
         CHECK(!b.record.has(3478, true));
     }
-    // At the address this host had before a renumbering: its own under its
-    // tag, another machine's under any other words
+    // At the address this host had before a renumbering: its own by its
+    // record AND its tag, another machine's under any other words. Its own is
+    // taken off first, then written here (the RouterSweep OLDADDR tests say
+    // more of it).
     {
         Bench b;
         const QString before = QStringLiteral("192.168.1.77");
-        b.core.setPreviousLanAddress(before);
-        TableGateway::Row mine = rowOf(tunnelLine(3478), kTag);
-        mine.client = before;
+        Hole noted = tunnelLine(3478);
+        noted.lan = before;
+        b.left(noted);
         TableGateway::Row other = rowOf(tunnelLine(3479), QString());
         other.client = before;
-        b.gw.table[udp(3478)] = mine;
         b.gw.table[udp(3479)] = other;
         const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {3479, 3478}));
         CHECK(r.ok && r.claim.external == 3478 && r.reclaimedFrom == before);
@@ -1390,22 +1430,490 @@ void run_router_sweep_tests()
             CHECK_EQ(b.core.sweepList(&count).size(), 2);
             CHECK(same(count, 2, 0, 0));
         }
-        // One under another address of this machine, two of a port this run holds
+        // Two under another address of this machine, of which the tagged one
+        // is looked at, after the others; two of a port this run holds
         {
             Bench b;
             Hole before = tunnelLine(3480);
             before.lan = QStringLiteral("192.168.1.21");
             b.left(before);
+            Hole untagged = tunnelLine(3481);
+            untagged.lan = QStringLiteral("192.168.1.21");
+            untagged.old = true;
+            b.left(untagged, QString());
             b.left(mediaLine(2, 46102));
             const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
             CHECK(r.ok && r.claim.external == 3478);
             Count count;
             const QList<Hole> list = b.core.sweepList(&count);
-            CHECK(list == QList<Hole>{mediaLine(2, 46102)});
-            CHECK(same(count, 4, 1, 2));
-            CHECK_EQ(count.lines - count.elsewhere - count.held, list.size());
+            CHECK((list == QList<Hole>{mediaLine(2, 46102), before}));
+            CHECK(same(count, 5, 2, 2));
+            CHECK_EQ(count.former, 1);
+            CHECK_EQ(count.lines - count.elsewhere + count.former - count.held, list.size());
             // Without the count asked for, the same list
             CHECK(b.core.sweepList() == list);
         }
+    }
+
+    run_router_former_address_tests();
+}
+
+// ── OLDADDR: what this installation left under an address it had before ─────
+//
+// Seen on a Freebox: the host killed, its DHCP address changed, the host
+// started again. Its entries stayed towards the former address, for good (the
+// Freebox keeps no lease), and a write of the same number towards the new
+// address was refused (718, ConflictInMappingEntry): the numbers were lost.
+
+namespace {
+
+const QString kFormerLan = QStringLiteral("192.168.1.77");
+const QString kNewLan = QStringLiteral("192.168.1.30");
+const QString kTheirTag = QStringLiteral("5d01aa");
+
+Hole under(Hole line, const QString& lan, bool isTcp)
+{
+    line.lan = lan;
+    line.tcp = isTcp;
+    return line;
+}
+
+Hole streamsLine(uint16_t port)
+{
+    Hole line;
+    line.external = port;
+    line.internal = port;
+    line.kind = Kind::Streams;
+    line.slot = -1;
+    line.lan = kLan;
+    return line;
+}
+
+/// Each kind of hole a claim asks for, with the line it notes.
+struct Kinded
+{
+    const char* name;
+    Hole line;
+    RouterPortCore::Request request;
+};
+
+QList<Kinded> everyKind()
+{
+    return {
+        {"tunnel", tunnelLine(3478), RouterPortCore::tunnelRequest(false, {3478})},
+        {"media slot", mediaLine(1, 46101),
+         RouterPortCore::mediaRequest(false, false, 1, 48551, 46101, false)},
+        {"shared conferencing port", streamsLine(3478),
+         RouterPortCore::muxRequest(false, RouterPortCore::kMuxStandard, {3478})},
+        {"shared block port", streamsLine(48550),
+         RouterPortCore::muxRequest(false, RouterPortCore::kMuxBlock, {48550})},
+    };
+}
+
+QString protocolOf(bool isTcp)
+{
+    return isTcp ? kTcp : kUdp;
+}
+
+} // namespace
+
+static void run_router_former_address_tests()
+{
+    using Reason = RouterPortCore::SkipReason;
+
+    SECTION("RouterSweep OLDADDR: a claim takes its number back from this host's old address");
+    for (const Kinded& k : everyKind()) {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        b.left(under(k.line, kFormerLan, false));
+        b.left(under(k.line, kFormerLan, true));
+        const auto r = b.core.claim(k.request);
+        CHECK(r.ok && r.claim.external == k.line.external && r.claim.tcp);
+        CHECK(r.reclaimedFrom == kFormerLan && r.skipped.isEmpty());
+        // Both protocols written here, and noted under the address of now
+        for (const bool isTcp : {false, true}) {
+            const TableGateway::Row row = b.gw.table.value({k.line.external, protocolOf(isTcp)});
+            CHECK(row.client == kLan && row.internal == k.line.internal);
+            CHECK(row.description == mw::routerholes::describe(k.line.kind, k.line.slot, kTag));
+            Hole noted;
+            CHECK(b.record.find(k.line.external, isTcp, noted) && noted.lan == kLan);
+        }
+        CHECK_EQ(b.gw.removes, 2);
+        CHECK(!b.core.formerStays());
+        if (!(r.ok && r.reclaimedFrom == kFormerLan)) qWarning() << "kind:" << k.name;
+    }
+    // The router keeps the entry towards the old address: refused, or "removed"
+    // and still there. The number is left, as another's is, and so is the line.
+    for (const bool saysRemoved : {false, true}) {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        (saysRemoved ? b.gw.keepsRemoved : b.gw.refusesRemoval) = true;
+        const Hole line = under(tunnelLine(3478), kFormerLan, false);
+        b.left(line);
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {3478}));
+        CHECK(r.ok && r.claim.external == 3479 && r.reclaimedFrom.isEmpty());
+        CHECK(r.skipped.size() == 1 && r.skipped.first().port == 3478);
+        CHECK(r.skipped.first().reason == Reason::FormerStays);
+        CHECK(r.skipped.first().owner == kFormerLan);
+        CHECK(b.gw.table.value(udp(3478)) == rowOf(line, kTag));
+        Hole noted;
+        CHECK(b.record.find(3478, false, noted) && noted == line);
+        CHECK(b.core.formerStays());
+    }
+    // Only its TCP entry is kept there: the UDP hole is taken back, the TCP
+    // one left, and said
+    {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        const Hole tcpLine = under(tunnelLine(3478), kFormerLan, true);
+        b.left(under(tunnelLine(3478), kFormerLan, false));
+        b.left(tcpLine);
+        b.gw.beforeAdd = [&b](uint16_t, const QString&) { b.gw.refusesRemoval = true; };
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {3478}));
+        CHECK(r.ok && r.claim.external == 3478 && !r.claim.tcp && r.reclaimedFrom == kFormerLan);
+        CHECK(b.gw.table.value(udp(3478)).client == kLan);
+        CHECK(b.gw.table.value(tcp(3478)) == rowOf(tcpLine, kTag));
+        CHECK(b.core.formerStays());
+    }
+
+    SECTION("RouterSweep OLDADDR: at the claim, nothing that is not provably ours is touched");
+    {
+        const Hole line = under(tunnelLine(3478), kFormerLan, false);
+        const auto notOurs = [&](const char* what, const std::function<void(Bench&)>& set) {
+            Bench b;
+            b.gw.conflictsOverClient = true;
+            set(b);
+            const TableGateway::Row before = b.gw.table.value(udp(3478));
+            const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {3478}));
+            const bool ok = r.ok && r.claim.external == 3479 && r.reclaimedFrom.isEmpty() &&
+                            r.skipped.size() == 1 && r.skipped.first().reason == Reason::Foreign &&
+                            b.gw.table.value(udp(3478)) == before && b.gw.removes == 0 &&
+                            !b.core.formerStays();
+            CHECK(ok);
+            if (!ok) qWarning() << "case:" << what;
+        };
+        // Another installation's, under its own tag: another MoonlightWeb
+        // that has that address by now
+        notOurs("other tag", [&](Bench& b) {
+            b.record.note(line);
+            b.gw.table[udp(3478)] = rowOf(line, kTheirTag);
+        });
+        // Towards another address than the one the line was noted under
+        notOurs("other client", [&](Bench& b) {
+            b.record.note(line);
+            TableGateway::Row row = rowOf(line, kTag);
+            row.client = QStringLiteral("192.168.1.78");
+            b.gw.table[udp(3478)] = row;
+        });
+        notOurs("other internal port", [&](Bench& b) {
+            b.record.note(line);
+            TableGateway::Row row = rowOf(line, kTag);
+            row.internal = 3500;
+            b.gw.table[udp(3478)] = row;
+        });
+        notOurs("other words", [&](Bench& b) {
+            b.record.note(line);
+            TableGateway::Row row = rowOf(line, kTag);
+            row.description = QStringLiteral("game server");
+            b.gw.table[udp(3478)] = row;
+        });
+        // This installation's tag, and no line in its record: the tag alone
+        // proves nothing at another address
+        notOurs("no line", [&](Bench& b) { b.gw.table[udp(3478)] = rowOf(line, kTag); });
+        // A line of a version that kept no record, and its words alone
+        notOurs("untagged line", [&](Bench& b) {
+            Hole old = line;
+            old.old = true;
+            b.record.note(old);
+            b.gw.table[udp(3478)] = rowOf(old, QString());
+        });
+    }
+    // The number is taken between the removal and the write (the router
+    // answers 718): skipped like any refused number, once, and the next one
+    // asked for
+    {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        b.left(under(tunnelLine(3478), kFormerLan, false));
+        bool taken = false;
+        b.gw.beforeAdd = [&](uint16_t ext, const QString& proto) {
+            if (ext != 3478 || proto != kUdp || taken) return;
+            taken = true;
+            b.gw.table[udp(3478)] = {kNeighbour, 3478, QStringLiteral("game server"), 0};
+        };
+        const auto r = b.core.claim(RouterPortCore::tunnelRequest(false, {3478}));
+        CHECK(r.ok && r.claim.external == 3479 && r.reclaimedFrom.isEmpty());
+        CHECK(r.skipped.size() == 1 && r.skipped.first().reason == Reason::Refused);
+        CHECK(b.gw.table.value(udp(3478)).client == kNeighbour);
+        CHECK(!b.record.has(3478, false));
+        CHECK_EQ(b.gw.removes, 1);
+        CHECK(!b.core.formerStays());
+    }
+
+    SECTION("RouterSweep OLDADDR: the sweep takes back a line left under an old address");
+    for (const Kinded& k : everyKind()) {
+        for (const bool isTcp : {false, true}) {
+            Bench b;
+            const Hole line = under(k.line, kFormerLan, isTcp);
+            b.left(line);
+            CHECK(b.core.sweepList() == QList<Hole>{line});
+            CHECK(b.core.sweepBelieved(b.core.sweepList()));
+            const auto r = b.core.sweep(line);
+            CHECK(r.outcome == Swept::RemovedFormer && r.former);
+            CHECK(b.gw.table.isEmpty() && b.record.lines.isEmpty());
+            CHECK_EQ(b.gw.removes, 1);
+            // A tagged line asks nothing of the machine's own sockets
+            CHECK(b.listenAsked.isEmpty() && b.serverAsked == 0);
+        }
+    }
+    // What is left as it is, and whether its line stays
+    {
+        const Hole line = under(tunnelLine(3478), kFormerLan, false);
+        const auto looked = [&](const char* what, const std::function<void(Bench&)>& set,
+                                Swept outcome, const QString& detail, bool lineStays) {
+            Bench b;
+            b.left(line);
+            set(b);
+            const auto table = b.gw.table;
+            const auto r = b.core.sweep(line);
+            const bool ok = r.outcome == outcome && r.former && r.detail == detail &&
+                            b.gw.table == table && b.record.has(3478, false) == lineStays &&
+                            !b.core.formerStays();
+            CHECK(ok);
+            if (!ok) qWarning() << "case:" << what;
+        };
+        looked("gone", [](Bench& b) { b.gw.table.clear(); }, Swept::Gone, QString(), false);
+        looked(
+            "silent", [](Bench& b) { b.gw.silent.insert(3478); }, Swept::Unknown, QString(), true);
+        looked(
+            "garbled", [](Bench& b) { b.gw.table[udp(3478)].internal = 0; }, Swept::Unknown,
+            QString(), true);
+        looked(
+            "other tag", [&](Bench& b) { b.gw.table[udp(3478)] = rowOf(line, kTheirTag); },
+            Swept::NotOurs, QStringLiteral("description"), false);
+        looked(
+            "other client",
+            [](Bench& b) { b.gw.table[udp(3478)].client = QStringLiteral("192.168.1.78"); },
+            Swept::NotOurs, QStringLiteral("address"), false);
+        looked(
+            "this host's address now", [](Bench& b) { b.gw.table[udp(3478)].client = kLan; },
+            Swept::NotOurs, QStringLiteral("address"), false);
+        looked(
+            "other internal port", [](Bench& b) { b.gw.table[udp(3478)].internal = 3500; },
+            Swept::NotOurs, QStringLiteral("internal port"), false);
+    }
+    // The removal is refused: the line stays, and the admin page is told
+    // until a later removal goes through
+    {
+        Bench b;
+        const Hole line = under(tunnelLine(3478), kFormerLan, false);
+        b.left(line);
+        b.gw.refusesRemoval = true;
+        auto r = b.core.sweep(line);
+        CHECK(r.outcome == Swept::Stayed && r.former);
+        CHECK(b.record.has(3478, false) && b.gw.table.contains(udp(3478)));
+        CHECK(b.core.formerStays());
+        b.gw.refusesRemoval = false;
+        r = b.core.sweep(line);
+        CHECK(r.outcome == Swept::RemovedFormer);
+        CHECK(!b.core.formerStays());
+        CHECK(b.gw.table.isEmpty() && b.record.lines.isEmpty());
+    }
+    // A line of a version that kept no record, under an old address: not
+    // looked at, not listed
+    {
+        Bench b;
+        Hole line = under(tunnelLine(3478), kFormerLan, false);
+        line.old = true;
+        b.left(line, QString());
+        CHECK(b.core.sweepList().isEmpty());
+        CHECK(b.core.sweep(line).outcome == Swept::OtherAddress);
+        CHECK(b.gw.asked.isEmpty() && b.gw.removes == 0);
+    }
+
+    SECTION("RouterSweep OLDADDR: a renumbering under a running server moves every hole (D1)");
+    {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        const auto t = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        const auto m = b.core.claim(RouterPortCore::mediaRequest(false, false, 1, 48551, 0, false));
+        CHECK(t.ok && t.claim.external == 3478 && t.claim.tcp);
+        CHECK(m.ok && m.claim.external == 48551 && m.claim.tcp);
+        // A DHCP lease gives this machine another address
+        b.gw.now = kNewLan;
+        CHECK(b.core.addressMoved());
+        // Nothing is renewed towards the address it no longer has
+        const int adds = b.gw.adds;
+        CHECK(b.core.renew().isEmpty());
+        CHECK(b.core.renew(3478).isEmpty());
+        CHECK_EQ(b.gw.adds, adds);
+        // Followed: each entry taken off the former address, written here
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 1);
+        CHECK(b.gw.lan == kNewLan && !b.core.addressMoved());
+        for (const uint16_t port : {uint16_t(3478), uint16_t(48551)})
+            for (const bool isTcp : {false, true}) {
+                CHECK(b.gw.table.value({port, protocolOf(isTcp)}).client == kNewLan);
+                Hole noted;
+                CHECK(b.record.find(port, isTcp, noted) && noted.lan == kNewLan);
+            }
+        CHECK(b.core.holds(3478) && b.core.holds(48551));
+        CHECK(!b.core.formerStays());
+        // Nothing more to follow, and the renewals go on from here
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 1);
+        CHECK(b.core.renew().isEmpty());
+        CHECK(b.gw.table.value(udp(3478)).client == kNewLan);
+    }
+    // The router does not answer from the new address: nothing is written
+    // until it does. A claim does not look again from the same address, a
+    // renewal does.
+    {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        b.gw.now = kNewLan;
+        b.rediscoverFails = true;
+        const auto table = b.gw.table;
+        const int adds = b.gw.adds;
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 1);
+        CHECK(b.core.renew().isEmpty());
+        CHECK(b.gw.table == table && b.gw.adds == adds && b.gw.removes == 0);
+        CHECK(b.core.followAddress(false).isEmpty());
+        CHECK_EQ(b.rediscovers, 1);
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 2);
+        b.rediscoverFails = false;
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 3);
+        CHECK(b.gw.table.value(udp(3478)).client == kNewLan);
+    }
+    // The router, found again, sees this machine where it saw it: nothing moved
+    {
+        Bench b;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        b.gw.now = kNewLan;
+        // What the system says stays what it said: the router is not looked
+        // for again from there, and the renewals go on
+        b.core.setRediscover([&b]() {
+            ++b.rediscovers;
+            return true;
+        });
+        const auto table = b.gw.table;
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 1);
+        CHECK(b.gw.table == table && b.gw.removes == 0);
+        CHECK(!b.core.addressMoved());
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 1);
+        const int adds = b.gw.adds;
+        CHECK(b.core.renew().isEmpty());
+        CHECK(b.gw.adds > adds && b.gw.table.value(udp(3478)).client == kLan);
+    }
+    // The router keeps the entries towards the former address: those holes
+    // are lost (the main thread forgets the numbers and asks for others),
+    // their lines stay, the admin page is told, and nothing is written over
+    // them
+    {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        CHECK(b.core.claim(RouterPortCore::mediaRequest(false, false, 1, 48551, 0, false)).ok);
+        const auto table = b.gw.table;
+        const int adds = b.gw.adds;
+        b.gw.now = kNewLan;
+        b.gw.refusesRemoval = true;
+        const auto lost = b.core.followAddress(true);
+        CHECK_EQ(lost.size(), 2);
+        for (const RouterPortCore::Lost& l : lost)
+            CHECK(l.owner == kLan && !l.here);
+        CHECK(!b.core.holds(3478) && !b.core.holds(48551));
+        CHECK(b.gw.table == table && b.gw.adds == adds);
+        Hole noted;
+        CHECK(b.record.find(3478, false, noted) && noted.lan == kLan);
+        CHECK(b.core.formerStays());
+    }
+    // The router keeps only the TCP entry towards the former address: the
+    // hole goes on in UDP from here, without TCP, and that TCP entry is never
+    // touched again in this run, not even at release
+    {
+        Bench b;
+        b.gw.conflictsOverClient = true;
+        const auto t = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(t.ok && t.claim.external == 3478 && t.claim.tcp);
+        b.gw.now = kNewLan;
+        b.gw.keeps = {{uint16_t(3478), kTcp}};
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK(b.core.holds(3478));
+        const QList<RouterPortCore::Claim> held = b.core.held();
+        CHECK(held.size() == 1 && !held.first().tcp);
+        CHECK(b.gw.table.value(udp(3478)).client == kNewLan);
+        CHECK(b.gw.table.value({uint16_t(3478), kTcp}).client == kLan);
+        Hole noted;
+        CHECK(b.record.find(3478, false, noted) && noted.lan == kNewLan);
+        CHECK(b.record.find(3478, true, noted) && noted.lan == kLan);
+        CHECK(b.core.formerStays());
+        // Released with the claim as the main thread has it (TCP still said)
+        const int removes = b.gw.removes;
+        b.core.release(t.claim);
+        CHECK(!b.core.holds(3478));
+        CHECK(!b.gw.table.contains(udp(3478)));
+        CHECK_EQ(b.gw.removes, removes + 1);
+        CHECK(b.gw.table.value({uint16_t(3478), kTcp}).client == kLan);
+        CHECK(b.record.find(3478, true, noted) && noted.lan == kLan);
+        CHECK(b.core.formerStays());
+    }
+    // While the router is not found again from the new address, a claim
+    // writes nothing: the address it would name may be another machine's.
+    // Found again, the same claim is written towards the new address.
+    {
+        Bench b;
+        b.gw.now = kNewLan;
+        b.rediscoverFails = true;
+        CHECK(b.core.followAddress(false).isEmpty());
+        CHECK(b.core.addressMoved());
+        b.gw.asked.clear();
+        const auto refused = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(!refused.ok && refused.skipped.isEmpty());
+        CHECK(b.gw.adds == 0 && b.gw.removes == 0 && b.gw.asked.isEmpty());
+        CHECK(b.gw.table.isEmpty() && b.record.holes().isEmpty());
+        CHECK(!b.core.holds(3478));
+        b.rediscoverFails = false;
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK(!b.core.addressMoved());
+        const auto written = b.core.claim(RouterPortCore::tunnelRequest(false, {}));
+        CHECK(written.ok && written.claim.external == 3478);
+        CHECK(b.gw.table.value(udp(3478)).client == kNewLan);
+        Hole noted;
+        CHECK(b.record.find(3478, false, noted) && noted.lan == kNewLan);
+    }
+    // Quitting: nothing is followed any more
+    {
+        Bench b;
+        CHECK(b.core.claim(RouterPortCore::tunnelRequest(false, {})).ok);
+        b.core.close();
+        b.gw.now = kNewLan;
+        CHECK(b.core.followAddress(true).isEmpty());
+        CHECK_EQ(b.rediscovers, 0);
+    }
+
+    SECTION("RouterSweep OLDADDR: what the admin page is told, and nobody else");
+    {
+        const QLatin1String key(mw::routerholes::kStaleRefusedKey);
+        QJsonObject status{{QStringLiteral("active"), true}};
+        mw::routerholes::tellAdmin(status, true, true);
+        CHECK(status.value(key).isBool() && status.value(key).toBool());
+        mw::routerholes::tellAdmin(status, true, false);
+        CHECK(status.value(key).isBool() && !status.value(key).toBool());
+        // Nothing but that yes or no goes with it
+        CHECK_EQ(status.size(), qsizetype(2));
+        // Whoever is not the admin gets no such key, whatever the status held
+        mw::routerholes::tellAdmin(status, true, true);
+        mw::routerholes::tellAdmin(status, false, true);
+        CHECK(!status.contains(key) && status.value(QStringLiteral("active")).toBool());
+        // A key of its own, beside the one of TCP 443
+        CHECK(QLatin1String(mw::routerholes::kStaleRefusedKey) !=
+              QLatin1String("router443_stale_removal_refused"));
     }
 }
