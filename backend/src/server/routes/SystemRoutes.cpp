@@ -853,7 +853,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     server.router()->post("/api/system/open-screen-recording", [&](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 #if defined(Q_OS_MACOS)
-        QProcess::startDetached(
+        mw::startDetached(
             QStringLiteral("/usr/bin/open"),
             {QStringLiteral(
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")});
@@ -875,7 +875,7 @@ void registerSystemRoutes(HttpServer& server, AppSettings& appSettings, AuthMana
     server.router()->post("/api/system/open-accessibility", [&](const HttpRequest& req) {
         if (!req.isLocal) return HttpResponse::error(403, "Only available from localhost");
 #if defined(Q_OS_MACOS)
-        QProcess::startDetached(
+        mw::startDetached(
             QStringLiteral("/usr/bin/open"),
             {QStringLiteral(
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")});

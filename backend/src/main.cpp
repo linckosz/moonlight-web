@@ -17,7 +17,6 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
-#include <QDesktopServices>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -70,6 +69,7 @@
 #include <utility>
 #include "server/AppSettings.h"
 #include "common/DetachedProcess.h"
+#include "common/OpenInBrowser.h"
 #include "common/PrivilegedPlace.h"
 #include "server/ClientUniqueId.h"
 #include "server/ErrorReports.h"
@@ -528,22 +528,6 @@ static void selectHeadlessPlatform()
 static bool arecordRunning()
 {
     return Provisioning::stepStatus(QStringLiteral("arecord")) == QLatin1String("running");
-}
-
-// Open a URL in the user's default browser. On Linux, QDesktopServices::openUrl
-// routes through the XDG desktop portal, which under Ubuntu's snap-packaged
-// Firefox (the distro default) can pop a blank window that never receives the
-// URL — the bar stays empty. Invoking xdg-open directly (the same path a working
-// .desktop launcher uses) delivers the URL reliably. Other platforms use Qt's
-// opener. Note: a self-signed localhost cert still shows a one-time browser
-// warning the user must accept — that is inherent to self-signed TLS.
-static void openInBrowser(const QString& url)
-{
-#if defined(Q_OS_LINUX)
-    if (mw::startDetached(QStringLiteral("xdg-open"), {url})) return;
-    // xdg-open missing (minimal desktop): fall through to Qt's opener.
-#endif
-    QDesktopServices::openUrl(QUrl(url));
 }
 
 // ── The running server, asked from another process ─────────────────────────
@@ -1344,7 +1328,7 @@ static int runOwnerLinkCommand(quint16 persistedHttpsPort, bool print)
         out.flush();
         return 0;
     }
-    openInBrowser(url);
+    mw::openInBrowser(url);
     return 0;
 }
 
@@ -2750,7 +2734,7 @@ int main(int argc, char* argv[])
             Logger::info("Asking the running instance to surface the admin page: " + base);
             if (!requestFocusAdmin()) {
                 Logger::info("Running instance unreachable — opening the admin page directly");
-                openInBrowser(base + QStringLiteral("/admin"));
+                mw::openInBrowser(base + QStringLiteral("/admin"));
             }
         }
         // The server we just found may be a service with no desktop to draw on
@@ -8864,7 +8848,7 @@ int main(int argc, char* argv[])
             } else {
                 // With a key: the page that opens is this
                 // machine's owner's.
-                openInBrowser(ownerLink(adminLocked ? QString() : QStringLiteral("/admin")));
+                mw::openInBrowser(ownerLink(adminLocked ? QString() : QStringLiteral("/admin")));
                 obj["delivered"] = false;
             }
             return HttpResponse::json(obj, 200);
@@ -9135,7 +9119,7 @@ int main(int argc, char* argv[])
             QUrl logged(url);
             logged.setFragment(QString());
             qInfo() << "[main] Opening web UI:" << logged.toString();
-            openInBrowser(url);
+            mw::openInBrowser(url);
         });
         // Defer so the TLS listener is fully accepting before the browser hits it.
         QTimer::singleShot(1200, opener, [opener]() { opener->start(); });

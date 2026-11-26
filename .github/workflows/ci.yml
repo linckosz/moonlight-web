@@ -220,12 +220,24 @@ jobs:
       # matched `build.sh` on Git Bash, which quietly fed shell scripts to
       # clang-format on a maintainer's machine.
       - name: Check formatting (house style in backend/.clang-format)
+        id: format
         run: |
           git ls-files -- 'backend/src/*.cpp' 'backend/src/*.h' \
                           'backend/tests/*.cpp' 'backend/tests/*.h' \
             | xargs clang-format --dry-run --Werror
+      # Every program the server starts receives its standard channels and
+      # nothing else: a QProcess goes through mw::passOnlyStdio or
+      # mw::startDetached, and a system call that starts a program is listed,
+      # with its reason, in scripts/ci/child-launch-allowlist.txt. The samples
+      # run first, so a rule that stopped firing is seen.
+      - name: Child launches
+        id: launches
+        if: "!cancelled()"
+        run: |
+          python scripts/ci/check-child-launch.py --self-test
+          python scripts/ci/check-child-launch.py
       - name: Report
-        if: failure()
+        if: failure() && steps.format.outcome == 'failure'
         run: |
           {
             echo "### ❌ C++ formatting failed"
@@ -234,6 +246,16 @@ jobs:
             echo '```bash'
             echo "git ls-files -- 'backend/src/*.cpp' 'backend/src/*.h' 'backend/tests/*.cpp' 'backend/tests/*.h' | xargs clang-format -i"
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Report child launches
+        if: failure() && steps.launches.outcome == 'failure'
+        run: |
+          {
+            echo "### ❌ Child launch check failed"
+            echo ""
+            echo "The step's log names each place. A QProcess goes through mw::passOnlyStdio"
+            echo "(common/ChildStdio.h) or mw::startDetached (common/DetachedProcess.h); a system"
+            echo "call that starts a program gets its line in scripts/ci/child-launch-allowlist.txt."
           } >> "$GITHUB_STEP_SUMMARY"
 
   quality-cppcheck:

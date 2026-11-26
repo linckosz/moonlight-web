@@ -1,0 +1,23 @@
+# Where the server's sources start a program by a system call, read by
+# scripts/ci/check-child-launch.py.
+#
+# One line per file: path | how many launches the check finds in it | what it
+# starts and why the program receives nothing of ours but what it is given.
+# A count that changes, either way, fails the check: a new launch, or one moved
+# away, comes with its line updated.
+#
+# A QProcess is not listed here: it goes through mw::passOnlyStdio, or
+# mw::startDetached when it is detached, and the check sees that by itself.
+
+backend/src/common/OwnedChild.cpp | 1 | the update's installer, a child the server never ends: created with inheritance off, so no handle passes
+backend/src/network/UpdateApply.cpp | 1 | the update's installer started by the service: created with inheritance off, so no handle passes
+backend/src/streaming/ConsoleSession.cpp | 3 | a program started as the console's user, with inheritance off; and the console worker, whose inheritance is limited by a handle list to its three pipes
+backend/src/streaming/WorkerService.cpp | 1 | the worker of the SYSTEM service, in the console's session: created with inheritance off, its pipe opened by name
+backend/src/server/HostAppLauncher.cpp | 2 | a host app: Explorer creates its process when it can (nothing of ours is in Explorer); otherwise the shell starts it from this process, and such a program receives none of our handles (test_child_stdio)
+backend/src/common/OpenInBrowser.h | 1 | the browser, by Qt's opener: on Linux only when xdg-open, started without our descriptors, is missing; on Windows the shell from this process (test_child_stdio); on macOS LaunchServices
+backend/native-host/src/capture/linux/GamescopeSession.cpp | 1 | gamescope, by posix_spawn: its output pipe is moved to stdout and stderr, and every descriptor from 3 up is closed in the child
+backend/native-host/src/capture/linux/KmsHelperClient.cpp | 1 | the KMS capture helper, by posix_spawn: its own channel is moved to its fixed number, and every descriptor above it is closed in the child
+backend/native-host/src/capture/linux/PortalScreenCast.cpp | 2 | this program again, as the portal's helper (fork, then exec): its channel is moved to its fixed number, and every descriptor above it is closed before the exec
+backend/native-host/src/input/linux/GnomeNaturalScroll.cpp | 1 | gsettings, by posix_spawn: its output pipe is moved to stdout, and every descriptor from 3 up is closed in the child
+backend/native-host/src/platform/linux/SleepInhibit.cpp | 1 | systemd-inhibit, by posix_spawn: its pipe is moved to stdin, and every descriptor from 3 up is closed in the child
+backend/packaging/linux/moonlightweb-launch.c | 2 | the launcher replaces itself with the MoonlightWeb program next to it (exec): it opens and closes no descriptor, so the program has what the launcher's caller chose to give

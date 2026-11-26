@@ -19,11 +19,11 @@
 #include "Autostart.h"
 #include "common/Edition.h"
 #include "common/DetachedProcess.h"
+#include "common/OpenInBrowser.h"
 #include "server/HttpServer.h"
 
 #include <QApplication>
 #include <QStyle>
-#include <QDesktopServices>
 #include <QUrl>
 #include <QIcon>
 #include <QFile>
@@ -613,7 +613,7 @@ void TrayManager::openAppPage(const QString& path)
         logged.setFragment(QString());
         qInfo() << "[TrayManager] Opening" << (path.isEmpty() ? QStringLiteral("/") : path)
                 << "by the owner's link" << logged.toString();
-        QDesktopServices::openUrl(QUrl(link));
+        mw::openInBrowser(link);
         return;
     }
 
@@ -623,7 +623,7 @@ void TrayManager::openAppPage(const QString& path)
         return;
     }
     qInfo() << "[TrayManager] Opening" << url.toString();
-    QDesktopServices::openUrl(url);
+    mw::openInBrowser(url.toString(QUrl::FullyEncoded));
 }
 
 void TrayManager::onOpen()
