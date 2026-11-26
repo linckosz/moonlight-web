@@ -290,15 +290,18 @@ export class AdminView {
     async _loadState() {
         // Feedback asked beside the settings, not after them. No section when
         // the server cannot send it (a LAN-only build) or does not know the
-        // route (an older server).
-        const feedback = BackendClient.getFeedbackStatus().then(
-            (f) => {
-                this._feedback = f && f.available === true ? f : null;
-            },
-            () => {
-                this._feedback = null;
-            },
-        );
+        // route (an older server). Whatever goes wrong asking leaves the
+        // section out and never the settings: even a call that throws.
+        const feedback = Promise.resolve()
+            .then(() => BackendClient.getFeedbackStatus())
+            .then(
+                (f) => {
+                    this._feedback = f && f.available === true ? f : null;
+                },
+                () => {
+                    this._feedback = null;
+                },
+            );
         try {
             const admin = await BackendClient.getAdminSettings();
             this._httpsPort = admin.https_port || 443;

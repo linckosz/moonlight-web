@@ -303,6 +303,15 @@ describe('the Feedback section', () => {
         await view._loadState();
         expect(view._feedback).toBeNull();
 
+        // Even a call that throws at once leaves the settings loaded.
+        status.mockImplementation(() => {
+            throw new TypeError('not a function');
+        });
+        vi.mocked(BackendClient.getAdminSettings).mockResolvedValue({ https_port: 8443 });
+        await view._loadState();
+        expect(view._feedback).toBeNull();
+        expect(view._httpsPort).toBe(8443);
+
         const f = { available: true, max_message: 1600, attachment: { os: 'linux' } };
         status.mockResolvedValue(f);
         await view._loadState();
