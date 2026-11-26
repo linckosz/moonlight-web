@@ -55,6 +55,13 @@ export class AdminView {
     static STALE_FORWARD_NOTICE =
         'A port forward to an old address of this PC could not be removed: remove it in your box.';
 
+    // Shown while the router keeps a TCP 443 forward this install made and
+    // will not let it be removed from here, under this PC's address or an old
+    // one (router443_stale_removal_refused). A fixed text, in English only:
+    // nothing a router answered is ever shown, and no address.
+    static TCP443_STUCK_NOTICE =
+        'A TCP 443 port forward to this PC could not be removed: remove it in your box.';
+
     // Shown while the list of router ports in settings.json
     // (router_ports_allowed) is refused: nothing is asked of the box until it is
     // mended. A fixed text, in English only; the rule it breaks is in the log.
@@ -138,8 +145,8 @@ export class AdminView {
         this._rendezvousOnline = false; // the held line is actually up
         this._rendezvousError = ''; // why the client stopped trying, if it did
         this._lastError = '';
-        // The router keeps a 443 forward this install made under an address
-        // this PC no longer has, and will not let it be removed from here.
+        // The router keeps a 443 forward this install made, and will not let
+        // it be removed from here (TCP443_STUCK_NOTICE).
         this._router443StaleRefused = false;
         // The same of any other forward (STALE_FORWARD_NOTICE).
         this._routerStaleRefused = false;
@@ -1244,15 +1251,13 @@ export class AdminView {
                             : ''
                     }
 
-                    <!-- A 443 forward this install made under an address this
-                         PC no longer has, which the router will not let it
-                         remove. A fixed text, in English only: nothing a
-                         router answered is ever shown here, and no address. -->
+                    <!-- A 443 forward this install made, which the router will
+                         not let it remove (TCP443_STUCK_NOTICE). -->
                     ${
                         this._router443StaleRefused
                             ? `
-                        <div class="internet-info-box internet-info-error">
-                            <p>A 443 forward to an old address of this PC could not be removed: remove it in your box.</p>
+                        <div class="internet-info-box internet-info-error" id="tcp443-stuck">
+                            <p>${AdminView.TCP443_STUCK_NOTICE}</p>
                         </div>
                     `
                             : ''

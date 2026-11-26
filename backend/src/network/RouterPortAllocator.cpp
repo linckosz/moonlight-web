@@ -627,7 +627,9 @@ public:
                 Logger::info(QStringLiteral("[UPNP] ") + line.text);
         }
         const quint16 leadsTo = m_Guard443->leadsTo();
-        const bool refused = m_Guard443->formerRefused();
+        // An entry of this installation's the router will not remove, at
+        // this address or an earlier one: the admin page says so
+        const bool refused = m_Guard443->removalRefused();
         // The last look made, and whether the guard is still at it: a run
         // under way, or a look that waits for the sweep
         const uint32_t look = m_Last443.look;

@@ -265,6 +265,19 @@ public:
     /// to be gone; a router that says nothing leaves it as it was.
     bool formerRefused() const { return m_FormerRefused; }
 
+    /// An entry of this installation's at this machine's address that the
+    /// router still shows as it was written after it was asked to remove it
+    /// (release(), undo(), step 2): the person who runs the router has to.
+    /// The line stays. False again once the entry is seen to be gone or
+    /// another's (stillKept()), or is held again; a router that says nothing
+    /// leaves it as it was.
+    bool keptRefused() const { return m_KeptRefused; }
+    /// What keptRefused() said, read again and nothing written: struck when
+    /// gone or another's. Asks the router nothing when it said no.
+    bool stillKept();
+    /// Either of the two: what the admin page is told (kStaleRefusedKey).
+    bool removalRefused() const { return m_FormerRefused || m_KeptRefused; }
+
 private:
     /// The dial a run under way waits for: the way back (step 3), 443 in
     /// silence (step 4), or the proof of what was written (step 5).
@@ -294,6 +307,7 @@ private:
     bool m_Held = false;
     uint16_t m_Internal = 0;
     bool m_FormerRefused = false;
+    bool m_KeptRefused = false;
     Stage m_Stage = Stage::Idle;
     /// What the run under way was begun on.
     Situation m_Run;
@@ -306,7 +320,7 @@ private:
     bool m_HasUnproved = false;
 };
 
-/// What the admin page is told of Guard::formerRefused(), in the status it
+/// What the admin page is told of Guard::removalRefused(), in the status it
 /// reads: this one key, a yes or a no and nothing else (no address, no port,
 /// nothing a router answered; the page has the words). For the admin alone:
 /// whoever else asks gets a status without the key, whatever it held before.
@@ -426,6 +440,7 @@ public:
     /// The block port 443 leads to while it is held, 0 otherwise.
     uint16_t leadsTo() const { return m_Guard.leadsTo(); }
     bool formerRefused() const { return m_Guard.formerRefused(); }
+    bool removalRefused() const { return m_Guard.removalRefused(); }
     /// A run is under way: begun, and not ended or given up.
     bool running() const { return m_Run != 0; }
     /// The server stops. A run under way is given up and its dial cancelled;

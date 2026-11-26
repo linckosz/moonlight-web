@@ -50,11 +50,12 @@ struct Box : IUpnpGateway
     };
     QString lan = kLan;
     QMap<QPair<uint16_t, QString>, Row> table;
-    bool silent = false;        ///< says nothing of any entry
-    bool refusesAdd = false;    ///< refuses to write
-    bool forgetsAdd = false;    ///< says it wrote, and did not
-    bool refusesRemove = false; ///< refuses to remove
-    QString writesTowards;      ///< writes the entry towards this machine instead
+    bool silent = false;            ///< says nothing of any entry
+    bool refusesAdd = false;        ///< refuses to write
+    bool forgetsAdd = false;        ///< says it wrote, and did not
+    bool refusesRemove = false;     ///< refuses to remove
+    bool silentAfterRemove = false; ///< says nothing of any entry once asked to remove one
+    QString writesTowards;          ///< writes the entry towards this machine instead
     int adds = 0, removes = 0, lookups = 0;
 
     QString lanAddress() const override { return lan; }
@@ -83,6 +84,7 @@ struct Box : IUpnpGateway
     bool remove(uint16_t external, const QString& protocol) override
     {
         ++removes;
+        if (silentAfterRemove) silent = true;
         if (refusesRemove) return false;
         return table.remove({external, protocol}) > 0;
     }
@@ -1205,6 +1207,110 @@ struct Watch
     }
 };
 
+/// TCP 443 is taken off once no browser needs it. A router that keeps the
+/// entry when it is asked to remove it, at this machine's address, is said to
+/// the admin as an entry under a former address is: until it is seen gone.
+void stuck()
+{
+    SECTION("Tcp443Guard: an entry the router will not remove is said until it is gone");
+    {
+        Rig r;
+        CHECK(r.claim(wanted()).outcome == Outcome::Held);
+        CHECK(!r.guard.keptRefused() && !r.guard.removalRefused());
+        r.box.refusesRemove = true;
+        CHECK(!r.guard.release());
+        CHECK(r.guard.keptRefused() && r.guard.removalRefused() && !r.guard.formerRefused());
+        QJsonObject told;
+        tellAdmin(told, true, r.guard.removalRefused());
+        CHECK(told.value(QLatin1String(kStaleRefusedKey)).toBool());
+        // Read again, and nothing written or removed: still there
+        const int removes = r.box.removes, adds = r.box.adds;
+        CHECK(r.guard.stillKept() && r.guard.keptRefused());
+        CHECK(r.box.removes == removes && r.box.adds == adds && r.notes.lines.size() == 1);
+        // A router that says nothing leaves it as it was
+        r.box.silent = true;
+        CHECK(r.guard.stillKept() && r.guard.keptRefused() && r.notes.lines.size() == 1);
+        r.box.silent = false;
+        // Removed on the router by its owner: the line goes, and so does the notice
+        r.box.table.remove({kPort, kTcp});
+        CHECK(!r.guard.stillKept() && !r.guard.keptRefused() && !r.guard.removalRefused());
+        CHECK(r.notes.lines.isEmpty());
+        // Nothing more is asked of the router once it is not said
+        const int lookups = r.box.lookups;
+        CHECK(!r.guard.stillKept() && r.box.lookups == lookups);
+    }
+    {
+        // Another's by now: no longer this installation's to say
+        Rig r;
+        CHECK(r.claim(wanted()).outcome == Outcome::Held);
+        r.box.refusesRemove = true;
+        CHECK(!r.guard.release() && r.guard.keptRefused());
+        r.box.table[{kPort, kTcp}] = rowOf(kNeighbour, 443, QStringLiteral("https"));
+        CHECK(!r.guard.stillKept() && !r.guard.keptRefused() && r.notes.lines.isEmpty());
+    }
+    {
+        // Held again (a browser needs it once more): no longer said
+        Rig r;
+        CHECK(r.claim(wanted()).outcome == Outcome::Held);
+        r.box.refusesRemove = true;
+        CHECK(!r.guard.release() && r.guard.keptRefused());
+        CHECK(r.claim(wanted()).outcome == Outcome::Held && !r.guard.keptRefused());
+    }
+    {
+        // A router that says nothing when it is taken off: not said to be kept
+        Rig r;
+        CHECK(r.claim(wanted()).outcome == Outcome::Held);
+        r.box.silent = true;
+        CHECK(!r.guard.release() && !r.guard.keptRefused());
+    }
+    {
+        // Towards a port the streams no longer share, and not let go of (step 2)
+        Rig r;
+        r.notes.note(lineUnder(kLan, uint16_t(kBlock + 3)));
+        r.box.table[{kPort, kTcp}] = rowOf(kLan, uint16_t(kBlock + 3));
+        r.box.refusesRemove = true;
+        CHECK(r.claim(wanted()).step == 2 && r.guard.keptRefused());
+    }
+    {
+        // The same on a router that goes silent once asked to remove it: not
+        // said to keep it
+        Rig r;
+        r.notes.note(lineUnder(kLan, uint16_t(kBlock + 3)));
+        r.box.table[{kPort, kTcp}] = rowOf(kLan, uint16_t(kBlock + 3));
+        r.box.refusesRemove = true;
+        r.box.silentAfterRemove = true;
+        CHECK(r.claim(wanted()).step == 2 && !r.guard.keptRefused());
+        CHECK(r.notes.lines.size() == 1);
+    }
+    {
+        // Written, never proved, and not let go of (step 5)
+        Rig r;
+        r.dials.deaf = true;
+        r.box.refusesRemove = true;
+        CHECK(r.claim(wanted()).step == 5 && r.guard.keptRefused());
+    }
+    {
+        // As it is run: no longer wanted, taken off, kept by the router; read
+        // again at each look the router may be asked at, and at no other
+        Watch w;
+        w.look(true);
+        CHECK(w.keeper.leadsTo() == kBlock && !w.keeper.removalRefused());
+        w.box.refusesRemove = true;
+        w.look(true, false, kBlock, 1000);
+        CHECK(w.keeper.leadsTo() == 0 && w.box.has443() && w.keeper.removalRefused());
+        const int removes = w.box.removes, lookups = w.box.lookups;
+        w.look(false, false, kBlock, 2000);
+        CHECK(w.box.lookups == lookups && w.keeper.removalRefused());
+        w.look(true, false, kBlock, 3000);
+        CHECK(w.box.lookups == lookups + 1 && w.box.removes == removes);
+        CHECK(w.keeper.removalRefused());
+        w.box.table.remove({kPort, kTcp});
+        w.look(true, false, kBlock, 4000);
+        CHECK(!w.keeper.removalRefused() && w.notes.lines.isEmpty());
+        CHECK(w.saysNoAddress());
+    }
+}
+
 /// The guard as it is run, look after look: what is due each time.
 void keeping()
 {
@@ -1962,6 +2068,7 @@ void run_tcp443_guard_tests()
     inSteps();
     pacing();
     adminNotice();
+    stuck();
     keeping();
     dialling();
     waiting();

@@ -154,6 +154,7 @@ Step Guard::begin(const Situation& now)
         if (noted.internal == now.blockPort && !unprovedLine) {
             // This installation's, and where it should lead: kept (step 6)
             m_Held = true;
+            m_KeptRefused = false;
             m_Internal = noted.internal;
             return ends(renew(now));
         }
@@ -161,7 +162,13 @@ Step Guard::begin(const Situation& now)
         // or written by this run of the server and never proved, which no
         // dial has shown to lead here: never taken as held. Taken off, and
         // asked for anew, as a free 443 is
-        if (!m_Gateway.remove(kPort, kTcp) || m_Gateway.entry(kPort, kTcp, shown) != Lookup::None) {
+        // Read back even when the removal failed: a router that went silent
+        // is not said to keep it
+        const bool removed = m_Gateway.remove(kPort, kTcp);
+        const Lookup after = m_Gateway.entry(kPort, kTcp, shown);
+        if (!removed || after != Lookup::None) {
+            // Still there as it was written: the person who runs the router has to
+            if (after == Lookup::Found && ours(shown, noted)) m_KeptRefused = true;
             if (!unprovedLine)
                 return ends(left(2, QStringLiteral("the router keeps this installation's TCP 443 "
                                                    "entry towards a port it left")));
@@ -209,6 +216,7 @@ Step Guard::after(bool result)
             return ends(left(5, QStringLiteral("a connection to TCP 443 does not arrive here")));
         }
         m_Held = true;
+        m_KeptRefused = false;
         m_Internal = m_Line.internal;
         return ends({Outcome::Held, 5, QStringLiteral("TCP 443 leads to the shared port")});
     }
@@ -337,6 +345,9 @@ bool Guard::release()
         strike();
         return true;
     }
+    // Still there as it was written: the person who runs the router has to.
+    // Not said at all: what was said of it stands.
+    if (found == Lookup::Found) m_KeptRefused = true;
     return false;
 }
 
@@ -356,6 +367,7 @@ bool Guard::undo(const Hole& line)
         strike();
         return true;
     }
+    if (found == Lookup::Found) m_KeptRefused = true;
     m_Unproved = line;
     m_HasUnproved = true;
     return false;
@@ -372,6 +384,29 @@ void Guard::strike()
 {
     m_Record->strike(kPort, true);
     m_HasUnproved = false;
+    m_KeptRefused = false;
+}
+
+bool Guard::stillKept()
+{
+    if (!m_KeptRefused) return false;
+    Hole line;
+    // No line left, or one under another address (formerAddress()'s): not
+    // this one's to say
+    if (!m_Record || !m_Record->find(kPort, true, line) || line.kind != Kind::Tcp443 ||
+        line.lan != m_Gateway.lanAddress()) {
+        m_KeptRefused = false;
+        return false;
+    }
+    IUpnpGateway::Entry shown;
+    const Lookup found = m_Gateway.entry(kPort, kTcp, shown);
+    // The router says nothing: what was said of it stands
+    if (found == Lookup::Unknown) return true;
+    if (found == Lookup::None || !ours(shown, line)) {
+        strike();
+        return false;
+    }
+    return true;
 }
 
 Guard::Former Guard::formerAddress()
@@ -600,6 +635,12 @@ QList<Keeper::Line> Keeper::look(Situation now, bool ask, uint64_t nowMs)
             return out;
         giveUp(out, now.publicAddress != m_Stands.publicAddress, nowMs);
     }
+    // An entry the router would not let go of at this address, before this
+    // look: read again, nothing written, until it is seen to be gone (the
+    // admin page says so meanwhile: Guard::keptRefused()). Paced as a run
+    // is: within the hour a run waits, the router is asked nothing at all,
+    // and once runs are over (an unproved write) it is said until the start.
+    if (ask && m_Guard.keptRefused() && m_Pace.due(nowMs)) m_Guard.stillKept();
     if (m_Guard.held()) {
         // Still standing on what it stood on: written again, read back.
         // Otherwise (a switch, the shared port moved or lost its hole): taken

@@ -181,9 +181,11 @@ public:
     /// none of this host's: read back on the router, and proved by a
     /// connection when it was written.
     quint16 tcp443LeadsTo() const { return m_Tcp443Port; }
-    /// The router keeps a TCP 443 entry this installation wrote under an
-    /// address this machine no longer has, and will not remove it: the person
-    /// who runs the router has to. False again once it is seen to be gone.
+    /// The router keeps a TCP 443 entry this installation wrote, and will not
+    /// remove it: one under an address this machine no longer has, or one at
+    /// this address that is no longer wanted (Guard::removalRefused()). The
+    /// person who runs the router has to. False again once it is seen to be
+    /// gone.
     bool tcp443StaleRemovalRefused() const { return m_Tcp443Refused; }
     /// The same of any other hole: the router keeps an entry this
     /// installation wrote under an address this machine had before, and will
