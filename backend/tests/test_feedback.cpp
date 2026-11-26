@@ -17,6 +17,7 @@
 
 #include "test_framework.h"
 #include "common/Logger.h"
+#include "network/SessionMetrics.h"
 #include "server/Feedback.h"
 #include "server/routes/FeedbackRoutes.h"
 
@@ -166,7 +167,8 @@ void run_feedback_tests()
         CHECK_EQ(p.value(QStringLiteral("message")).toString(), kMessage);
         CHECK_EQ(p.value(QStringLiteral("website")).toString(), QString());
         CHECK(!h.posts.value(0).contains("0.4.4"));
-        CHECK(!h.posts.value(0).contains("windows") && !h.posts.value(0).contains("release"));
+        CHECK(!h.posts.value(0).contains(SessionMetrics::platformToken().toUtf8()));
+        CHECK(!h.posts.value(0).contains("release"));
         // F3: the log says it left, and nothing of what left.
         CHECK(logged.join(QLatin1Char('\n')).contains(QStringLiteral("[Feedback] sent")));
         for (const QString& line : logged) {
