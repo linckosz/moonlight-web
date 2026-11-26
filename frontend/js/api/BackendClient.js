@@ -1384,6 +1384,26 @@ export class BackendClient {
         return new Blob(parts, { type: 'application/zip' });
     }
 
+    // ── Feedback (Admin → Feedback) ─────────────────────────────────────────────
+
+    /**
+     * Whether this server can send feedback, its bound on the message and what
+     * the "Include version" box would attach. Owner only; an older server has
+     * no such route (404).
+     * @returns {Promise<{available: boolean, max_message: number, attachment: {version?: string, edition?: string, os?: string}}>}
+     */
+    static async getFeedbackStatus() {
+        return this.get('/api/feedback');
+    }
+    /**
+     * Send it. The server waits at least 5 s on the relay's challenge before it
+     * posts, then up to 15 s on each request: a minute covers it.
+     * @param {{message: string, email: string, include_version: boolean, website: string}} body
+     */
+    static async sendFeedback(body) {
+        return this.post('/api/feedback', body, { timeoutMs: 60000 });
+    }
+
     // ── Streaming Settings ───────────────────────────────────────────────────────
 
     static async getStreamingSettings() {

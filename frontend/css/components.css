@@ -967,6 +967,57 @@ body.ios .settings-checkbox-label input[type='checkbox']:checked::before {
 .backend-field select:disabled {
     opacity: 0.6;
 }
+/* Send feedback (Admin → Feedback): the backend dialog's form, with a message
+   box, its count under it on the right, and a trap field no person sees. */
+.feedback-field textarea {
+    width: 100%;
+    padding: var(--space-2);
+    background-color: var(--surface-1);
+    color: var(--text-1);
+    border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+    border-radius: 0;
+    font-size: var(--fs-sm);
+    font-family: inherit;
+    line-height: 1.5;
+    resize: vertical;
+    min-height: 7.5em;
+    max-height: 50vh;
+}
+.feedback-field textarea:disabled {
+    opacity: 0.6;
+}
+.backend-field > .feedback-count {
+    margin: var(--space-1) 0 0;
+    text-align: right;
+    font-size: var(--fs-xs);
+    color: var(--text-3);
+}
+.feedback-include {
+    margin-bottom: var(--space-3);
+}
+.feedback-notice {
+    line-height: 1.5;
+}
+.feedback-status {
+    min-height: 1.5em;
+    margin-top: var(--space-3);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+}
+.feedback-status.err {
+    color: var(--c-danger-text);
+}
+.feedback-trap {
+    position: absolute;
+    left: -10000px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+.feedback-dialog {
+    max-height: 90vh;
+    overflow-y: auto;
+}
 .backend-status-text {
     font-size: var(--fs-sm);
     line-height: 1.5;

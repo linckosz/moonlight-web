@@ -962,6 +962,21 @@
         "changesDiscarded": "Modifications des paramètres abandonnées",
         "confirmRevoke": "Révoquer la session de « {{name}} » ? Cet appareil devra saisir un PIN à nouveau."
     },
+    "feedback": {
+        "title": "Feedback",
+        "desc": "Tell the MoonlightWeb team what works and what doesn't. Read by the moderators only.",
+        "open": "Send feedback",
+        "dialogTitle": "Send feedback",
+        "message": "Message",
+        "email": "Email (optional, so we can reply)",
+        "includeVersion": "Include version ({{details}})",
+        "notice": "Sent to the MoonlightWeb team through our server, and read by the moderators in a private Discord channel. Discord hosts it; it is deleted once handled, within 12 months at most. To have it deleted, ask by replying to our email or on Discord.",
+        "send": "Send",
+        "sending": "Sending…",
+        "sent": "Thanks, your message was sent",
+        "rateLimited": "Too many messages, try again in an hour",
+        "unavailable": "Feedback is unavailable right now"
+    },
     "stream": {
         "stop": "Arrêter",
         "stopStreaming": "Arrêter le streaming",

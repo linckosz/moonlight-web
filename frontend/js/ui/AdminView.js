@@ -34,6 +34,7 @@ import { t, getLanguage } from '../i18n/i18n.js';
 import { escapeHtml } from '../util/escapeHtml.js';
 import { refreshClientLog } from '../util/ClientLog.js';
 import { GamepadDriverNotice } from './GamepadDriverNotice.js';
+import { showFeedbackDialog } from './FeedbackDialog.js';
 
 export class AdminView {
     // Backend statusJson "phase" values that mean activation is still running.
@@ -210,6 +211,9 @@ export class AdminView {
         this._verboseLogs = false;
         this._verboseLogsCli = false;
         this._logsBusy = false;
+        // Feedback: what GET /api/feedback answered, or null for no section.
+        /** @type {{available: boolean, max_message: number, attachment: {version?: string, edition?: string, os?: string}}|null} */
+        this._feedback = null;
 
         // Dirty tracking: snapshot of values at load time
         this._cleanState = {};
@@ -284,6 +288,17 @@ export class AdminView {
     }
 
     async _loadState() {
+        // Feedback asked beside the settings, not after them. No section when
+        // the server cannot send it (a LAN-only build) or does not know the
+        // route (an older server).
+        const feedback = BackendClient.getFeedbackStatus().then(
+            (f) => {
+                this._feedback = f && f.available === true ? f : null;
+            },
+            () => {
+                this._feedback = null;
+            },
+        );
         try {
             const admin = await BackendClient.getAdminSettings();
             this._httpsPort = admin.https_port || 443;
@@ -335,6 +350,7 @@ export class AdminView {
         } catch (err) {
             console.warn('[Admin] Failed to load server settings:', err);
         }
+        await feedback;
     }
 
     async _loadStreamingState() {
@@ -1511,6 +1527,7 @@ export class AdminView {
                 </div>
                 ${this._renderNativeHost()}
                 ${this._renderAdvanced()}
+                ${this._renderFeedback()}
             </div>
         `;
 
@@ -1904,6 +1921,8 @@ export class AdminView {
             });
         const logsBtn = this.container.querySelector('#btn-download-logs');
         if (logsBtn) logsBtn.addEventListener('click', () => void this._downloadLogs());
+        const feedbackBtn = this.container.querySelector('#btn-send-feedback');
+        if (feedbackBtn) feedbackBtn.addEventListener('click', () => this._openFeedback());
 
         // Port field dirty tracking
         const portInput = this.container.querySelector('#admin-https-port');
@@ -3006,6 +3025,36 @@ export class AdminView {
                     </div>
                 </div>
         `;
+    }
+
+    // Last of the page, owner only (the whole page is), and only when this
+    // server can send it.
+    _renderFeedback() {
+        if (!this._feedback) return '';
+        return `
+                <!-- Feedback -->
+                <div class="settings-section" id="admin-section-feedback">
+                    <h3 class="settings-section-title">${t('feedback.title')}</h3>
+                    <div class="settings-field">
+                        <p class="setting-desc">${t('feedback.desc')}</p>
+                        <button class="btn btn-secondary" id="btn-send-feedback">
+                            ${t('feedback.open')}
+                        </button>
+                    </div>
+                </div>
+        `;
+    }
+
+    // The dialog keeps what was typed to itself: nothing of it is logged here.
+    _openFeedback() {
+        const f = this._feedback;
+        if (!f) return;
+        showFeedbackDialog({
+            maxMessage: Number.isInteger(f.max_message) && f.max_message > 0 ? f.max_message : 1600,
+            attachment: f.attachment || null,
+            send: (body) => BackendClient.sendFeedback(body),
+            onSent: () => Toast.success(t('feedback.sent')),
+        });
     }
 
     /**
