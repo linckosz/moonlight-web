@@ -913,9 +913,15 @@ static int socket_type(SOCKET s) {
 	int len = sizeof(type);
 	return getsockopt(s, SOL_SOCKET, SO_TYPE, (char *)&type, &len) == 0 ? type : -1;
 }
+// Every handle of this process, of any kind, by GetHandleInformation alone: no I/O, and nothing
+// of Winsock, on a handle this process had before the test or was given by its parent. Winsock is
+// only asked about a handle born during the test (opened_since()). A number open before the test,
+// closed, then reused by an agent's socket is not looked at.
 static void open_now(bool *table) {
-	for (int i = 1; i < OPEN_TABLE; ++i) // socket handles are multiples of 4
-		table[i] = socket_type((SOCKET)(uintptr_t)(i * 4)) >= 0;
+	for (int i = 1; i < OPEN_TABLE; ++i) { // handles are multiples of 4
+		DWORD flags = 0;
+		table[i] = GetHandleInformation((HANDLE)(uintptr_t)(i * 4), &flags) != 0;
+	}
 }
 static bool is_stream(int i) { return socket_type((SOCKET)(uintptr_t)(i * 4)) == SOCK_STREAM; }
 static bool passed_on(int i) {
@@ -1014,6 +1020,11 @@ static void opened_since(const bool *before, socket_t mine, int *seen, int *stre
 	for (int i = 0; i < OPEN_TABLE; ++i) {
 		if (!now[i] || before[i] || (mine != INVALID_SOCKET && i == index_of(mine)))
 			continue;
+#ifdef _WIN32
+		// Born during the test and not a socket (an event, a thread of the agents): not counted
+		if (socket_type((SOCKET)(uintptr_t)(i * 4)) < 0)
+			continue;
+#endif
 		++*seen;
 		if (is_stream(i))
 			++*streams;
