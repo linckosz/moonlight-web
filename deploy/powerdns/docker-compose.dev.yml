@@ -5,6 +5,8 @@
 #   caddy          renders stream.caddy from THIS checkout, plain HTTP, no port
 #                  published — production's Caddy proxies stream.dev.{domain}
 #                  to it over the shared `mw-edge` network and owns the cert
+#   mw-feedback    the "Send feedback" relay for stream.dev.*/v1/feedback, with
+#                  a TEST webhook or none (503) — never production's
 #
 # Nothing else. STUN is coturn from production (stream.dev.* resolves to the
 # same address, and coturn listens on the host); DNS, the site, the update
@@ -18,6 +20,7 @@
 #     COMPOSE_PROJECT_NAME=mw-dev
 #     MW_DOMAIN=…                  (the same parent domain as production)
 #     MW_RDV_OWNER_SECRET=…        (its OWN secret — openssl rand -hex 32)
+#     MW_FEEDBACK_WEBHOOK=         (empty, or a webhook of a TEST channel)
 #
 # The first two lines are what make the reflex `docker compose up -d --build`
 # safe in that directory: without them, compose would pick up the production
@@ -50,6 +53,24 @@ services:
     pids_limit: 200
     mem_limit: 128m
 
+  # Same container as production's (docker-compose.yml), its own network too:
+  # Caddy is the only other member.
+  mw-feedback:
+    build: ./mw-feedback
+    image: moonlight-mw-feedback-dev:latest
+    container_name: mw-dev-feedback
+    restart: unless-stopped
+    environment:
+      MW_FEEDBACK_WEBHOOK: ${MW_FEEDBACK_WEBHOOK:-}
+      MW_FEEDBACK_MAX_PER_HOUR: ${MW_FEEDBACK_MAX_PER_HOUR:-30}
+      MW_FEEDBACK_MAX_PER_DAY: ${MW_FEEDBACK_MAX_PER_DAY:-100}
+    networks: [devfeedback]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+    pids_limit: 50
+    mem_limit: 64m
+
   caddy:
     build: ./caddy
     image: moonlight-caddy-dev:latest
@@ -65,7 +86,7 @@ services:
     # nowhere else.
     volumes:
       - ../../bootstrap:/srv/bootstrap:ro            # THIS checkout's bootstrap
-    networks: [devnet, mw-edge]
+    networks: [devnet, mw-edge, devfeedback]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     cap_add: ["NET_BIND_SERVICE"]
@@ -78,6 +99,10 @@ volumes:
 networks:
   devnet:
     driver: bridge
+  devfeedback:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1400"
   mw-edge:
     external: true
     name: mw-edge

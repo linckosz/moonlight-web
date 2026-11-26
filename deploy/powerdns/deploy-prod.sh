@@ -195,6 +195,7 @@ main() {
     grep -q '^deploy/powerdns/caddy/'         <<<"$changed" && rebuild+=(caddy)
     grep -q '^deploy/powerdns/mw-rendezvous/' <<<"$changed" && rebuild+=(mw-rendezvous)
     grep -q '^deploy/powerdns/mw-proxy/'      <<<"$changed" && rebuild+=(mw-proxy)
+    grep -q '^deploy/powerdns/mw-feedback/'   <<<"$changed" && rebuild+=(mw-feedback)
     grep -q '^bootstrap/' <<<"$changed" \
         && notes+=("bootstrap/ is bind-mounted: served on the next request, nothing to rebuild")
     grep -q '^website/' <<<"$changed" \

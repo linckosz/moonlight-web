@@ -347,6 +347,40 @@ To turn the count on, add a website `MoonlightWeb MWSR measures` in Umami, appen
 `MW_UMAMI_MWSR_WEBSITE_ID=<id>` to `.env`, then
 `docker compose up -d --force-recreate mw-proxy`. The startup log names the website.
 
+## Feedback relay
+
+"Send feedback", in an instance's server settings, lets its owner write to the
+moderators. The instance (never the browser, never a guest) asks
+`/v1/feedback/challenge` on `stream.{MW_DOMAIN}`, waits at least 5 s, solves a
+small proof of work, and posts the message, an optional e-mail and, if the box is
+ticked, its version, edition and OS family to `/v1/feedback`. `mw-feedback`
+(`mw-feedback/main.go`) posts that to a private Discord channel.
+
+- **The webhook** is `MW_FEEDBACK_WEBHOOK` in `.env`, given to `mw-feedback` alone.
+  It is never in the app, this repository or a log. Empty = feedback off (503).
+  If it leaks: regenerate it in Discord, replace it in `.env`, then
+  `docker compose up -d --no-deps mw-feedback`.
+- **Kept:** nothing here. No volume, read-only root; the log says "sent", "cap
+  reached" or Discord's status code, never a message, an e-mail or an address.
+  The message stays in Discord until a moderator deletes it. Deleting what has
+  been handled, and anything older than the period the app announces, is done
+  by hand.
+- **Bounded:** 3 messages and 10 challenges per subscriber per hour (Caddy, in
+  memory, no access log), then `MW_FEEDBACK_MAX_PER_HOUR` / `_PER_DAY` for
+  everybody (30 / 100). When Discord answers 429 the instance is told
+  "unavailable": no queue, no retry.
+- **Isolated:** its own network (`mwfeedback`), shared with Caddy only.
+- **Staging:** the dev project runs its own copy (`mw-dev-feedback`), reached as
+  `stream.dev.{MW_DOMAIN}/v1/feedback`. Its `.env` holds no webhook (503) or a
+  test webhook of a test channel, never production's.
+
+First deployment: add `MW_FEEDBACK_WEBHOOK=…` to `.env` before moving to the
+tag that brings the relay. `deploy-prod.sh` then rebuilds Caddy (the routes are in
+`stream.caddy`, copied into its image; the rendezvous is held around the restart
+as usual) and `mw-feedback`, each `--no-deps`; recreating Caddy also joins it to
+the new `mwfeedback` network. `docker compose logs mw-feedback` says
+"feedback ON" or "feedback OFF".
+
 ## Linux package repository (APT + DNF)
 
 `release.yml`'s `linux-repo` job builds the signed APT and DNF repository tree

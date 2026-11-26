@@ -100,6 +100,44 @@
 	# says the old one is empty. The prefix is not 26 Crockford characters, so
 	# it can never collide with an identifier in the path.
 	handle /v1/* {
+		# "Send feedback" (mw-feedback/main.go): an instance's owner writes to
+		# the moderators. Here rather than on metrics.*, because this body is
+		# also what staging serves: stream.dev.* gets the same routes with its
+		# own relay (and its own test webhook, or none: 503), with no DNS name
+		# or production Caddyfile edit for it.
+		#
+		# Charged per subscriber (/64, or the IPv4 address), in memory. No `log`
+		# directive anywhere in this snippet, and the global filter takes the
+		# address and the request out of every error line, so neither limit
+		# writes down who asked.
+		handle /v1/feedback/challenge {
+			import subscriber_key
+			rate_limit {
+				zone mw_feedback_challenge {
+					key {mw_subscriber}
+					events 10
+					window 1h
+				}
+			}
+			reverse_proxy mw-feedback:8091
+		}
+		handle /v1/feedback {
+			import subscriber_key
+			rate_limit {
+				zone mw_feedback {
+					key {mw_subscriber}
+					events 3
+					window 1h
+				}
+			}
+			# The relay refuses past 8 KiB itself; this keeps the bytes from
+			# reaching it at all.
+			request_body {
+				max_size 8KB
+			}
+			reverse_proxy mw-feedback:8091
+		}
+
 		# The three endpoints, by exact name, and nothing else on the prefix:
 		# an unknown /v1/ path must be a file lookup, not a request the
 		# introduction server has to refuse.

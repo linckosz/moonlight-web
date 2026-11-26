@@ -143,6 +143,36 @@ services:
     pids_limit: 200
     mem_limit: 128m
 
+  # ── mw-feedback: the "Send feedback" relay ─────────────────────────────────
+  # Posts an instance owner's message to the moderators' private Discord
+  # channel. The ONLY holder of the webhook URL: it is set here and nowhere
+  # else, so no other service ever has it in its environment. Never published;
+  # Caddy exposes it as https://stream.${MW_DOMAIN}/v1/feedback (stream.caddy).
+  # Empty = feedback off, every request answered 503. See mw-feedback/main.go.
+  #
+  # Nothing to write and nothing to keep: read-only root, no volume, and a
+  # network of its own that only Caddy shares — it cannot reach PowerDNS, the
+  # rendezvous or anything else here, only the Internet (Discord) and Caddy.
+  mw-feedback:
+    build: ./mw-feedback
+    image: moonlight-mw-feedback:latest
+    container_name: moonlight-mw-feedback
+    restart: unless-stopped
+    environment:
+      # SECRET — the Discord webhook URL, https://discord.com/api/webhooks/…
+      # If it leaks: regenerate it in Discord, replace it in .env, then
+      # `docker compose up -d --no-deps mw-feedback`.
+      MW_FEEDBACK_WEBHOOK: ${MW_FEEDBACK_WEBHOOK:-}
+      # Messages for everybody together, per hour and per day.
+      MW_FEEDBACK_MAX_PER_HOUR: ${MW_FEEDBACK_MAX_PER_HOUR:-30}
+      MW_FEEDBACK_MAX_PER_DAY: ${MW_FEEDBACK_MAX_PER_DAY:-100}
+    networks: [mwfeedback]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]                               # high port :8091, no caps
+    pids_limit: 50
+    mem_limit: 64m
+
   # ── coturn: STUN, and only STUN ────────────────────────────────────────────
   # Answers "what address did this packet come from?" on stream.${MW_DOMAIN}:3478
   # — the name Caddy already serves, so this needs no DNS record of its own and
@@ -257,7 +287,8 @@ services:
     # mw-edge as well: stream.dev.${MW_DOMAIN} is proxied to the staging
     # project's Caddy (mw-dev-caddy), which joins that network from its own
     # compose file. Nothing else crosses it.
-    networks: [mwnet, mw-edge]
+    # mwfeedback: the one other member is mw-feedback (stream.caddy, /v1/feedback).
+    networks: [mwnet, mw-edge, mwfeedback]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     cap_add: ["NET_BIND_SERVICE"]                   # bind :80 / :443
@@ -350,6 +381,15 @@ networks:
   # stream.dev.* across it. Owned (created) here, joined as `external` by
   # docker-compose.dev.yml — so production comes up on its own, and the dev
   # project needs production to exist first, which is the right dependency.
+  # mw-feedback and Caddy, nobody else: the relay holds the webhook and parses
+  # free text from the Internet, so it gets no path to PowerDNS, mw-proxy or the
+  # rendezvous. A plain bridge, so it still reaches Discord. IPv4 only: nothing
+  # published on it, and Caddy talks to the relay by name. MTU 1400 for the same
+  # reason as above — its one outbound connection crosses eth0.
+  mwfeedback:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: "1400"
   mw-edge:
     driver: bridge
     name: mw-edge
