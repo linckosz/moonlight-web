@@ -1098,7 +1098,6 @@
         "micUnmute": "Réactiver mon micro",
         "micDenied": "Micro bloqué : autorisez-le pour ce site dans le navigateur pour envoyer votre voix.",
         "micError": "Votre micro n'a pas pu être ouvert.",
-        "micUnavailable": "Micro non envoyé : {{why}}.",
         "micStartsOff": "Micro coupé : cliquez sur 🎤 ou appuyez sur {{combo}} pour parler.",
         "micDeviceMissing": "Micro choisi introuvable : micro du système utilisé.",
         "micOn": "Micro ouvert",

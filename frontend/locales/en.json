@@ -1099,7 +1099,6 @@
         "micUnmute": "Unmute my microphone",
         "micDenied": "Microphone blocked: allow it for this site in the browser to send your voice.",
         "micError": "Your microphone could not be opened.",
-        "micUnavailable": "Microphone not sent: {{why}}.",
         "micStartsOff": "Microphone off: click 🎤 or press {{combo}} to talk.",
         "micDeviceMissing": "The chosen microphone was not found: using the system microphone.",
         "micOn": "Microphone on",

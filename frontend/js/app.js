@@ -3821,17 +3821,12 @@ export const MoonlightApp = {
             );
         }
 
-        // The viewer picked a microphone and the host could not take it: said
-        // once per user-initiated launch, like the transport above, with the
-        // host's own reason (a remote host, no virtual cable…). Not for the
-        // default: nobody asked for it, and it would be said at every launch.
-        if (
-            streamingSettings.mic_chosen === true &&
-            streamingSettings.mic_enabled === true &&
-            result.mic === false &&
-            !suppressShortcuts
-        ) {
-            Toast.warning(t('stream.micUnavailable', { why: result.mic_why || '' }));
+        // The microphone was on and the host could not take it (a remote host,
+        // no virtual cable…): a line of the log with the host's own reason, not
+        // a banner. The 🎤 button is not drawn, which is what the viewer sees;
+        // the host logs the same refusal on its side (Session.cpp).
+        if (streamingSettings.mic_enabled === true && result.mic === false) {
+            console.info('[Mic] Not sent:', result.mic_why || '(no reason given)');
         }
 
         this.streamView = this._createStreamView(result, host, streamingSettings, {

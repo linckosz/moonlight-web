@@ -1099,7 +1099,6 @@
         "micUnmute": "Mikrofonumun sesini aç",
         "micDenied": "Mikrofon engellendi: sesinizi göndermek için bu siteye tarayıcıda izin verin.",
         "micError": "Mikrofonunuz açılamadı.",
-        "micUnavailable": "Mikrofon gönderilmiyor: {{why}}.",
         "micStartsOff": "Mikrofon kapalı: konuşmak için 🎤 simgesine tıklayın veya {{combo}} tuşlarına basın.",
         "micDeviceMissing": "Seçilen mikrofon bulunamadı: sistem mikrofonu kullanılıyor.",
         "micOn": "Mikrofon açık",

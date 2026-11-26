@@ -4860,7 +4860,8 @@ export class StreamView {
     /**
      * The host refused the microphone under the running stream (issue #69):
      * the track stops, so the browser's indicator goes out, the button goes,
-     * and the shortcut has nothing left to open. Said once, as at a launch.
+     * and the shortcut has nothing left to open. A line of the log, as at a
+     * launch (app.js), not a banner: the button going is what the viewer sees.
      *
      * @param {string} why - the host's reason
      */
@@ -4876,7 +4877,7 @@ export class StreamView {
             this._micBtn = null;
             this._positionGamingOverlay();
         }
-        if (!this._standby) Toast.warning(t('stream.micUnavailable', { why }));
+        if (!this._standby) console.info('[Mic] Not sent:', why || '(no reason given)');
     }
 
     /** @param {string} state - MicUplink.state */
