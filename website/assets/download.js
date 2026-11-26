@@ -135,7 +135,11 @@
     const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`);
     if (!r.ok) throw new Error(r.status);
     rel = await r.json();
-    const find = (re) => (rel.assets || []).find((a) => re.test(a.name));
+    // Only a file of this project's releases may become a link; anything else
+    // in the answer leaves the static link in place.
+    const OURS = `https://github.com/${REPO}/releases/download/`;
+    const find = (re) => (rel.assets || []).find((a) => re.test(a.name)
+      && typeof a.browser_download_url === 'string' && a.browser_download_url.startsWith(OURS));
     // Asset names produced by .github/workflows/release.yml (version-stamped,
     // matched here by their platform/arch/extension suffix):
     //   MoonlightWeb-installer-<ver>-win-{x64,arm64}.exe
