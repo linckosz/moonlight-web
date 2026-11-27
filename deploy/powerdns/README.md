@@ -11,7 +11,7 @@ Three dedicated containers (one process each — the idiomatic Docker layout):
 
 ```
 Internet ─:53──────> [dnsdist] ──> pdns:5300         anti-amplification + DNS rate-limit
-Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> pdns:8081        direct PowerDNS API (compatibility)
+Internet ─:80/:443─> [caddy] ┬─ api.{domain} ──────> 410 Gone         closed, forwards nothing
                              ├─ dnsapi.{domain} ───> mw-proxy:8080 ─> pdns:8081   restricted API (0.2.0+)
                              ├─ updates.{domain} ──> mw-proxy:8080 ─> GitHub      release relay + version census (0.3.0+)
                              ├─ metrics.{domain} ──> mw-proxy:8080 ─> umami   session census (0.3.0+)
@@ -46,7 +46,8 @@ The MoonlightWeb server itself is **not** in this stack. A legacy instance talks
 to this DNS box over the REST API (`MW_PDNS_URL` + `MW_PDNS_TOKEN`) to keep its
 pre-retirement subdomain `{uniqueId}.{MW_DOMAIN}` alive; a fresh install never
 calls it. This stack only bootstraps the parent zone, the nameserver glue, the
-`api.{MW_DOMAIN}` host and the `www` record for the presentation site.
+service hosts (`stream.`, `dnsapi.`, `updates.`, ...) and the `www` record for the
+presentation site.
 
 ## Presentation website
 
@@ -689,6 +690,7 @@ for a in "$V4" "[$V6]"; do
     printf '%s via %s: ' "$h" "$a"
     sh mw-rendezvous/smoke.sh "https://$h" --resolve "$h:443:$a" | tail -1
   done
+  # api.$D answers 410: it is closed and forwards nothing.
   for h in $D www.$D api.$D dnsapi.$D updates.$D metrics.$D stats.$D packages.$D; do
     printf '%-28s %-24s ' "$h" "$a"
     curl -sS -o /dev/null -m 10 --resolve "$h:443:$a" -w '%{http_code}\n' "https://$h/"
@@ -977,8 +979,9 @@ record to give your registrar (see *Register the nameserver* below).
 
 ## TLS — automatic Let's Encrypt or your own files
 
-Caddy manages the certificate for `api.{MW_DOMAIN}`. **User-supplied files take
-priority** over automatic issuance.
+Caddy manages the certificate of every host. **User-supplied files take
+priority** over automatic issuance for `api.{MW_DOMAIN}`, the only host that uses
+them; every other host always gets its own Let's Encrypt certificate.
 
 ### Default — automatic Let's Encrypt
 
@@ -1001,7 +1004,7 @@ MW_TLS_KEY=
 > shows `DNS problem: SERVFAIL … the domain's nameservers may be malfunctioning`
 > or a query timeout, and browsers get `ERR_SSL_PROTOCOL_ERROR` / TLS alert 80.
 >
-> Once `dig +short api.{MW_DOMAIN} @8.8.8.8` returns your VM's IP, reissue:
+> Once `dig +short stream.{MW_DOMAIN} @8.8.8.8` returns your VM's IP, reissue:
 >
 > ```bash
 > cd deploy/powerdns
@@ -1046,7 +1049,7 @@ this machine. DNS needs both UDP and TCP.
 | 53   | UDP      | dnsdist   | Resolvers query your zone — primary path |
 | 53   | TCP      | dnsdist   | Fallback for truncated responses, DNSSEC |
 | 80   | TCP      | caddy     | Let's Encrypt HTTP-01 challenge + HTTP→HTTPS redirect |
-| 443  | TCP      | caddy     | `api.{MW_DOMAIN}` REST API + presentation site (`{MW_DOMAIN}`/`www`) + `stats.{MW_DOMAIN}` analytics |
+| 443  | TCP      | caddy     | presentation site (`{MW_DOMAIN}`/`www`), `stream.`, `dnsapi.`, `updates.`, `metrics.`, `packages.`, `stats.`; `api.` answers 410 |
 | 3478 | UDP      | coturn    | STUN — hosts and browsers discover their public address (primary path) |
 | 3478 | TCP      | coturn    | STUN for clients on a network that blocks UDP |
 
@@ -1112,8 +1115,8 @@ The ownership store persists in the `mwproxy_data` volume
 no usable credential. Rebuilding the stack keeps it.
 
 > **Endpoints.** MoonlightWeb registers through the restricted `dnsapi.`
-> gateway. A direct `api.` → pdns route is also present for backward
-> compatibility and is retired in a later release.
+> gateway, the only route to the PowerDNS API. `api.` answers 410 Gone and
+> forwards nothing.
 
 ## Retiring the sub-domains
 
@@ -1156,8 +1159,9 @@ become one.
 - **DNS amplification / flood** — dnsdist drops clients over ~50 qps
   (`MaxQPSIPRule`, tunable in `dnsdist/dnsdist.conf`) and forces `ANY` to TCP.
   PowerDNS keeps `disable-axfr`, `version-string=anonymous` and the VM hardening.
-- **API brute-force** — Caddy throttles `api.{MW_DOMAIN}` to 60 req/min per IP
-  (`caddy-ratelimit`, tunable in `caddy/Caddyfile.tmpl`) on top of the API key.
+- **API rate limit** — Caddy throttles `dnsapi.{MW_DOMAIN}` to 60 req/min per
+  subscriber (an IPv4 address or an IPv6 /64; `caddy-ratelimit`, tunable in
+  `caddy/Caddyfile.tmpl`) on top of the restricted key.
 - **Least privilege** — `pdns` runs as a **non-root** user with `cap_drop: ALL`
   (its ports are non-privileged); `dnsdist`/`caddy` keep only `NET_BIND_SERVICE`.
   All three set `no-new-privileges` and `pids_limit` / `mem_limit` to contain
@@ -1178,9 +1182,8 @@ become one.
 ```bash
 # From another machine, once delegation has propagated:
 dig +short NS example.top
-dig +short api.example.top
-curl -s https://api.example.top/api/v1/servers/localhost \
-     -H "X-API-Key: $MW_PDNS_API_KEY"
+dig +short stream.example.top
+curl -s -o /dev/null -w '%{http_code}\n' https://api.example.top/   # 410: closed
 ```
 
 ## Notes

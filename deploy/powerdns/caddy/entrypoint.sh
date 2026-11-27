@@ -2,7 +2,7 @@
 # Render the Caddyfile from env, then run Caddy. User cert files take priority
 # over automatic Let's Encrypt.
 #
-#   MW_DOMAIN          parent domain (API served at api.{MW_DOMAIN})   [required]
+#   MW_DOMAIN          parent domain of every host the stack serves    [required]
 #   MW_TLS_CERT        path to a user TLS cert (PEM, fullchain)        [optional]
 #   MW_TLS_KEY         path to the matching private key (PEM)          [optional]
 #   MW_TLS_EMAIL       ACME account email for Let's Encrypt            [optional]
