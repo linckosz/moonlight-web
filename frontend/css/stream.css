@@ -623,6 +623,15 @@ body.streaming-active::after {
 .stream-gaming-overlay .gm-text {
     color: rgba(255, 255, 255, 0.45);
 }
+/* Where the bar is short of room, the helpers give way (HDRHELP,
+   gamingHelperFit.js): the reminder's words first, then the reminder itself.
+   Only in the bar: over the picture there is room. */
+.stream-gaming-overlay.gm-short .gm-text {
+    display: none;
+}
+.stream-gaming-overlay.visible.gm-no-room {
+    display: none;
+}
 .stream-gaming-overlay kbd {
     display: inline-block;
     padding: 1px 5px;
@@ -1034,6 +1043,9 @@ body.streaming-active::after {
     margin-left: 4px;
     padding-left: 8px;
     border-left: 1px solid rgba(255, 255, 255, 0.15);
+}
+.btn-stream-fs.fs-no-combo .fs-combo {
+    display: none;
 }
 .btn-stream-fs .fs-plus {
     color: rgba(255, 255, 255, 0.35);

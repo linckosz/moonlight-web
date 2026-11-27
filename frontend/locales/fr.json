@@ -1110,6 +1110,7 @@
         "mute": "Couper le son",
         "unmute": "Rétablir le son",
         "gamingExitTitle": "Quitter le mode jeu souris",
+        "gamingExitShort": "Quitter",
         "gamingExitDesc": "rend la souris & quitte le plein écran",
         "closeOverlay": "Masquer",
         "mouseMode": "Mode souris : {{mode}}",

@@ -1110,6 +1110,7 @@
         "micOff": "Mikrofon kapalı",
         "unmute": "Sesini aç",
         "gamingExitTitle": "Fare oyun modundan çık",
+        "gamingExitShort": "Çık",
         "gamingExitDesc": "fareyi serbest bırak ve tam ekrandan çık",
         "closeOverlay": "Gizle",
         "mouseMode": "Fare modu: {{mode}}",

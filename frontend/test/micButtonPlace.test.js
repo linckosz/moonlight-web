@@ -77,6 +77,7 @@ function view(has = {}) {
         _toggleMicSaid: StreamView.prototype._toggleMicSaid,
         _showMicHintOnce() {},
         _positionGamingOverlay: StreamView.prototype._positionGamingOverlay,
+        _fitGamingHelpers: StreamView.prototype._fitGamingHelpers,
     };
 }
 

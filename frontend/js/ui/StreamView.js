@@ -173,6 +173,13 @@ import { boothTakeoverBody } from './BoothText.js';
 import { openSupportPage, showSupportButton } from '../util/supportNudge.js';
 import { BMC_LOGO } from './bmcLogo.js';
 import { fitStreamBrand } from './streamBrandFit.js';
+import {
+    gamingHelperLevel,
+    FIT_FULL,
+    FIT_KEYS,
+    FIT_NO_FS_COMBO,
+    FIT_NONE,
+} from './gamingHelperFit.js';
 import { placeGamepadButton, placeKeyboardButton } from './streamBarButtons.js';
 import { StreamViewKeyboard } from './StreamViewKeyboard.js';
 import { StreamViewTouch } from './StreamViewTouch.js';
@@ -6922,18 +6929,36 @@ export class StreamView {
      * exit reminder, ending in X (toggle fullscreen) instead of Z (release).
      */
     _fsComboKeysHtml() {
-        const isMac = /Mac/.test(navigator.platform);
-        const modA = isMac ? 'Cmd' : 'Ctrl';
-        const modB = isMac ? 'Option' : 'Alt';
-        const modC = isMac ? 'Ctrl' : 'Shift';
-        const keys = isMac ? [modC, modB, modA, 'X'] : [modC, modA, modB, 'X'];
-        let html = '<span class="fs-combo">';
-        for (let i = 0; i < keys.length; i++) {
-            if (i > 0) html += '<span class="fs-plus">+</span>';
-            html += '<kbd>' + keys[i] + '</kbd>';
-        }
-        html += '</span>';
-        return html;
+        return '<span class="fs-combo">' + StreamView._gamingComboHtml('X', 'fs-plus') + '</span>';
+    }
+
+    /**
+     * The gaming-mode combo ending in `last`, as <kbd> chips. On a Mac (and an
+     * iPad, which says it is one) in Apple's own symbols and order, ⌃⌥⌘, which
+     * take a third of the room of the words (HDRHELP); elsewhere
+     * Shift + Ctrl + Alt, the names on the keys.
+     * @param {string} last
+     * @param {string} plusClass
+     */
+    static _gamingComboHtml(last, plusClass) {
+        const keys = StreamView._gamingComboKeys(last);
+        if (/Mac/.test(navigator.platform)) return keys.map((k) => '<kbd>' + k + '</kbd>').join('');
+        return keys
+            .map((k) => '<kbd>' + k + '</kbd>')
+            .join('<span class="' + plusClass + '">+</span>');
+    }
+
+    /** The same combo as plain text, for a tooltip. @param {string} last */
+    static _gamingComboText(last) {
+        const keys = StreamView._gamingComboKeys(last);
+        return /Mac/.test(navigator.platform) ? keys.join('') : keys.join('+');
+    }
+
+    /** @param {string} last */
+    static _gamingComboKeys(last) {
+        return /Mac/.test(navigator.platform)
+            ? ['⌃', '⌥', '⌘', last]
+            : ['Shift', 'Ctrl', 'Alt', last];
     }
 
     /**
@@ -6945,19 +6970,11 @@ export class StreamView {
      */
     _buildGamingOverlayContent() {
         if (!this._gamingOverlay) return;
-        const isMac = /Mac/.test(navigator.platform);
-        const modA = isMac ? 'Cmd' : 'Ctrl';
-        const modB = isMac ? 'Option' : 'Alt';
-        const modC = isMac ? 'Ctrl' : 'Shift';
-        // Win order: Shift + Ctrl + Alt + Z — Mac: Ctrl + Option + Cmd + Z
-        const keys = isMac ? [modC, modB, modA, 'Z'] : [modC, modA, modB, 'Z'];
-        let html = '<span class="gm-keys">';
-        for (let i = 0; i < keys.length; i++) {
-            if (i > 0) html += '<span class="gm-plus">+</span>';
-            html += '<kbd>' + keys[i] + '</kbd>';
-        }
-        html += '</span>';
-        html += '<span class="gm-text">' + t('stream.gamingExitTitle') + '</span>';
+        // Win: Shift + Ctrl + Alt + Z — Mac: ⌃⌥⌘Z. The words are short; the
+        // whole sentence is the tooltip.
+        let html =
+            '<span class="gm-keys">' + StreamView._gamingComboHtml('Z', 'gm-plus') + '</span>';
+        html += '<span class="gm-text">' + t('stream.gamingExitShort') + '</span>';
         this._gamingOverlay.innerHTML = html;
         this._gamingOverlay.title = t('stream.gamingExitTitle');
     }
@@ -7039,6 +7056,10 @@ export class StreamView {
         // Default: button back to its CSS-centered position (cleared each pass so
         // the group-centering offset below is never left stale).
         if (fsBtn) fsBtn.style.transform = '';
+        // Every helper shown again before measuring; the fit below takes back
+        // what does not fit (HDRHELP). No paint happens in between.
+        if (el) el.classList.remove('gm-short', 'gm-no-room');
+        if (fsBtn) fsBtn.classList.remove('fs-no-combo');
         // Require a REAL on-screen rect: in native fullscreen the header (and its
         // button) is hidden via CSS, so style.display stays '' while the rect
         // collapses to 0. Docking off a 0-rect would slam the card to top-left
@@ -7080,7 +7101,12 @@ export class StreamView {
             }
             const micSpan = mic ? micW + (vol ? micGap : 0) : 0;
             const left = vol || mic ? volW + micSpan + gap : 0;
-            const right = dock ? el.getBoundingClientRect().width + gap : 0;
+            // The group may not reach the buttons on the right: the helpers
+            // give way, the reminder's words first (gamingHelperFit.js).
+            const level = this._fitGamingHelpers(fsBtn, r, el, dock, left, gap, [vol, mic, brand]);
+            const hideReminder = dock && level >= FIT_NONE;
+            if (el) el.classList.toggle('gm-no-room', hideReminder);
+            const right = dock && !hideReminder ? el.getBoundingClientRect().width + gap : 0;
             const shift = (right - left) / 2;
             if (shift) fsBtn.style.transform = `translate(calc(-50% - ${shift}px), -50%)`;
             const rb = fsBtn.getBoundingClientRect();
@@ -7109,6 +7135,63 @@ export class StreamView {
             el.style.transform = '';
         }
         return false;
+    }
+
+    /**
+     * Measures the gaming-mode helpers with everything shown, picks how much
+     * of them the bar can hold (gamingHelperLevel), and applies it: the
+     * reminder without its words, Fullscreen without its combo. What is no
+     * longer on the bar is in Fullscreen's tooltip. Hiding the reminder itself
+     * is the caller's, which also decides where it goes.
+     * @param {HTMLElement} fsBtn
+     * @param {DOMRect} fsRect  Fullscreen, measured with its combo
+     * @param {HTMLElement | null} el  the reminder
+     * @param {boolean} dock  whether the reminder goes in the bar
+     * @param {number} soundW  what the sound group takes left of Fullscreen
+     * @param {number} gap
+     * @param {Array<Element | null | undefined>} apart  out of the flow, or the mark
+     * @returns {number} the level (FIT_FULL … FIT_NONE)
+     */
+    _fitGamingHelpers(fsBtn, fsRect, el, dock, soundW, gap, apart) {
+        const header = fsBtn.parentElement;
+        if (!header) return FIT_FULL;
+        const hr = header.getBoundingClientRect();
+        const centre = hr.left + hr.width / 2;
+        // The first button of the flow right of the middle: Stop, Share, the
+        // keyboard, the on-screen controller. Without one, the bar's padding.
+        let limit = hr.right - (parseFloat(getComputedStyle(header).paddingRight) || 0);
+        for (const child of header.children) {
+            if (child === fsBtn || apart.includes(child)) continue;
+            const cr = child.getBoundingClientRect();
+            if (cr.width > 0 && cr.right > centre && cr.left < limit) limit = cr.left;
+        }
+        const combo = fsBtn.querySelector('.fs-combo');
+        // A part also takes the flex gap before it (6px on Fullscreen, 8px in
+        // the reminder) and its own margin.
+        const comboW = combo ? combo.getBoundingClientRect().width + 10 : 0;
+        const text = dock && el ? el.querySelector('.gm-text') : null;
+        const level = gamingHelperLevel({
+            centre,
+            limit,
+            gap,
+            fsW: fsRect.width,
+            fsComboW: comboW,
+            soundW,
+            remW: dock && el ? el.getBoundingClientRect().width : 0,
+            remTextW: text ? text.getBoundingClientRect().width + 8 : 0,
+        });
+        if (el) el.classList.toggle('gm-short', level >= FIT_KEYS);
+        fsBtn.classList.toggle('fs-no-combo', level >= FIT_NO_FS_COMBO);
+        let title = t('stream.enterFullscreen');
+        if (this._gamingMode && level >= FIT_NO_FS_COMBO) {
+            title += ' (' + StreamView._gamingComboText('X') + ')';
+        }
+        if (this._gamingMode && dock && level >= FIT_NONE) {
+            title +=
+                ' · ' + t('stream.gamingExitTitle') + ' (' + StreamView._gamingComboText('Z') + ')';
+        }
+        fsBtn.title = title;
+        return level;
     }
 
     // ── Stats overlay (refreshed every 500ms) ────────────────────────────

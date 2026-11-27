@@ -1110,6 +1110,7 @@
         "micOff": "Microphone off",
         "unmute": "Unmute",
         "gamingExitTitle": "Exit mouse gaming mode",
+        "gamingExitShort": "Exit",
         "gamingExitDesc": "release mouse & leave fullscreen",
         "closeOverlay": "Hide",
         "mouseMode": "Mouse mode: {{mode}}",
