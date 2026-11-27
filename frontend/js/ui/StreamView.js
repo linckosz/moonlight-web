@@ -84,6 +84,7 @@ import {
     IS_APPLE,
     IS_GECKO,
     IS_IOS,
+    IS_STANDALONE,
     SUPPORTS_CANVAS_TEARING,
     decoderRidesOutGaps,
     decodesThroughGaps,
@@ -10561,6 +10562,15 @@ export class StreamView {
     }
 
     /**
+     * ...or in the page's own full screen in a home-screen app, where it is
+     * the only one (_enterCssFallbackFullscreen): there the page is the
+     * whole screen as well. Not in a browser's tab, under its toolbar.
+     */
+    _edgeTurnFullscreenNow(standalone = IS_STANDALONE) {
+        return StreamView._edgeTurnFullscreen() || (this._cssFullscreen === true && standalone);
+    }
+
+    /**
      * The vertical turn (VERTFIX = A, V1-V7). Armed only in full screen,
      * by a pointer that came into the band before the top or bottom edge
      * moving towards that edge (V4) — a pointer that slides into it sideways
@@ -10579,7 +10589,7 @@ export class StreamView {
         const stopY = () => {
             if (this._edgeTurn?.axis === 'y') this._stopEdgeTurn();
         };
-        if (!StreamView._edgeTurnFullscreen() || !(h > 0)) {
+        if (!this._edgeTurnFullscreenNow() || !(h > 0)) {
             stopY();
             this._edgeVertSpent = false;
             return;
@@ -10676,7 +10686,7 @@ export class StreamView {
         if (
             turn.owner !== this._onGamingMouseMove ||
             !this._edgeTurnMayRun() ||
-            (vertical && !StreamView._edgeTurnFullscreen())
+            (vertical && !this._edgeTurnFullscreenNow())
         ) {
             this._stopEdgeTurn();
             return;

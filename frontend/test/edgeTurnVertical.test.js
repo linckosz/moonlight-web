@@ -401,3 +401,34 @@ describe('vertical edge turn in lock-free look (full screen)', () => {
         expect(v._edgeTurn ?? null).toBe(null);
     });
 });
+
+/**
+ * VBANDAPP: a home-screen app has no full screen of its own to give; the
+ * page's (_enterCssFallbackFullscreen) is the whole screen there, and the
+ * bands turn in it too. In a browser's tab, under its toolbar, they do not.
+ */
+describe("the vertical turn in the page's own full screen", () => {
+    it('runs in a home-screen app', () => {
+        fullscreen = null;
+        const { v } = view();
+        v._cssFullscreen = true;
+        expect(v._edgeTurnFullscreenNow(true)).toBe(true);
+    });
+
+    it("does not in a browser's tab", () => {
+        fullscreen = null;
+        const { v } = view();
+        v._cssFullscreen = true;
+        expect(v._edgeTurnFullscreenNow(false)).toBe(false);
+    });
+
+    it('does not out of full screen, even in a home-screen app', () => {
+        fullscreen = null;
+        const { v } = view();
+        v._cssFullscreen = false;
+        expect(v._edgeTurnFullscreenNow(true)).toBe(false);
+        // The browser's own full screen still counts, app or not.
+        fullscreen = document.createElement('div');
+        expect(v._edgeTurnFullscreenNow(false)).toBe(true);
+    });
+});
