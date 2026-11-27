@@ -1433,6 +1433,7 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error, Au
                 }
                 // Its account was judged when it connected (accountAllowed).
                 Request asked = *request;
+                asked.caller.uid = peerUid(socket->socketDescriptor());
                 asked.callerLabel = callerOf(socket->socketDescriptor());
                 QTimer::singleShot(kHandlerMs, socket,
                                    [respond]() { respond(refusal(504, "no_answer_in_time")); });

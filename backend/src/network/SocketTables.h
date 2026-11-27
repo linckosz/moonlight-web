@@ -21,6 +21,7 @@
 #include <QList>
 
 #include <cstdint>
+#include <optional>
 
 /// Whether something on this machine listens on a port, read from the
 /// system's own tables of sockets.
@@ -81,5 +82,55 @@ Listens otherServerAmong(const QList<Process>& processes, uint32_t self, bool wi
 /// processes, Unknown. Unknown on any other system, and whenever a table or
 /// the list cannot be read.
 Listens otherServer();
+
+// ── Who holds the other end of a connection ─────────────────────────────────
+
+/// One end of a TCP connection: its address as the 16 bytes of an IPv6 one,
+/// an IPv4 address mapped into IPv6 (::ffff:a.b.c.d), and its port.
+struct TcpEnd
+{
+    QByteArray address;
+    uint16_t port = 0;
+};
+
+/// One socket of the system's table of TCP connections: its own end, the end
+/// it is connected to, its state as the system numbers it, and who holds it:
+/// an account's uid on Linux, a process id on Windows.
+struct TcpSocket
+{
+    TcpEnd local;
+    TcpEnd remote;
+    uint32_t state = 0;
+    uint64_t owner = 0;
+};
+
+/// A connection that is open, as each system numbers its state.
+inline constexpr uint32_t kLinuxEstablished = 0x01;
+inline constexpr uint32_t kWindowsEstablished = 5; // MIB_TCP_STATE_ESTAB
+
+/// Who holds, among `sockets`, the far end of a connection this server
+/// accepted: the established socket whose own end is `peer` and whose remote
+/// end is `ours`, both ends matching, never one alone. Nothing when no socket
+/// is that one, or when those that are have different owners: never a guess.
+std::optional<uint64_t> ownerAmong(const QList<TcpSocket>& sockets, const TcpEnd& peer,
+                                   const TcpEnd& ours, uint32_t established);
+
+/// The sockets of one Linux table of TCP connections (/proc/net/tcp or tcp6)
+/// as the kernel prints them, its addresses in this machine's byte order.
+/// Nothing for a text that is not such a table.
+std::optional<QList<TcpSocket>> inProcTcpTable(const QByteArray& text);
+
+/// ownerAmong() over the text of /proc/net/tcp and that of /proc/net/tcp6,
+/// either of which may be empty (a kernel without IPv6 has no tcp6): the uid.
+/// Nothing when a text that is given is not understood.
+std::optional<uint64_t> connectionOwnerInProc(const QByteArray& tcp, const QByteArray& tcp6,
+                                              const TcpEnd& peer, const TcpEnd& ours);
+
+/// The system's own answer, from its tables as they are at the moment of
+/// asking, IPv4 and IPv6 alike: the uid that holds the far end on Linux, the
+/// process id on Windows. Nothing on any other system, and whenever one of
+/// the tables cannot be read. On Linux the tables are those of this process's
+/// network namespace, the one a connection to its own loopback comes from.
+std::optional<uint64_t> connectionOwner(const TcpEnd& peer, const TcpEnd& ours);
 
 } // namespace mw::sockettables

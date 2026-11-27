@@ -285,6 +285,16 @@ public:
     {
         m_HostAddressPlausible = std::move(fn);
     }
+
+    /// The answer to POST /api/auth/owner-handoff (server/OwnerHandoff.h),
+    /// given the request and whether it came on one of this server's own
+    /// sockets. Asked before any other gate of the request: the trade makes
+    /// every check it needs itself, and spends its nonce on a refusal, which a
+    /// refusal by a gate in front of it would not. Unset: that path is 404.
+    void setOwnerHandoffTrade(std::function<HttpResponse(const HttpRequest&, bool direct)> fn)
+    {
+        m_OwnerHandoffTrade = std::move(fn);
+    }
     /// --noadmin: no request is granted admin rights, and the ones that change
     /// what the booth offers are refused (RequestGuard::lockedByNoAdmin).
     void setAdminLocked(bool locked) { m_AdminLocked = locked; }
@@ -427,6 +437,7 @@ private:
     StaticFileHandler* m_StaticFiles;
     std::function<HomeScreenIdentity(const HttpRequest&)> m_HomeScreenIdentity;
     std::function<bool(const QString& address)> m_HostAddressPlausible;
+    std::function<HttpResponse(const HttpRequest&, bool direct)> m_OwnerHandoffTrade;
     quint16 m_HttpPort;
     quint16 m_HttpsPort;
     quint16 m_ActiveHttpsPort = 0;

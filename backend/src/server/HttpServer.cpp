@@ -27,6 +27,7 @@
 #include "server/HomeScreenShell.h"
 #include "server/LanHttp.h"
 #include "server/LocalChannel.h"
+#include "server/OwnerHandoff.h"
 #include "common/Edition.h"
 #include "common/Logger.h"
 #include "common/PairingCrypto.h"
@@ -1128,6 +1129,12 @@ void HttpServer::processRequest(QTcpSocket* socket, const QByteArray& requestDat
 {
     HttpRequest req = HttpParser::parse(requestData);
     req.clientAddress = socket->peerAddress().toString();
+    // Both ends of the connection, from the socket and from nothing the
+    // request says: who holds the far one is read by them (OwnerHandoff).
+    req.clientPort = socket->peerPort();
+    req.serverAddress = socket->localAddress().toString();
+    req.serverPort = socket->localPort();
+    req.serverTls = qobject_cast<QSslSocket*>(socket) != nullptr;
     // Empty on plain HTTP: no such property there.
     req.tlsSpki = socket->property(TLS_SPKI_PROPERTY).toByteArray();
 
@@ -1322,6 +1329,16 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
                             .arg(req.clientAddress));
         m_ConnGuard.reportAuthFailure(req.clientAddress);
         respond(HttpResponse::error(400, "Bad Request"));
+        return;
+    }
+
+    // The owner's link traded for its nonce (server/OwnerHandoff.h), ahead of
+    // every gate below and whichever way it came: the trade checks for itself
+    // all that it needs, and a refusal spends the nonce, which a gate that
+    // refused first would leave waiting.
+    if (req.path == QLatin1String(OwnerHandoff::kTradePath)) {
+        respond(m_OwnerHandoffTrade ? m_OwnerHandoffTrade(req, arrival == Arrival::Socket)
+                                    : HttpResponse::error(404, "Not Found"));
         return;
     }
 
@@ -2018,6 +2035,21 @@ HttpResponse HttpServer::staticFileAnswer(const HttpRequest& req, Arrival arriva
         resp.contentType = "application/json";
         resp.body = "{\"version\":\"" + QCoreApplication::applicationVersion().toUtf8() + "\"}\n";
         resp.headers["Cache-Control"] = "no-cache, must-revalidate";
+        return resp;
+    }
+
+    // The page a link of this machine opens first (server/OwnerHandoff.h),
+    // under a policy of its own: its files and nothing else, no referrer, and
+    // nothing of it kept.
+    if (req.path == QLatin1String(OwnerHandoff::kPagePath) ||
+        req.path == QLatin1String(OwnerHandoff::kPageFile)) {
+        HttpResponse resp = m_StaticFiles->serveFile(QLatin1String(OwnerHandoff::kPageFile));
+        resp.headers.remove(QStringLiteral("ETag"));
+        resp.headers.remove(QStringLiteral("Last-Modified"));
+        resp.headers["Content-Security-Policy"] = QLatin1String(OwnerHandoff::kPagePolicy);
+        resp.headers["Referrer-Policy"] = "no-referrer";
+        resp.headers["Cache-Control"] = "no-store";
+        if (req.method == QLatin1String("HEAD")) resp.body.clear();
         return resp;
     }
 

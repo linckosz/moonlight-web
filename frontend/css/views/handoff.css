@@ -1,0 +1,23 @@
+/*
+ * The page a link of this machine opens first (owner-handoff.html): the app's
+ * background while it trades its nonce, and one sentence, centred, when the
+ * trade is refused.
+ */
+.handoff {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 24px 16px;
+    text-align: center;
+}
+
+.handoff p {
+    max-width: 32rem;
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: var(--text-1);
+}

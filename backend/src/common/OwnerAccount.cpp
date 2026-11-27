@@ -155,6 +155,26 @@ QString accountOf(void* token)
 #endif
 }
 
+QString accountOfProcess(quint32 pid)
+{
+#ifdef Q_OS_WIN
+    const HANDLE process =
+        ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (!process) return {};
+    QString sid;
+    HANDLE token = nullptr;
+    if (::OpenProcessToken(process, TOKEN_QUERY, &token)) {
+        sid = accountOf(token);
+        ::CloseHandle(token);
+    }
+    ::CloseHandle(process);
+    return sid;
+#else
+    Q_UNUSED(pid);
+    return {};
+#endif
+}
+
 bool same(const QString& recordedSid, const QString& accountSid)
 {
 #ifdef Q_OS_WIN

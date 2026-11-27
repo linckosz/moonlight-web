@@ -140,6 +140,7 @@ void run_host_key_route_tests();
 void run_launch_gate_tests();
 void run_local_channel_tests();
 void run_host_key_vault_tests();
+void run_owner_handoff_tests();
 void run_owner_link_wait_tests();
 void run_local_request_tests();
 void run_quit_server_tests();
@@ -328,6 +329,7 @@ int main(int argc, char** argv)
     run_launch_gate_tests();
     run_local_channel_tests();
     run_host_key_vault_tests();
+    run_owner_handoff_tests();
     run_owner_link_wait_tests();
     run_local_request_tests();
     run_quit_server_tests();

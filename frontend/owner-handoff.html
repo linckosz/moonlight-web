@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="robots" content="noindex, nofollow" />
+        <meta name="referrer" content="no-referrer" />
+        <title>MoonlightWeb</title>
+        <!-- The page a link of this machine opens first (js/ownerHandoff.js,
+             server/OwnerHandoff.h): it trades the nonce in its address for the
+             owner's link and opens that link in its own place. Nothing inline:
+             its policy allows its own files and nothing else. -->
+        <link rel="stylesheet" href="/css/tokens.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="/css/base.css?v=__MW_VERSION__" />
+        <link rel="stylesheet" href="/css/views/handoff.css?v=__MW_VERSION__" />
+        <link rel="icon" href="/assets/favicon.ico" type="image/x-icon" />
+        <script type="module" src="/js/ownerHandoff.js?v=__MW_VERSION__"></script>
+    </head>
+    <body>
+        <main class="handoff">
+            <p id="handoff-reopen" hidden>
+                This link has already been used or has expired. Open MoonlightWeb again from the
+                taskbar.
+            </p>
+        </main>
+    </body>
+</html>

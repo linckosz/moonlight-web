@@ -85,6 +85,7 @@
 #include "server/ServerRestart.h"
 #include "server/SharedPortsRestart.h"
 #include "server/HostKeyVault.h"
+#include "server/OwnerHandoff.h"
 #include "server/FirstRunLink.h"
 #include "server/HttpServer.h"
 #include "server/ControlChannel.h"
@@ -602,11 +603,24 @@ static quint16 findRunningHttpsPort()
 
 // Ask the running instance to surface the admin page: it redirects an existing
 // browser tab to /admin via the control channel, or opens a fresh tab when no
-// tab is connected. False when it could not be asked, so the caller can fall
-// back to opening the browser itself.
-static bool requestFocusAdmin()
+// tab is connected. Unreachable when it could not be asked, so the caller can
+// fall back to opening the browser itself; OpenHere when the instance has no
+// desktop to start a browser on (a service), so the caller opens the page
+// itself, as the account it runs as.
+enum class FocusAnswer
 {
-    return localRequest(QStringLiteral("/api/local/focus"), QByteArrayLiteral("{}"), 3000).ok;
+    Unreachable,
+    Done,
+    OpenHere,
+};
+
+static FocusAnswer requestFocusAdmin()
+{
+    const LocalReply reply =
+        localRequest(QStringLiteral("/api/local/focus"), QByteArrayLiteral("{}"), 3000);
+    if (!reply.ok) return FocusAnswer::Unreachable;
+    return reply.json.value(QStringLiteral("open_here")).toBool(false) ? FocusAnswer::OpenHere
+                                                                       : FocusAnswer::Done;
 }
 
 // Whether something answers this install's port on this machine, asked the way
@@ -1286,9 +1300,10 @@ static void waitMs(int ms)
 // `moonlightweb --open-link` / `--print-link`: the link this machine's owner
 // opens its pages with, asked of the running instance — the admin page, or the
 // front door of a booth. It carries a key made for it at that moment, good once
-// and for ten minutes. Opened, it goes to the browser and nowhere else; printed,
-// it goes to the terminal that asked. It is never written to a log, and never
-// handed to another program than the browser.
+// and for ten minutes. Printed, it goes to the terminal that asked. Opened, the
+// browser is given this machine's handoff page instead (open=1), with a nonce
+// made for the account this command runs as, which that page trades for the
+// link (server/OwnerHandoff.h). Neither is ever written to a log.
 static int runOwnerLinkCommand(quint16 persistedHttpsPort, bool print)
 {
     QTextStream out(stdout);
@@ -1300,8 +1315,12 @@ static int runOwnerLinkCommand(quint16 persistedHttpsPort, bool print)
     const bool booth = localRequest(QStringLiteral("/api/auth/status"), QByteArray(), 5000)
                            .json.value("admin_locked")
                            .toBool(false);
-    const QString target = QStringLiteral("/api/server/remote-link") +
-                           (booth ? QString() : QStringLiteral("?p=/admin"));
+    QStringList query;
+    if (!print) query << QStringLiteral("open=1");
+    if (!booth) query << QStringLiteral("p=/admin");
+    const QString target =
+        QStringLiteral("/api/server/remote-link") +
+        (query.isEmpty() ? QString() : QLatin1Char('?') + query.join(QLatin1Char('&')));
 
     // The internet link takes a moment to come up after a start: while it is
     // only "not yet", ask again rather than settle for this machine's address.
@@ -1487,10 +1506,13 @@ static int runTrayClient(QApplication& app, bool ownerHasNoDesktopHere)
     // blocking call is acceptable — and given a short budget so a wedged server
     // cannot freeze the menu. Empty on any failure, which is the same answer as
     // "no internet way in": the entry falls back to this machine's own address.
+    // What it opens is the handoff page (open=1), with a nonce made for the
+    // account this tray runs as (server/OwnerHandoff.h).
     tray.setRemoteLinkProvider([](const QString& path) -> QString {
         // Sent raw: the server accepts one plain path segment and nothing else,
         // so there is never anything here that needs escaping.
-        const QString query = path.isEmpty() ? QString() : QStringLiteral("?p=") + path;
+        const QString query =
+            QStringLiteral("?open=1") + (path.isEmpty() ? QString() : QStringLiteral("&p=") + path);
         const LocalReply reply =
             localRequest(QStringLiteral("/api/server/remote-link") + query, QByteArray(), 2000);
         return reply.ok ? reply.json.value(QStringLiteral("url")).toString() : QString();
@@ -2733,9 +2755,18 @@ int main(int argc, char* argv[])
             // Prefer redirecting an already-open tab (no duplicate). Only when the
             // running instance can't be reached do we open the admin page here.
             Logger::info("Asking the running instance to surface the admin page: " + base);
-            if (!requestFocusAdmin()) {
+            const FocusAnswer focus = requestFocusAdmin();
+            if (focus == FocusAnswer::Unreachable) {
                 Logger::info("Running instance unreachable — opening the admin page directly");
                 mw::openInBrowser(base + QStringLiteral("/admin"));
+            } else if (focus == FocusAnswer::OpenHere) {
+                // The handoff page, for this process's account, as --open-link
+                // opens it; what it opens when no link can be made: the
+                // address without a key.
+                Logger::info("The running instance has no desktop here — opening the page from "
+                             "this session");
+                if (runOwnerLinkCommand(p, false) != 0)
+                    mw::openInBrowser(base + QStringLiteral("/admin"));
             }
         }
         // The server we just found may be a service with no desktop to draw on
@@ -7456,7 +7487,7 @@ int main(int argc, char* argv[])
     // handover for the same reason, and hands it to the application there.
     //
     // Not gated on the line being up at this instant, deliberately, and this is
-    // where it differs from remoteAdminLink() further down. That link is spent
+    // where it differs from remoteLink() further down. That link is spent
     // the moment it is used, so handing out one that cannot work loses it. An
     // invitation is opened later — tonight, tomorrow — and refusing to mint one
     // over a thirty-second blip would be absurd. The board says when the machine
@@ -8657,35 +8688,83 @@ int main(int argc, char* argv[])
     // Empty whenever any part is missing or the internet is not an option here,
     // because a link that cannot work is worse than no link: it is single-use
     // and the user would have spent it. Every caller falls back to loopback.
-    auto remoteLink = [&, remoteReady](const QString& path) -> QString {
-        if (!remoteReady()) return {};
+    //
+    // The target alone, without its key: the link is OwnerHandoff::linkWith()
+    // of it and of a key made at that moment.
+    using MaybeTarget = std::optional<OwnerHandoff::Target>;
+    auto remoteTarget = [&, remoteReady](const QString& path) -> MaybeTarget {
+        if (!remoteReady()) return std::nullopt;
         const QString entry = rendezvous.entryUrl();
-        if (entry.isEmpty()) return {};
+        if (entry.isEmpty()) return std::nullopt;
+        return OwnerHandoff::Target{entry,
+                                    path.isEmpty() ? QString() : QStringLiteral("&p=") + path};
+    };
+    auto remoteLink = [&hostKeys, remoteTarget](const QString& path) -> QString {
+        const std::optional<OwnerHandoff::Target> target = remoteTarget(path);
         // Made here, for this link, once every other reason to hand out none
         // has been ruled out: a key waits ten minutes for the click it was
         // made for, and is in no file.
-        const QString key = hostKeys.mint();
-        return entry + QStringLiteral("#k=") + QString::fromLatin1(QUrl::toPercentEncoding(key)) +
-               (path.isEmpty() ? QString() : QStringLiteral("&p=") + path);
-    };
-    auto remoteAdminLink = [remoteLink]() -> QString {
-        return remoteLink(QStringLiteral("/admin"));
+        return target ? OwnerHandoff::linkWith(*target, hostKeys.mint()) : QString();
     };
 
     // The same page under this machine's own address, with a key of its own:
     // what an entry point opens when the internet link would not work. The key
     // is what tells the page it was opened by this machine's owner, here.
-    auto localLink = [&hostKeys, entryUrl](const QString& path) -> QString {
-        return entryUrl(path) + QStringLiteral("#k=") +
-               QString::fromLatin1(QUrl::toPercentEncoding(hostKeys.mint()));
+    auto localTarget = [entryUrl](const QString& path) -> OwnerHandoff::Target {
+        return OwnerHandoff::Target{entryUrl(path), QString()};
     };
-    // The link an entry point opens: the internet one when there is one that
+    auto localLink = [&hostKeys, localTarget](const QString& path) -> QString {
+        return OwnerHandoff::linkWith(localTarget(path), hostKeys.mint());
+    };
+    // The link an entry point opens is the internet one when there is one that
     // works, this machine's own otherwise. Each carries a key made for it, so
     // it is asked for at the click and never kept: not in a file, not in a
     // shortcut, not in a log.
-    auto ownerLink = [remoteLink, localLink](const QString& path) -> QString {
-        const QString remote = remoteLink(path);
-        return remote.isEmpty() ? localLink(path) : remote;
+
+    // What a browser this machine starts is given for the owner's link: this
+    // machine's handoff page, with a nonce made for that link's target and for
+    // @p account, the account the browser runs as (server/OwnerHandoff.h). The
+    // page trades the nonce for the link on its own loopback connection,
+    // POST /api/auth/owner-handoff, answered here.
+    //
+    // Empty when no page can be made for that account (never root, never one
+    // of the system's own) or no listener is up: the caller then opens what it
+    // opened when no link could be made, this machine's address without a key.
+    // On macOS a browser is given its link with no command line
+    // (OpenInBrowser.h), and it is the owner's link itself.
+    OwnerHandoff ownerHandoff;
+    server.setOwnerHandoffTrade([&ownerHandoff, &hostKeys](const HttpRequest& req, bool direct) {
+        return ownerHandoff.answer(
+            req, direct, [&req]() { return OwnerHandoff::connectionAccount(req); },
+            [&hostKeys]() { return hostKeys.mint(); });
+    });
+    auto openTarget = [&server, &ownerHandoff, &hostKeys,
+                       localTarget](const std::optional<OwnerHandoff::Target>& remote,
+                                    const QString& path, const MachineAccount& account) -> QString {
+        const OwnerHandoff::Target target = remote ? *remote : localTarget(path);
+#if defined(Q_OS_MACOS)
+        Q_UNUSED(ownerHandoff);
+        Q_UNUSED(server);
+        Q_UNUSED(account);
+        return OwnerHandoff::linkWith(target, hostKeys.mint());
+#else
+        Q_UNUSED(hostKeys);
+        const quint16 httpPort = server.activeHttpPort();
+        const quint16 httpsPort = server.activeHttpsPort();
+        if (httpPort == 0 && httpsPort == 0) return {};
+        const QString nonce = ownerHandoff.issue(target, account);
+        if (nonce.isEmpty()) {
+            Logger::warning(QStringLiteral("[OwnerHandoff] No page is made for the account that "
+                                           "asked: what opens is this machine's address, "
+                                           "without a key"));
+            return {};
+        }
+        return OwnerHandoff::pageUrl(httpPort, httpsPort, nonce);
+#endif
+    };
+    auto openLink = [openTarget, remoteTarget](const QString& path,
+                                               const MachineAccount& account) -> QString {
+        return openTarget(remoteTarget(path), path, account);
     };
 
     // An empty link that is only "not yet": the internet way in is wanted, but
@@ -8724,8 +8803,14 @@ int main(int argc, char* argv[])
     // `?probe=1` asks that one thing and no link: the answer is `pending` alone,
     // and no key is made, for a caller that is still waiting (--wait-link) and
     // will ask for the link itself when it is opened.
+    //
+    // `?open=1` asks for what a browser is given instead (openTarget): the
+    // handoff page, with a nonce made for the account of the program that asks,
+    // read from the local channel. Asked over that channel and nowhere else:
+    // the tray client and --open-link, which start the browser themselves.
     server.router()->get("/api/server/remote-link", [remoteLink, remoteReady, remoteLinkPending,
-                                                     localLink](const HttpRequest& req) {
+                                                     localLink, remoteTarget,
+                                                     openTarget](const HttpRequest& req) {
         if (!req.isHostMachine)
             return HttpResponse::error(403, "Only available to the host "
                                             "machine");
@@ -8735,10 +8820,24 @@ int main(int argc, char* argv[])
             resp.headers["Cache-Control"] = "no-store";
             return resp;
         }
+        const bool open = req.queryParams.value(QStringLiteral("open")) == QLatin1String("1");
+        if (open && !req.localChannel)
+            return HttpResponse::error(403, "Only asked by a program of this machine");
         const QString path = req.queryParams.value(QStringLiteral("p"));
         static const QRegularExpression shape(QStringLiteral("^/[A-Za-z0-9_-]{1,32}$"));
         if (!path.isEmpty() && !shape.match(path).hasMatch())
             return HttpResponse::error(400, "Bad page");
+        if (open) {
+            const std::optional<OwnerHandoff::Target> remote = remoteTarget(path);
+            const bool pending = !remote && remoteLinkPending();
+            const QString url =
+                pending ? QString()
+                        : openTarget(remote, path, OwnerHandoff::accountOf(req.localCaller));
+            HttpResponse resp = HttpResponse::json(
+                QJsonObject{{QStringLiteral("url"), url}, {QStringLiteral("pending"), pending}});
+            resp.headers["Cache-Control"] = "no-store";
+            return resp;
+        }
         const QString remote = remoteLink(path);
         const bool pending = remote.isEmpty() && remoteLinkPending();
         const QString url = !remote.isEmpty() ? remote : pending ? QString() : localLink(path);
@@ -8845,19 +8944,28 @@ int main(int argc, char* argv[])
 
     server.router()->post(
         "/api/local/focus",
-        [&controlChannel, ownerLink, adminLocked](const HttpRequest& req) -> HttpResponse {
+        [&controlChannel, openLink, entryUrl, adminLocked](const HttpRequest& req) -> HttpResponse {
             // Loopback only: this is the private IPC surface a second local
             // launch uses, never something a remote peer should trigger.
             if (!req.isLocal && !(req.adminLocked && req.isHostMachine))
                 return HttpResponse::error(403, "local only");
             QJsonObject obj;
+            const QString path = adminLocked ? QString() : QStringLiteral("/admin");
+            const MachineAccount self = OwnerHandoff::thisProcess();
             if (controlChannel.hasClients()) {
                 controlChannel.broadcastFocusAdmin();
                 obj["delivered"] = true;
+            } else if (!hasGuiSession() || !OwnerHandoff::mayOpenFor(self)) {
+                // A browser this server started would run as its account, and
+                // a service's is nobody's desktop. The program that asked runs
+                // on one: it opens the page itself, as its own account.
+                obj["delivered"] = false;
+                obj["open_here"] = true;
             } else {
-                // With a key: the page that opens is this
-                // machine's owner's.
-                mw::openInBrowser(ownerLink(adminLocked ? QString() : QStringLiteral("/admin")));
+                // The handoff page, for this server's own account: the page
+                // that opens is this machine's owner's.
+                const QString url = openLink(path, self);
+                mw::openInBrowser(url.isEmpty() ? entryUrl(path) : url);
                 obj["delivered"] = false;
             }
             return HttpResponse::json(obj, 200);
@@ -9035,10 +9143,13 @@ int main(int argc, char* argv[])
     // The desktop session gets its tray from runTrayClient() instead.
     TrayManager trayManager(&server);
     trayManager.setUrlProvider([entryUrl](const QString& path) { return QUrl(entryUrl(path)); });
-    // A click opens the owner's link: the internet one, or this machine's own
-    // address with its key. The plain address above is what is written down
-    // (the log line at start-up), and what is left if no link could be made.
-    trayManager.setRemoteLinkProvider(ownerLink);
+    // A click opens the owner's link, the internet one or this machine's own
+    // address with its key, by way of the handoff page and a nonce made for the
+    // account this server runs as, which the browser it starts runs as. The
+    // plain address above is what is written down (the log line at start-up),
+    // and what is left if no link could be made.
+    trayManager.setRemoteLinkProvider(
+        [openLink](const QString& path) { return openLink(path, OwnerHandoff::thisProcess()); });
     trayManager.setActivityProvider(streamActivity);
     trayManager.setDisconnectHandler(
         [disconnectStream](const QString& id) { return disconnectStream(id) > 0; });
@@ -9117,14 +9228,19 @@ int main(int argc, char* argv[])
         QTimer* opener = new QTimer(&app);
         opener->setInterval(400);
         QObject::connect(opener, &QTimer::timeout, &app, [=]() {
-            const QString link = wantRemote ? remoteAdminLink() : QString();
-            if (link.isEmpty() && --(*attemptsLeft) > 0) return;
+            const std::optional<OwnerHandoff::Target> remote =
+                wantRemote ? remoteTarget(path) : std::nullopt;
+            if (!remote && --(*attemptsLeft) > 0) return;
             opener->stop();
             opener->deleteLater();
             QString url =
                 wizardOnHttp ? FirstRunLink::wizardUrl(plainServer->activeHttpPort()) : QString();
-            if (url.isEmpty()) url = link.isEmpty() ? localLink(path) : link;
-            // Without its fragment: that is where the host key rides.
+            // The handoff page, for the account this process runs as, which the
+            // browser it starts runs as; with none to be made, this machine's
+            // address without a key.
+            if (url.isEmpty()) url = openTarget(remote, path, OwnerHandoff::thisProcess());
+            if (url.isEmpty()) url = entryUrl(path);
+            // Without its fragment: that is where the nonce rides.
             QUrl logged(url);
             logged.setFragment(QString());
             qInfo() << "[main] Opening web UI:" << logged.toString();

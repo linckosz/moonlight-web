@@ -46,6 +46,15 @@ struct LocalCaller
     quint32 integrityRid = 0;  ///< the token's mandatory level (SECURITY_MANDATORY_*_RID)
     bool appContainer = false; ///< an AppContainer token
     bool restricted = false;   ///< a restricted token (IsTokenRestricted)
+    qint64 uid = -1;           ///< elsewhere: the socket peer's account, read by the kernel
+};
+
+/// An account of this machine, as its system names it: a SID in text on
+/// Windows, a uid elsewhere. Nobody (no SID, uid -1) when it is not known.
+struct MachineAccount
+{
+    QString sid;
+    qint64 uid = -1;
 };
 
 struct HttpRequest
@@ -64,6 +73,11 @@ struct HttpRequest
     QMap<QString, QString> pathParams;
     QByteArray body;
     QString clientAddress;      // Populated by HttpServer from socket peer
+    quint16 clientPort = 0;     // That peer's port, and our own end of the
+    QString serverAddress;      // connection: the address and port the socket
+    quint16 serverPort = 0;     // was accepted on, and whether it speaks TLS.
+    bool serverTls = false;     // Set by HttpServer from the socket alone; 0
+                                // and empty off a socket (tunnel, local channel).
     bool isLocal = false;       // Populated by HttpServer: loopback peer OR a valid
                                 // host-key session (browser on the host machine
                                 // reaching us through the public domain) OR a LAN

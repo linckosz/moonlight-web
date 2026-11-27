@@ -171,6 +171,7 @@ add_executable(run_tests
     test_pairing_chain.cpp
     test_local_channel.cpp
     test_host_key_vault.cpp
+    test_owner_handoff.cpp
     test_owner_link_wait.cpp
     test_local_request.cpp
     test_quit_server.cpp
@@ -262,6 +263,8 @@ add_executable(run_tests
     ${_src}/src/server/OwnerProof.cpp
     # The keys those links carry: made on demand, good once, kept in memory.
     ${_src}/src/server/HostKeyVault.cpp
+    # The nonce a browser is given for them, traded on its loopback connection.
+    ${_src}/src/server/OwnerHandoff.cpp
     # The local self-signed cert: its key outlives a restart (clients pin it).
     ${_src}/src/server/CertManager.cpp
     ${_src}/src/server/ConnectionGuard.cpp

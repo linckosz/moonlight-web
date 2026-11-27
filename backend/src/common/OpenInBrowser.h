@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include "common/BrowserLink.h"
 #include "common/DetachedProcess.h"
 
 #include <QDesktopServices>
@@ -42,8 +43,12 @@ namespace mw {
 ///
 /// A self-signed localhost certificate still shows a one-time browser warning
 /// the user must accept: that is inherent to self-signed TLS.
+///
+/// A link that carries a key is not opened (mayGiveBrowser): the owner's pages
+/// are opened through this machine's handoff page (server/OwnerHandoff.h).
 inline void openInBrowser(const QString& url)
 {
+    if (!mw::mayGiveBrowser(url)) return;
 #if defined(Q_OS_LINUX)
     if (mw::startDetached(QStringLiteral("xdg-open"), {url})) return;
 #endif

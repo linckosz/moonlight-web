@@ -60,7 +60,8 @@ struct Request
     QByteArray body; ///< JSON as the route reads it, may be empty
 
     // Set by the server's end once the request has come in, never on the wire.
-    /// Who asked, as the server's end read it (Windows: the caller's token).
+    /// Who asked, as the server's end read it (Windows: the caller's token;
+    /// elsewhere: the socket peer's uid).
     LocalCaller caller;
     /// The channel is open to the people signed in at this PC (Audience::SignedIn).
     bool service = false;

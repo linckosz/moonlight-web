@@ -1446,5 +1446,8 @@
         "action": "Buy me a coffee",
         "hideToggle": "Hide Buy me a coffee in the app",
         "tooltip": "Support MoonlightWeb"
+    },
+    "handoff": {
+        "reopen": "This link has already been used or has expired. Open MoonlightWeb again from the taskbar."
     }
 }

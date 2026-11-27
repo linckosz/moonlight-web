@@ -1446,5 +1446,8 @@
         "action": "Offrir un café",
         "hideToggle": "Masquer Buy me a coffee dans l'application",
         "tooltip": "Soutenir MoonlightWeb"
+    },
+    "handoff": {
+        "reopen": "Ce lien a déjà servi ou a expiré. Rouvrez MoonlightWeb depuis la barre des tâches."
     }
 }

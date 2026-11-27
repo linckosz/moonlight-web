@@ -1446,5 +1446,8 @@
         "action": "Bana bir kahve ısmarla",
         "hideToggle": "Uygulamada \"Bana bir kahve ısmarla\"yı gizle",
         "tooltip": "MoonlightWeb'i destekle"
+    },
+    "handoff": {
+        "reopen": "Bu bağlantı zaten kullanıldı veya süresi doldu. MoonlightWeb'i görev çubuğundan yeniden açın."
     }
 }

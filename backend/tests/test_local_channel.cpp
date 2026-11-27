@@ -19,6 +19,7 @@
 // (server/LocalChannel.h): its wire shapes, then both of its ends for real.
 
 #include "server/LocalChannel.h"
+#include "server/OwnerHandoff.h"
 #include "test_framework.h"
 
 #include <QCoreApplication>
@@ -548,6 +549,9 @@ void run_local_channel_tests()
         r.path = QStringLiteral("/api/system/restart");
         r.query = QStringLiteral("p=/admin");
         r.body = QByteArray("{\"x\":1}");
+        // Who asks is not the caller's to say: this is never sent.
+        r.caller.sid = QStringLiteral("S-1-5-18");
+        r.caller.uid = 0;
         const Asked a = ask(endpoint, r);
         CHECK_EQ(a.reply.status, 200);
         CHECK(a.reply.body == QByteArray("{\"echo\":\"/api/system/restart\"}"));
@@ -583,6 +587,10 @@ void run_local_channel_tests()
             other.sid += QStringLiteral("0");
             CHECK(verdictOf(other, false) == RequestGuard::LocalVerdict::StandardAccount);
 #endif
+            // The account a handoff nonce is made for: this very process, as
+            // the server end read it, whatever the frame said it was.
+            CHECK(OwnerHandoff::sameAccount(OwnerHandoff::accountOf(seen[0].caller),
+                                            OwnerHandoff::thisProcess()));
         }
 
         // The channel is there for the next caller, and the one after.

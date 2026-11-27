@@ -26,6 +26,8 @@
 
 #include <QList>
 
+#include <cstring>
+
 #ifdef _WIN32
 #include <tlhelp32.h>
 
@@ -83,6 +85,112 @@ Listens inProcTable(const QByteArray& text, uint16_t port, bool tcp)
         found = true;
     }
     return found ? Listens::Yes : Listens::No;
+}
+
+std::optional<uint64_t> ownerAmong(const QList<TcpSocket>& sockets, const TcpEnd& peer,
+                                   const TcpEnd& ours, uint32_t established)
+{
+    if (peer.address.size() != 16 || ours.address.size() != 16) return std::nullopt;
+    std::optional<uint64_t> owner;
+    for (const TcpSocket& s : sockets) {
+        if (s.state != established) continue;
+        if (s.local.port != peer.port || s.local.address != peer.address) continue;
+        if (s.remote.port != ours.port || s.remote.address != ours.address) continue;
+        if (owner && *owner != s.owner) return std::nullopt;
+        owner = s.owner;
+    }
+    return owner;
+}
+
+namespace {
+
+/// The IPv4 prefix of an address mapped into IPv6.
+const QByteArray kMappedV4("\0\0\0\0\0\0\0\0\0\0\xff\xff", 12);
+
+/// Eight hexadecimal digits, and nothing else.
+bool hexWord(const QByteArray& text, uint32_t& out)
+{
+    if (text.size() != 8) return false;
+    out = 0;
+    for (const char c : text) {
+        int digit = 0;
+        if (c >= '0' && c <= '9')
+            digit = c - '0';
+        else if (c >= 'A' && c <= 'F')
+            digit = c - 'A' + 10;
+        else if (c >= 'a' && c <= 'f')
+            digit = c - 'a' + 10;
+        else
+            return false;
+        out = (out << 4) | static_cast<uint32_t>(digit);
+    }
+    return true;
+}
+
+/// One end as /proc prints it, "0100007F:1F90": the address as 32-bit words
+/// in hex, each in the kernel's byte order (this machine's), then the port.
+bool procEnd(const QByteArray& field, TcpEnd& out)
+{
+    const qsizetype colon = field.indexOf(':');
+    if (colon < 0 || field.indexOf(':', colon + 1) >= 0) return false;
+    const QByteArray hex = field.left(colon);
+    if (hex.size() != 8 && hex.size() != 32) return false;
+    const QByteArray portHex = field.mid(colon + 1);
+    uint32_t port = 0;
+    if (portHex.size() != 4 || !hexWord(QByteArray(4, '0') + portHex, port)) return false;
+    QByteArray bytes;
+    for (qsizetype i = 0; i < hex.size(); i += 8) {
+        uint32_t word = 0;
+        if (!hexWord(hex.mid(i, 8), word)) return false;
+        char raw[4];
+        std::memcpy(raw, &word, sizeof(raw));
+        bytes.append(raw, sizeof(raw));
+    }
+    out.address = bytes.size() == 4 ? kMappedV4 + bytes : bytes;
+    out.port = static_cast<uint16_t>(port);
+    return true;
+}
+
+} // namespace
+
+std::optional<QList<TcpSocket>> inProcTcpTable(const QByteArray& text)
+{
+    // "sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt
+    // uid timeout inode ...", then one socket a line.
+    const QList<QByteArray> lines = text.split('\n');
+    if (lines.isEmpty() || !lines.first().contains("local_address") ||
+        !lines.first().contains("uid"))
+        return std::nullopt;
+    QList<TcpSocket> out;
+    for (qsizetype i = 1; i < lines.size(); ++i) {
+        const QByteArray line = lines.at(i).simplified();
+        if (line.isEmpty()) continue;
+        const QList<QByteArray> fields = line.split(' ');
+        if (fields.size() < 8) return std::nullopt;
+        TcpSocket s;
+        if (!procEnd(fields.at(1), s.local) || !procEnd(fields.at(2), s.remote))
+            return std::nullopt;
+        bool stateRead = false;
+        bool uidRead = false;
+        s.state = fields.at(3).toUInt(&stateRead, 16);
+        s.owner = fields.at(7).toULongLong(&uidRead, 10);
+        if (!stateRead || !uidRead) return std::nullopt;
+        out.append(s);
+    }
+    return out;
+}
+
+std::optional<uint64_t> connectionOwnerInProc(const QByteArray& tcp, const QByteArray& tcp6,
+                                              const TcpEnd& peer, const TcpEnd& ours)
+{
+    QList<TcpSocket> all;
+    for (const QByteArray* text : {&tcp, &tcp6}) {
+        if (text->isEmpty()) continue;
+        const std::optional<QList<TcpSocket>> sockets = inProcTcpTable(*text);
+        if (!sockets) return std::nullopt;
+        all += *sockets;
+    }
+    return ownerAmong(all, peer, ours, kLinuxEstablished);
 }
 
 #ifdef _WIN32
@@ -216,6 +324,60 @@ Listens otherServer()
     return otherServerAmong(listening, static_cast<uint32_t>(GetCurrentProcessId()), true, known);
 }
 
+namespace {
+
+/// An IPv4 end of a row: the address as the four bytes it holds in memory,
+/// which are already in network order, mapped into IPv6.
+TcpEnd v4End(DWORD address, DWORD port)
+{
+    return {kMappedV4 + QByteArray(reinterpret_cast<const char*>(&address), 4),
+            ntohs(static_cast<u_short>(port))};
+}
+
+TcpEnd v6End(const UCHAR (&address)[16], DWORD port)
+{
+    return {QByteArray(reinterpret_cast<const char*>(address), 16),
+            ntohs(static_cast<u_short>(port))};
+}
+
+/// Every TCP connection of one family, with the process that holds it.
+template <typename Table, typename Row>
+bool connections(ULONG family, QList<TcpSocket>& out, Row row)
+{
+    std::vector<unsigned char> buffer;
+    if (!fetch(
+            [family](void* to, DWORD* size) {
+                return GetExtendedTcpTable(to, size, FALSE, family, TCP_TABLE_OWNER_PID_ALL, 0);
+            },
+            buffer))
+        return false;
+    if (buffer.size() < offsetof(Table, table)) return false;
+    const auto* table = reinterpret_cast<const Table*>(buffer.data());
+    const size_t room = (buffer.size() - offsetof(Table, table)) / sizeof(table->table[0]);
+    if (table->dwNumEntries > room) return false;
+    for (DWORD i = 0; i < table->dwNumEntries; ++i)
+        out.append(row(table->table[i]));
+    return true;
+}
+
+} // namespace
+
+std::optional<uint64_t> connectionOwner(const TcpEnd& peer, const TcpEnd& ours)
+{
+    QList<TcpSocket> all;
+    if (!connections<MIB_TCPTABLE_OWNER_PID>(AF_INET, all, [](const MIB_TCPROW_OWNER_PID& r) {
+            return TcpSocket{v4End(r.dwLocalAddr, r.dwLocalPort),
+                             v4End(r.dwRemoteAddr, r.dwRemotePort), r.dwState, r.dwOwningPid};
+        }))
+        return std::nullopt;
+    if (!connections<MIB_TCP6TABLE_OWNER_PID>(AF_INET6, all, [](const MIB_TCP6ROW_OWNER_PID& r) {
+            return TcpSocket{v6End(r.ucLocalAddr, r.dwLocalPort),
+                             v6End(r.ucRemoteAddr, r.dwRemotePort), r.dwState, r.dwOwningPid};
+        }))
+        return std::nullopt;
+    return ownerAmong(all, peer, ours, kWindowsEstablished);
+}
+
 #elif defined(__linux__)
 
 namespace {
@@ -249,6 +411,17 @@ Listens listens(uint16_t port, bool tcp)
     if (!QFile::exists(QString::fromLatin1(v6))) return Listens::No;
     if (!readTable(v6, text)) return Listens::Unknown;
     return inProcTable(text, port, tcp);
+}
+
+std::optional<uint64_t> connectionOwner(const TcpEnd& peer, const TcpEnd& ours)
+{
+    QByteArray tcp;
+    QByteArray tcp6;
+    if (!readTable("/proc/net/tcp", tcp)) return std::nullopt;
+    // A kernel without IPv6 has no such table, and no such connection
+    if (QFile::exists(QStringLiteral("/proc/net/tcp6")) && !readTable("/proc/net/tcp6", tcp6))
+        return std::nullopt;
+    return connectionOwnerInProc(tcp, tcp6, peer, ours);
 }
 
 namespace {
@@ -310,6 +483,13 @@ Listens listens(uint16_t port, bool tcp)
 Listens otherServer()
 {
     return Listens::Unknown;
+}
+
+std::optional<uint64_t> connectionOwner(const TcpEnd& peer, const TcpEnd& ours)
+{
+    (void)peer;
+    (void)ours;
+    return std::nullopt;
 }
 
 #endif

@@ -1446,5 +1446,8 @@
         "action": "请我喝杯咖啡",
         "hideToggle": "在应用中隐藏 Buy me a coffee",
         "tooltip": "支持 MoonlightWeb"
+    },
+    "handoff": {
+        "reopen": "此链接已被使用或已过期。请从任务栏重新打开 MoonlightWeb。"
     }
 }

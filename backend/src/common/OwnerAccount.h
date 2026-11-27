@@ -80,6 +80,11 @@ QString recorded(const Store& store);
 /// TOKEN_QUERY), as a SID in text. Empty when it cannot be read.
 QString accountOf(void* token);
 
+/// The account a running process is, by its id, as a SID in text: its token,
+/// read with no more than PROCESS_QUERY_LIMITED_INFORMATION and TOKEN_QUERY.
+/// Empty when the process is gone, cannot be opened, or is not on Windows.
+QString accountOfProcess(quint32 pid);
+
 /// Whether two accounts are one: both given, both well-formed SIDs, and
 /// equal. Anything missing or malformed is « no ».
 bool same(const QString& recordedSid, const QString& accountSid);

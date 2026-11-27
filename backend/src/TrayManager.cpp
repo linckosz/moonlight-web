@@ -606,9 +606,10 @@ void TrayManager::openAppPage(const QString& path)
 {
     const QString link = m_RemoteLink ? m_RemoteLink(path) : QString();
     if (!link.isEmpty()) {
-        // Logged without its fragment. The key in there is single-use, but it is
-        // still a credential, and a log file is exactly the place it must not
-        // outlive its one use in.
+        // Logged without its fragment. What rides there, the handoff page's
+        // nonce (server/OwnerHandoff.h), or on macOS the key itself, is
+        // single-use, but it still opens the owner's pages, and a log file is
+        // exactly the place it must not outlive its one use in.
         QUrl logged(link);
         logged.setFragment(QString());
         qInfo() << "[TrayManager] Opening" << (path.isEmpty() ? QStringLiteral("/") : path)

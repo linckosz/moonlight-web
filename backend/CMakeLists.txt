@@ -345,6 +345,7 @@ add_executable(mw-server
     src/server/Provisioning.cpp
     src/server/ConnectionGuard.cpp
     src/server/HostKeyVault.cpp
+    src/server/OwnerHandoff.cpp
     src/server/HttpServer.cpp
     src/server/ControlChannel.cpp
     src/server/LocalChannel.cpp
