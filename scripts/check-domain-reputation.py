@@ -16,8 +16,8 @@ What it asks, for every name the stack serves and every address they resolve to:
   - filtering resolvers (Cloudflare security and family, AdGuard, Quad9): each
     must answer the same addresses as an unfiltered one;
   - threat and filter feeds (OpenPhish, Phishing Army, HaGeZi TIF,
-    OISD, FireHOL, Spamhaus DROP) and HaGeZi's spam-TLD list, which blocks whole
-    TLDs (.top among them) save for an allowlist;
+    OISD, FireHOL, Spamhaus DROP, NetAPI) and HaGeZi's spam-TLD list, which
+    blocks whole TLDs (.top among them) save for an allowlist;
   - HaGeZi's general lists (Pro, Ultimate): a name the app can live without is
     a warning there, any other name is a failure;
   - the records that keep the domain from being used to send phishing: SPF,
@@ -84,6 +84,8 @@ IP_FEEDS = {
     "FireHOL level 2": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level2.netset",
     "FireHOL level 3": "https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level3.netset",
     "Spamhaus DROP": "https://www.spamhaus.org/drop/drop.txt",
+    # Addresses that attacked NetAPI's honeypot sensors in the last 48 hours.
+    "NetAPI attacker IPs": "https://netapi.com/api2/?method=compromised&dataset_type=ip",
 }
 HAGEZI_GENERAL = {
     "HaGeZi Pro": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt",
