@@ -51,6 +51,7 @@ const PAGES = [
   { src: 'guides/linux.html', url: '/guides/linux.html', nav: 'guides' },
   { src: 'faq.html', url: '/faq.html', nav: 'faq' },
   { src: 'contact.html', url: '/contact.html', nav: 'contact' },
+  { src: 'privacy.html', url: '/privacy.html', nav: null },
   { src: 'server-access/index.html', url: '/server-access/', nav: 'connect' },
   { src: 'play/chromebook.html', url: '/play/chromebook.html', nav: null },
   { src: 'play/iphone-ipad.html', url: '/play/iphone-ipad.html', nav: null },
@@ -121,6 +122,7 @@ function footer(lang, t) {
     navLinks(lang, t, null, ' · ') +
     ` · <a href="${GITHUB}" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a>` +
     ` · <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer" class="bmc-link"><span data-bmc-logo></span><span>${esc(t['nav.support'] ?? 'Coffee')}</span></a>` +
+    ` · <a href="${localUrl(lang, '/privacy.html')}">${esc(t['nav.privacy'] ?? 'Privacy')}</a>` +
     '</span>' +
     // The pages for one device or one host, linked from every page: nothing
     // else on the site points at them, and a search engine weighs a page by

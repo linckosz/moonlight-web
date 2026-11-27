@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<!-- Generated from /privacy.html and _i18n/de/privacy.json by scripts/website/build-site.mjs: edit those, then rebuild. -->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Datenschutz — was MoonlightWeb sendet und wie du es abschaltest</title>
+<meta name="description" content="Alles, was MoonlightWeb an seine Server oder an andere sendet, und wie du es abschaltest. Der Stream selbst geht direkt von deinem PC zu deinem Browser.">
+<meta name="author" content="Bruno Martin">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#05080d">
+<meta property="og:site_name" content="MoonlightWeb">
+<meta property="og:title" content="Datenschutz — was MoonlightWeb sendet und wie du es abschaltest">
+<meta property="og:description" content="Alles, was MoonlightWeb an seine Server oder an andere sendet, und wie du es abschaltest. Der Stream selbst geht direkt von deinem PC zu deinem Browser.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://moonlightweb.top/de/privacy.html">
+<meta property="og:image" content="https://moonlightweb.top/assets/desktop.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Datenschutz — was MoonlightWeb sendet und wie du es abschaltest">
+<meta name="twitter:description" content="Alles, was MoonlightWeb an seine Server oder an andere sendet, und wie du es abschaltest. Der Stream selbst geht direkt von deinem PC zu deinem Browser.">
+<meta name="twitter:image" content="https://moonlightweb.top/assets/desktop.jpg">
+<link rel="canonical" href="https://moonlightweb.top/de/privacy.html">
+<!-- i18n:alternates (written by scripts/website/build-site.mjs) -->
+<link rel="alternate" hreflang="en" href="https://moonlightweb.top/privacy.html">
+<link rel="alternate" hreflang="fr" href="https://moonlightweb.top/fr/privacy.html">
+<link rel="alternate" hreflang="de" href="https://moonlightweb.top/de/privacy.html">
+<link rel="alternate" hreflang="zh" href="https://moonlightweb.top/zh/privacy.html">
+<link rel="alternate" hreflang="x-default" href="https://moonlightweb.top/privacy.html">
+<!-- /i18n:alternates -->
+<link rel="icon" href="/assets/favicon.ico" sizes="48x48">
+<link rel="icon" type="image/png" sizes="48x48" href="/assets/icon-48.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/assets/icon-96.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png">
+<link rel="stylesheet" href="/assets/pages.css?v={{(fileStat `/assets/pages.css`).ModTime.Unix}}">
+<!-- Shared header/footer styling -->
+<link rel="stylesheet" href="/assets/chrome.css?v={{(fileStat `/assets/chrome.css`).ModTime.Unix}}">
+<script defer src="https://stats.moonlightweb.top/script.js"
+        data-website-id="6b952a24-dc15-4be8-a595-ae9d835fbc6a"
+        data-domains="moonlightweb.top,www.moonlightweb.top"></script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://moonlightweb.top/de/"},
+        {"@type": "ListItem", "position": 2, "name": "Privacy", "item": "https://moonlightweb.top/de/privacy.html"}
+      ]
+    },
+    {
+      "@type": "WebPage",
+      "name": "Privacy",
+      "url": "https://moonlightweb.top/de/privacy.html",
+      "description": "Everything MoonlightWeb sends to its servers or to others, and how to switch it off."
+    }
+  ]
+}
+</script>
+</head>
+<body>
+
+<!-- Header written by scripts/website/build-site.mjs -->
+<header id="site-header"><div class="wrap"><a class="brand" href="/de/"><img src="/assets/icon-192.png" alt="MoonlightWeb logo" width="28" height="28"> MOONLIGHTWEB</a><nav aria-label="Main navigation"><a href="/de/" data-nav="home">Start</a><a href="/de/guides/" data-nav="guides">Anleitungen</a><a href="/de/faq.html" data-nav="faq">FAQ</a><a href="/de/contact.html" data-nav="contact">Kontakt</a><a href="/de/server-access/" data-nav="connect">Verbinden</a></nav><div class="hdr-actions"><span class="lang"><select id="lang-select" aria-label="Language" data-umami-event="lang"><option value="en" data-href="/privacy.html">English</option><option value="fr" data-href="/fr/privacy.html">Français</option><option value="de" data-href="/de/privacy.html" selected>Deutsch</option><option value="zh" data-href="/zh/privacy.html" lang="zh">中文</option></select></span><a class="btn btn-primary gh-btn" href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" aria-label="GitHub" data-umami-event="github" data-umami-event-loc="nav">★ <span class="gh-label">GitHub</span></a></div></div></header>
+
+<main>
+<div class="wrap">
+  <nav class="crumbs" aria-label="Breadcrumb" data-i18n-html="crumbs"><a href="/de/">Startseite</a> / Datenschutz</nav>
+  <span class="kicker" data-i18n="kicker">Datenschutz</span>
+  <h1 data-i18n="h1">Was MoonlightWeb sendet</h1>
+  <p class="lead" data-i18n-html="lead">MoonlightWeb läuft auf deinem eigenen Computer. Bild, Ton und Eingaben eines Streams gehen direkt von deinem Gaming-PC zu deinem Browser und laufen nie über unsere Server. Diese Seite listet alles auf, was bei uns ankommt, und wie du es abschaltest.</p>
+
+  <h2 data-i18n="h2.app">Was die App sendet</h2>
+  <p data-i18n="p.official">Nur die offiziellen Builds senden überhaupt etwas davon. Ein selbst kompilierter Build sendet uns nichts davon; seine Update-Prüfung fragt bei GitHub.</p>
+  <ul>
+    <li data-i18n-html="li.update"><strong>Update-Prüfung</strong>: höchstens alle sechs Stunden gehen die Version, das Betriebssystem und der Prozessortyp (x64 oder ARM) an <code>updates.moonlightweb.top</code>, das mit der neuesten Version auf GitHub antwortet.</li>
+    <li data-i18n-html="li.sessions"><strong>Sitzungszählung</strong>: beim Start und am Ende eines Streams seine Form: Auflösung, Bildrate, Codec, HDR und 4:4:4, Bitrate, wie er übertragen wird (Backend, Transport, LAN oder Internet), die Geräteart, Besitzer oder Gast und wie lange er dauerte, oder der Fehlercode, falls er nie startete. Dazu kommen die Version, das Betriebssystem und der Prozessortyp. Kein Hostname, kein Konto, keine App und kein Spiel, keine Adresse.</li>
+    <li data-i18n-html="li.errors"><strong>Fehlerberichte</strong>: nach einem Stream mit einem Fehler höchstens ein Bericht alle 15 Minuten, mit den Fehler- und Warnzeilen des PCs und der beteiligten Browserseiten, dem Build und der Form des Streams. Auf deinem PC werden zuerst Adressen, Rechner- und Benutzernamen, Schlüssel, Links und App-Titel entfernt, danach filtert unser Server noch einmal. Ein Bericht wird höchstens 90 Tage aufbewahrt.</li>
+  </ul>
+  <p data-i18n="p.noaddr">Keine Adresse wird gespeichert. Die Zählungen landen in unserer eigenen Statistik hinter einem täglich wechselnden Hash, und die Server, die sie empfangen, führen kein Zugriffsprotokoll.</p>
+  <p data-i18n-html="p.stop"><strong>Zum Abschalten</strong> nutze <strong>Settings › Privacy</strong> in der App. Das schaltet alle drei auf einmal ab, wirkt sofort und lässt sich nur am PC selbst ändern; die Update-Prüfung fragt dann direkt bei GitHub.</p>
+  <p data-i18n-html="p.keys">In <code>settings.json</code> schickt <code>"update_relay_enabled": false</code> die Update-Prüfung stattdessen direkt zu GitHub, und <code>"session_metrics_enabled": false</code> stoppt die Zählungen und die Fehlerberichte. Die Umgebungsvariable <code>MW_NO_TELEMETRY=1</code> stoppt alles, die Update-Prüfung eingeschlossen.</p>
+
+  <h2 data-i18n="h2.internet">Internetzugang</h2>
+  <p data-i18n="p.internet.off">Der Internetzugang ist aus, bis der Besitzer ihn einschaltet, im Installer oder auf der Admin-Seite.</p>
+  <p data-i18n-html="p.internet.how">Ist er an, hält der PC eine Verbindung zu <code>stream.moonlightweb.top</code> offen, das einen Browser mit dem PC bekannt macht. Dieser Server leitet den Verbindungsaufbau weiter, der die Adressen beider Seiten enthält. Der Schlüssel, der den Stream schützt, wird durch den Kopplungsschlüssel deines PCs beglaubigt, den dieser Server nie sieht – er kann sich also nicht dazwischenschalten. Sobald beide verbunden sind, steigt er aus.</p>
+  <p data-i18n="p.internet.sees">Er sieht die Adressen verbundener PCs und Browser, solange sie verbunden sind, und schreibt keine davon auf.</p>
+  <p data-i18n="p.internet.keeps">Er speichert nur die Kennung des PCs, einen Hash des Tokens seines Besitzers und wann sie angelegt wurde und zuletzt online war (auf die Stunde). Keine Nachricht wird aufgeschrieben.</p>
+
+  <h2 data-i18n="h2.feedback">Feedback</h2>
+  <p data-i18n-html="p.feedback">Feedback wird nur gesendet, wenn der Besitzer in den Servereinstellungen eine Nachricht schreibt und auf <strong>Send</strong> drückt. Es enthält die Nachricht, eine E-Mail-Adresse, falls eingegeben, und nur bei angekreuztem Kästchen die Version, die Edition und die Betriebssystemfamilie.</p>
+  <p data-i18n="p.feedback.where">Es wird in einem privaten Discord-Kanal veröffentlicht, den die Moderatoren lesen. Unser Server behält keine Kopie.</p>
+
+  <h2 data-i18n="h2.other">Andere Dienste</h2>
+  <ul>
+    <li data-i18n-html="li.github"><strong>GitHub</strong>: sofern <code>MW_NO_TELEMETRY=1</code> nicht gesetzt ist, fragt die Update-Prüfung <code>api.github.com</code> direkt, höchstens alle sechs Stunden, wann immer sie nicht über <code>updates.moonlightweb.top</code> läuft.</li>
+    <li data-i18n-html="li.vigem">Der <strong>Windows-Installer</strong> lädt den Gamepad-Treiber ViGEmBus aus dem GitHub-Release seines Projekts, wenn der PC ihn noch nicht hat. Beim Deinstallieren von MoonlightWeb bleibt der Treiber installiert.</li>
+    <li data-i18n-html="li.location"><strong>Woher eine Sitzung kam</strong>: setzt der Besitzer <code>"session_location_enabled": true</code>, wird die Adresse des Besuchers an <code>ipwho.is</code> gesendet, damit die Admin-Seite eine Stadt anzeigen kann. Standardmäßig aus, und private Adressen werden nie gesendet.</li>
+    <li data-i18n-html="li.site"><strong>Diese Website</strong> nutzt eine cookiefreie Statistik, die wir selbst hosten. Ihre Download-Buttons fragen GitHub aus deinem Browser nach der neuesten Version. Die MWSR-Seite sendet ihre Messung nur, wenn du ihren Button drückst, ohne deine Adresse.</li>
+  </ul>
+
+  <p data-i18n-html="p.contact">Fragen: siehe die <a href="/de/contact.html">Kontaktseite</a>.</p>
+</div>
+</main>
+
+<!-- Footer written by scripts/website/build-site.mjs -->
+<footer id="site-footer"><div class="wrap"><span><img src="/assets/icon-192.png" alt="" width="18" height="18" style="border-radius:4px;vertical-align:-3px;margin-right:6px"> MoonlightWeb · © 2026 Bruno Martin · GPL‑3.0</span><span><a href="/de/">Start</a> · <a href="/de/guides/">Anleitungen</a> · <a href="/de/faq.html">FAQ</a> · <a href="/de/contact.html">Kontakt</a> · <a href="/de/server-access/">Verbinden</a> · <a href="https://github.com/linckosz/moonlight-web" target="_blank" rel="noopener" data-umami-event="github" data-umami-event-loc="footer">GitHub</a> · <a href="https://buymeacoffee.com/brunoocto" target="_blank" rel="noopener" data-umami-event="buy-me-a-coffee" data-umami-event-loc="footer" class="bmc-link"><span data-bmc-logo></span><span>Kaffee</span></a> · <a href="/de/privacy.html">Datenschutz</a></span><span class="foot-play">Spielen auf: <a href="/de/play/chromebook.html">Chromebook</a> · <a href="/de/play/iphone-ipad.html">iPhone und iPad</a> · <a href="/de/play/tv.html">TV</a> · <a href="/de/sunshine-web-client.html">Web-Client für Sunshine</a> · <a href="/de/browser-game-streaming.html">Warum ein Browser-Client</a></span></div></footer>
+
+<script src="/assets/chrome.js?v={{(fileStat `/assets/chrome.js`).ModTime.Unix}}"></script>
+</body>
+</html>

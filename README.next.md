@@ -553,6 +553,19 @@ Install on a small Linux VM with `sudo ./install.sh`, open ports 53 (UDP/TCP), 8
 
 ---
 
+## Code signing policy
+
+Signing through SignPath Foundation is planned. **For now the installers are not signed** (see [Installers & Packaging](docs/wiki/09-Installers-and-Packaging.md)).
+<!-- Once SignPath Foundation has accepted the project, replace the two sentences above with:
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org) -->
+
+- **Author:** [Bruno Martin (linckosz)](https://github.com/linckosz), the maintainer; outside contributions come by pull request.
+- **Reviewer:** Bruno Martin reviews every pull request from outside contributors.
+- **Approver:** Bruno Martin approves every signing request.
+- **Privacy:** [what MoonlightWeb sends, and how to switch it off](https://moonlightweb.top/privacy.html).
+
+---
+
 ## About the author
 
 I'm a web developer with **15+ years** of experience and a long‑time **Moonlight** contributor: I built and upstreamed **Video Super Resolution** (real‑time GPU upscaling) in every major Moonlight client. Moonlight‑Web brings that low‑latency streaming to any browser.

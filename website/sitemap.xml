@@ -254,6 +254,42 @@
     <xhtml:link rel="alternate" hreflang="x-default" href="https://moonlightweb.top/contact.html"/>
   </url>
   <url>
+    <loc>https://moonlightweb.top/privacy.html</loc>
+    <lastmod>2026-11-27</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://moonlightweb.top/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://moonlightweb.top/fr/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://moonlightweb.top/de/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://moonlightweb.top/zh/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://moonlightweb.top/privacy.html"/>
+  </url>
+  <url>
+    <loc>https://moonlightweb.top/fr/privacy.html</loc>
+    <lastmod>2026-11-27</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://moonlightweb.top/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://moonlightweb.top/fr/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://moonlightweb.top/de/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://moonlightweb.top/zh/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://moonlightweb.top/privacy.html"/>
+  </url>
+  <url>
+    <loc>https://moonlightweb.top/de/privacy.html</loc>
+    <lastmod>2026-11-27</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://moonlightweb.top/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://moonlightweb.top/fr/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://moonlightweb.top/de/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://moonlightweb.top/zh/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://moonlightweb.top/privacy.html"/>
+  </url>
+  <url>
+    <loc>https://moonlightweb.top/zh/privacy.html</loc>
+    <lastmod>2026-11-27</lastmod>
+    <xhtml:link rel="alternate" hreflang="en" href="https://moonlightweb.top/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="fr" href="https://moonlightweb.top/fr/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="de" href="https://moonlightweb.top/de/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="zh" href="https://moonlightweb.top/zh/privacy.html"/>
+    <xhtml:link rel="alternate" hreflang="x-default" href="https://moonlightweb.top/privacy.html"/>
+  </url>
+  <url>
     <loc>https://moonlightweb.top/server-access/</loc>
     <lastmod>2026-10-17</lastmod>
     <xhtml:link rel="alternate" hreflang="en" href="https://moonlightweb.top/server-access/"/>
