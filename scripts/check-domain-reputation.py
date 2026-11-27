@@ -14,7 +14,9 @@ What it asks, for every name the stack serves and every address they resolve to:
     refuses large resolvers), SpamEatingMonkey, nordspam;
   - Google Safe Browsing and the Spamhaus domain record;
   - filtering resolvers (Cloudflare security and family, AdGuard, Quad9): each
-    must answer the same addresses as an unfiltered one;
+    must answer the same addresses as an unfiltered one. Each is first asked a
+    control name (example.com): one that does not answer it is unreachable from
+    here, not filtering, and is reported unknown;
   - threat and filter feeds (OpenPhish, Phishing Army, HaGeZi TIF,
     OISD, FireHOL, Spamhaus DROP) and HaGeZi's spam-TLD list, which blocks whole
     TLDs (.top among them) save for an allowlist;
@@ -72,6 +74,9 @@ FILTERING_RESOLVERS = {
 }
 # Unfiltered, asked over plain UDP: no CA store to get wrong.
 REFERENCE = "1.1.1.1"
+# Asked of each filtering resolver before our names. A resolver that refuses
+# it, or gives it no address, refuses this machine, not our names.
+CONTROL = "example.com"
 
 DOMAIN_FEEDS = {
     "OpenPhish": "https://openphish.com/feed.txt",
@@ -276,6 +281,10 @@ def check_spamhaus_record(domain):
         report("OK", domain, f"not abused, score {d.get('score')}")
 
 
+def ask_resolver(fq, doh, udp):
+    return doh_resolve(fq, doh) if doh else udp_resolve(fq, udp)
+
+
 def check_filtering_resolvers(fqdns):
     print("\nFiltering resolvers", flush=True)
     reference = {}
@@ -287,10 +296,19 @@ def check_filtering_resolvers(fqdns):
     if not reference:
         return report("UNKNOWN", "filtering resolvers", "no reference answer to compare with")
     for name, (doh, udp) in FILTERING_RESOLVERS.items():
+        try:
+            rcode, got = ask_resolver(CONTROL, doh, udp)
+        except Exception as e:
+            report("UNKNOWN", name, f"no answer for the control name {CONTROL} ({e}): not checked")
+            continue
+        if rcode != 0 or not got:
+            report("UNKNOWN", name, f"control name {CONTROL} -> rcode {rcode}, "
+                   f"{' '.join(got) or 'no address'}: it refuses this machine, not checked")
+            continue
         bad = []
         for fq, want in reference.items():
             try:
-                rcode, got = doh_resolve(fq, doh) if doh else udp_resolve(fq, udp)
+                rcode, got = ask_resolver(fq, doh, udp)
             except Exception as e:
                 report("UNKNOWN", f"{fq} via {name}", str(e))
                 continue
