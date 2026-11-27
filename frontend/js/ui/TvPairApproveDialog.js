@@ -57,7 +57,7 @@ function problemText(err) {
     // administrator cannot let this TV in: it never says which.
     if (error === 'not_allowed_short') return t('tvPairing.notAllowedShort');
     // The one exception: a device that could let it in, but was paired before
-    // the host kept how each device was paired (v0.4.4). The TV keeps waiting.
+    // the host kept how each device was paired (v0.5.0). The TV keeps waiting.
     if (error === 'reappair_needed') return t('tvPairing.reappairNeeded');
     if (status === 404 || error === 'gone') return t('tvPairing.gone');
     if (error === 'not_allowed' || status === 403) return t('tvPairing.notAllowed');

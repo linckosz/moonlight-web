@@ -77,7 +77,7 @@ Three other cases:
 
 - **A stream that never came back.** When a stream proves its rung, the memory marks it open, and closes it when the stream ends. A page hidden or left closes it too: a tab killed from the background is no crash. Still open at the next launch: the browser or the machine crashed, and that launch starts one rung down.
 - **The host refused the launch.** A rung on trial takes the blame: one rung down, and the launch is tried again. A rung already held is not at fault.
-- **The host crashed** (`worker_crash`, from v0.4.4). A host short of memory crashes at any rung, so its crash says little of this machine. The first crash at a rung is only remembered, for 7 days. A second crash at the same rung, in another stream, costs the rung like any failure, and the count starts over. A host that really cannot carry a rung still brings its client down.
+- **The host crashed** (`worker_crash`, from v0.5.0). A host short of memory crashes at any rung, so its crash says little of this machine. The first crash at a rung is only remembered, for 7 days. A second crash at the same rung, in another stream, costs the rung like any failure, and the count starts over. A host that really cannot carry a rung still brings its client down.
 
 ## 17.5 The guard: the browser's own answer
 

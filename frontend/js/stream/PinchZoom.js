@@ -4,7 +4,7 @@
  *
  * A pinch on a trackpad zooms on the host the way a Windows precision
  * touchpad does it: Ctrl held, and the wheel turned by as much as the fingers
- * spread or close (issue #52, v0.4.4).
+ * spread or close (issue #52, v0.5.0).
  *
  * What the browsers give (M3, Chrome 126 and Safari 27, 13/11/2026):
  * - Chrome sends a pinch as wheel events with ctrlKey set, while no Control

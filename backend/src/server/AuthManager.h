@@ -375,7 +375,7 @@ public:
     bool mayLetInShortly(const QString& token) const;
     /// mayLetInShortly in three answers: Allowed when it holds;
     /// ReappairNeeded when every condition holds but the origin, which is
-    /// SessionOrigin::Unknown exactly (a device paired before v0.4.4, which
+    /// SessionOrigin::Unknown exactly (a device paired before v0.5.0, which
     /// must pair again); Refused for anything else. The route tells
     /// ReappairNeeded apart only after the device's signature is checked.
     enum class ShortApproval

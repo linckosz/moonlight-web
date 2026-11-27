@@ -3757,7 +3757,7 @@ int main(int argc, char* argv[])
             IceMux::setShared(&g_IceMux);
             routerPorts.setStreamMux([&g_IceMux](uint16_t port) { return g_IceMux.holds(port); });
             muxRouter.attach(&muxPorts);
-            // On by default since 0.4.4: said once, with the port and the way
+            // On by default since 0.5.0: said once, with the port and the way
             // to turn it off.
             qInfo().noquote() << QStringLiteral(
                                      "[IceMux] on: streams share UDP port %1; \"ice_udp_mux\": "
@@ -3849,7 +3849,7 @@ int main(int argc, char* argv[])
         names.user = qEnvironmentVariable("USERNAME", qEnvironmentVariable("USER"));
         return names;
     };
-    // Error reports (0.4.4): the error lines of a stream that went wrong, sent
+    // Error reports (0.5.0): the error lines of a stream that went wrong, sent
     // once it has ended, scrubbed as the archive is. Same switch and same rule
     // as the census above — see ErrorReports.h for what leaves and when.
     // The archive's names, plus what leaves without anyone reading it first:

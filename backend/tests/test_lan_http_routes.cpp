@@ -699,7 +699,7 @@ void run_lan_http_routes_tests()
         CHECK_EQ(s.book.pending(s.clock), 1);
     }
 
-    SECTION("LanHttp routes — a device paired before v0.4.4 is told to pair again (TVNAO1 A)");
+    SECTION("LanHttp routes — a device paired before v0.5.0 is told to pair again (TVNAO1 A)");
 
     {
         Server s;

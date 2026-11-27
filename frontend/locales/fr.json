@@ -487,7 +487,7 @@
         "gone": "Cette demande a expiré ou a déjà reçu une réponse. L'appareil affiche de lui-même un nouveau code : scannez-le à nouveau.",
         "notAllowed": "Seul l'administrateur peut laisser entrer cet appareil.",
         "notAllowedShort": "Ce navigateur ne peut pas faire entrer cet appareil. Demandez à l'administrateur de ce serveur.",
-        "reappairNeeded": "Cet appareil a été appairé avant la version 0.4.4. Appairez-le à nouveau pour pouvoir laisser entrer une TV.",
+        "reappairNeeded": "Cet appareil a été appairé avant la version 0.5.0. Appairez-le à nouveau pour pouvoir laisser entrer une TV.",
         "shortHint": "Vous n'êtes pas administrateur : cette TV entrera pour {{hours}} h, jusqu'à {{until}}.",
         "shortHintEarlier": "Elle sera déconnectée plus tôt si cet appareil se déconnecte. L'administrateur en est informé et peut la révoquer.",
         "shortApprove": "Laisser entrer pour {{hours}} h"

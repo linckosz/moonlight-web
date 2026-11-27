@@ -1046,7 +1046,7 @@ AuthManager::ShortApproval AuthManager::shortApprovalState(const QString& token)
         std::end(kShortApproverOrigins))
         return ShortApproval::Allowed;
     // Every condition but its origin holds, and its origin is not known: a
-    // device paired before v0.4.4, which did not keep how a session was made.
+    // device paired before v0.5.0, which did not keep how a session was made.
     // Only that exact case is told to pair again (TVNAO1 A); a known origin
     // outside the list (a certificate, the home screen, the host key) is not.
     return s.origin == SessionOrigin::Unknown ? ShortApproval::ReappairNeeded

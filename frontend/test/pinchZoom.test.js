@@ -2,7 +2,7 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  *
- * A trackpad pinch zooms on the host as Ctrl+wheel (issue #52, v0.4.4): one
+ * A trackpad pinch zooms on the host as Ctrl+wheel (issue #52, v0.5.0): one
  * notch for every 10 % of scale, in high-resolution units, Ctrl held for the
  * whole pinch, never turned around with the wheel, and nothing on a Mac host.
  * Chrome sends a pinch as Ctrl wheel events, Safari as gesture events.

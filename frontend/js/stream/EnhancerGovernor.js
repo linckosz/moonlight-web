@@ -57,7 +57,7 @@
  * names and is read under the same ceiling only: a verdict kept under FSR1 or
  * SGSR1's ceiling is ignored by an MWSR session, nothing to migrate.
  *
- * `mwsr-q` is mwsr's quality mode (v0.4.4: the same kernel and a sharpening
+ * `mwsr-q` is mwsr's quality mode (v0.5.0: the same kernel and a sharpening
  * pass after it, MwsrShader's MWSR_MODES), which 'auto' takes on a computer
  * with a dedicated graphics card: its step down is `mwsr`, the kernel alone,
  * so a card that cannot hold the second pass keeps the upscaler. It sits

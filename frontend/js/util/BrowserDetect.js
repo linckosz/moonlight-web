@@ -907,7 +907,7 @@ function hasWebGpu() {
  *    every GPU measured.
  * The low-memory and TV rules come first, in StreamView.
  *
- * Since v0.4.4 mwsr has two modes (MwsrShader's MWSR_MODES), and the device
+ * Since v0.5.0 mwsr has two modes (MwsrShader's MWSR_MODES), and the device
  * decides which (mwsrQualityWanted): `quality`, the pass 'mwsr-q', on a
  * computer with a dedicated graphics card; `performance`, the kernel alone,
  * everywhere else. An HDR stream keeps the kernel alone on every device: the

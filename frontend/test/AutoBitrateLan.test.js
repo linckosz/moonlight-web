@@ -46,7 +46,7 @@ describe('Auto bitrate, LAN or Internet', () => {
         answer({ viewer_lan: false });
         await MoonlightApp._readStreamLimits();
         expect(MoonlightApp._autoBitrateFor(sdr, 1080, '16:9')).toBe(10000);
-        // A server from before v0.4.4 has no such key.
+        // A server from before v0.5.0 has no such key.
         MoonlightApp._streamLimitsRead = false;
         answer({ stream_fps: 0 });
         await MoonlightApp._readStreamLimits();

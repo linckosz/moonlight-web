@@ -1943,4 +1943,4 @@ La page de comparaison montre les deux modes comme le client les dessine (décis
 
 Le noyau seul à sa loi n'a plus de ligne. Les tableaux fixes de la page et du README de `mwsr/` donnent Performance, le défaut de `mwsr/`, remesuré le 22/11/2026 (`cmp_lab.py`, 75 cas : seul MWSR à ×1,33 bouge) ; le zoom du README montre Qualité, sur la RTX. Un ancien lien qui nomme `b=mwsr` ouvre la ligne Performance ; les mesures envoyées la nomment `mwsr-p`.
 
-Reste : l'essai des deux modes par Bruno sur un stream réel, et, après la v0.4.4, une borne de luminance dans le noyau HDR (J59).
+Reste : l'essai des deux modes par Bruno sur un stream réel, et, après la v0.5.0, une borne de luminance dans le noyau HDR (J59).

@@ -123,7 +123,7 @@ public:
     // false keeps every TCP port closed. Read when each connection is built.
     bool iceTcpPassive() const;
     // ── The UDP ports every stream shares ────────────────────────────────────
-    // JSON bool "ice_udp_mux", DEFAULT true since 0.4.4 on Windows, Linux and
+    // JSON bool "ice_udp_mux", DEFAULT true since 0.5.0 on Windows, Linux and
     // macOS, where a real stream on the shared ports has been seen; false
     // elsewhere (docs/design/ice-mux.md). Not seeded: absent, it follows the
     // code's default, which an update can still change. The admin page's box
@@ -799,7 +799,7 @@ public:
     // written to a viewer's device. What is owed for that is the disclosure and
     // a way to say no, both of which live on the Settings page — not a consent.
     //
-    // The error reports (ErrorReports.h, 0.4.4) are the exception, and are
+    // The error reports (ErrorReports.h, 0.5.0) are the exception, and are
     // sent without a consent all the same, by the owner's decision: their lines
     // are free text. What stands in its place: only error lines, never a whole
     // log; each through the "Download logs" scrubber (addresses, machine and

@@ -830,7 +830,7 @@ deploy/powerdns/
 │   ├── main.go              # least-privilege filtering gateway (stdlib only)
 │   ├── update.go            # release relay + installed-version census (0.3.0+)
 │   ├── session.go           # session census: the shape of a stream (0.3.0+)
-│   ├── errorlog.go          # error reports: scrubbed lines kept a day per file (0.4.4+)
+│   ├── errorlog.go          # error reports: scrubbed lines kept a day per file (0.5.0+)
 │   ├── umami.go             # the one place that posts to Umami
 │   ├── main_test.go         # filter + ownership unit tests
 │   ├── update_test.go       # relay cache, fallback and event-sanitising tests

@@ -115,7 +115,7 @@ describe('TvPairApproveDialog', () => {
         expect(lanHttpApprove).not.toHaveBeenCalled();
     });
 
-    it('tells a device paired before v0.4.4 to pair again, after its answer', async () => {
+    it('tells a device paired before v0.5.0 to pair again, after its answer', async () => {
         lanHttpRequest.mockResolvedValue(SHORT);
         lanHttpApprove.mockRejectedValue(refusal(403, 'reappair_needed'));
         lanHttpRefuse.mockRejectedValue(refusal(403, 'reappair_needed'));

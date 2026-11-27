@@ -88,13 +88,13 @@ struct Approver
     std::optional<HttpResponse> refused; ///< set: turned away, nothing else is looked at
     bool admin = false;                  ///< the administrator: for remember_me_days
     QString token;                       ///< otherwise: the paired device's raw cookie
-    /// A device that could let the TV in, but was paired before v0.4.4
+    /// A device that could let the TV in, but was paired before v0.5.0
     /// (AuthManager::ShortApproval::ReappairNeeded). It sees the request as
     /// any other would; its signed answer is met by reappairNeeded() alone.
     bool reappair = false;
 };
 
-/// What a device paired before v0.4.4 is told once its answer is signed
+/// What a device paired before v0.5.0 is told once its answer is signed
 /// (TVNAO1 A): pair again. The request is never looked at for it, so no try
 /// is spent and the answer is the same whether the id exists or not.
 HttpResponse reappairNeeded()
@@ -110,7 +110,7 @@ HttpResponse reappairNeeded()
 /// Without a live HTTPS session at all, turned away and counted as before;
 /// with one that may not, turned away with notAllowedShort() and not counted,
 /// since that is only a way it may not take. A device that may in all but
-/// its origin, unknown since it was paired before v0.4.4, goes on with
+/// its origin, unknown since it was paired before v0.5.0, goes on with
 /// `reappair` set (TVNAO1 A).
 Approver approverOf(Context& c, const HttpRequest& req)
 {
@@ -332,7 +332,7 @@ void registerLanHttpRoutes(RestRouter& router, AuthManager& authManager, LanHttp
         if (!signedByTheDevice(*c, req, who.token, LanHttpPairing::approveMessage(hostId, id, code),
                                body))
             return notAllowedShort();
-        // Signed by a device paired before v0.4.4: told to pair again, the
+        // Signed by a device paired before v0.5.0: told to pair again, the
         // request left untouched (no try spent), whether it exists or not.
         if (who.reappair) return reappairNeeded();
         const QString approverId = c->auth.sessionIdForToken(who.token);

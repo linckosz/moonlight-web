@@ -127,7 +127,7 @@ inline QString describe(const QJsonObject& msg)
                     .arg(count(c.value(QStringLiteral("sent")), kCountCap))
                     .arg(count(c.value(QStringLiteral("answered")), kCountCap))
                     .arg(count(c.value(QStringLiteral("received")), kCountCap));
-        // Pages from 0.4.4 on read the counters all along the checks, the
+        // Pages from 0.5.0 on read the counters all along the checks, the
         // pairs the browser dropped included (tallyChecks): `seen` is how many
         // pairs they come from, `left` how many the browser still listed at
         // the end. An earlier page sends neither, and its counters are only

@@ -506,7 +506,7 @@ if [ "$EDITION" = dev ]; then
     # under plain port rules of its own: each package adds and takes away only
     # its own, so neither ever closes the other's. An upgrade from a DEV whose
     # profile named 48550:48573 brings the new profile in, and "ufw app update"
-    # moves the rule to it. Up to 0.4.4 this edition wrote
+    # moves the rule to it. Up to 0.4.3 this edition wrote
     # three plain rules (48443/tcp, 48080/tcp, 46064:46095/tcp, numbers
     # production never opens): they go once the named rule is in, never before,
     # so no port closes on the way.

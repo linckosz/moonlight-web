@@ -1,6 +1,6 @@
 # The ports every stream shares (ICE mux)
 
-Status: on by default since 0.4.4 under Windows, Linux and macOS, where a real
+Status: on by default since 0.5.0 under Windows, Linux and macOS, where a real
 stream on the shared ports has been seen, and off elsewhere unless
 settings.json says true. The key is not seeded: absent, it follows the code's
 default.

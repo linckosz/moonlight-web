@@ -487,7 +487,7 @@
         "gone": "This request has expired or was already answered. The device shows a new code by itself: scan it again.",
         "notAllowed": "Only the administrator can let this device in.",
         "notAllowedShort": "This browser cannot let this device in. Ask this server's administrator.",
-        "reappairNeeded": "This device was paired before version 0.4.4. Pair it again to be able to let a TV in.",
+        "reappairNeeded": "This device was paired before version 0.5.0. Pair it again to be able to let a TV in.",
         "shortHint": "You are not the administrator: this TV will be let in for {{hours}} h, until {{until}}.",
         "shortHintEarlier": "It will be signed out earlier if this device signs out. The administrator is told and can revoke it.",
         "shortApprove": "Let in for {{hours}} h"

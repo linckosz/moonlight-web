@@ -144,7 +144,7 @@ void run_app_settings_tests()
     CHECK_EQ(s.debugDevStandardPorts(), false); // and so is this one
     CHECK_EQ(s.debugIceMuxRefuse(), false);     // and this one
     // The streams' shared ports and the router's TCP 443, on by default since
-    // 0.4.4 on the systems where a real stream on them has been seen. What the
+    // 0.5.0 on the systems where a real stream on them has been seen. What the
     // file says wins, and what is not a boolean asks for nothing.
     for (const bool onByDefault : {false, true}) {
         CHECK_EQ(AppSettings::iceUdpMuxChoice(QJsonValue(QJsonValue::Undefined), onByDefault),

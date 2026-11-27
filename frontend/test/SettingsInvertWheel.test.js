@@ -2,7 +2,7 @@
  * MoonlightWeb — TNR suite. Copyright (C) 2026 Bruno Martin.
  * GPLv3 — see repository LICENSE.
  *
- * « Invert mouse wheel scrolling » (issue #52, v0.4.4): off by default, kept
+ * « Invert mouse wheel scrolling » (issue #52, v0.5.0): off by default, kept
  * by this browser alone, and offered only where a page can tell a notched
  * wheel from a trackpad (Chrome, Edge and Safari on a Mac). Elsewhere it shows
  * "(unavailable)", greyed out and unticked, like « Allow tearing ».
