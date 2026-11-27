@@ -23,6 +23,7 @@
 
 #ifdef Q_OS_WIN
 #include "network/AddressRace.h"
+#include "network/Authenticode.h"
 #include "network/SelfUpdater.h"
 #include "network/UpdateApplyRules.h"
 #include "network/UpdateChecker.h"
@@ -114,66 +115,6 @@ QString makeLockedDir(QString* error)
         return {};
     }
     return dir;
-}
-
-// The subject of the certificate that signed this PE file, read straight from
-// its embedded signature. No trust decision here — this is only a name, used
-// to compare the installed exe's signer with the new installer's.
-QString signerSubject(const QString& path)
-{
-    HCERTSTORE store = nullptr;
-    HCRYPTMSG msg = nullptr;
-    if (!CryptQueryObject(CERT_QUERY_OBJECT_FILE, native(path).c_str(),
-                          CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED, CERT_QUERY_FORMAT_FLAG_BINARY,
-                          0, nullptr, nullptr, nullptr, &store, &msg, nullptr))
-        return {};
-
-    QString subject;
-    DWORD len = 0;
-    if (CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, nullptr, &len) && len > 0) {
-        QByteArray buf(int(len), Qt::Uninitialized);
-        if (CryptMsgGetParam(msg, CMSG_SIGNER_CERT_INFO_PARAM, 0, buf.data(), &len)) {
-            auto* info = reinterpret_cast<PCERT_INFO>(buf.data());
-            if (PCCERT_CONTEXT cert =
-                    CertFindCertificateInStore(store, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0,
-                                               CERT_FIND_SUBJECT_CERT, info, nullptr)) {
-                const DWORD n = CertNameToStrW(X509_ASN_ENCODING, &cert->pCertInfo->Subject,
-                                               CERT_X500_NAME_STR, nullptr, 0);
-                std::wstring s(n, L'\0');
-                CertNameToStrW(X509_ASN_ENCODING, &cert->pCertInfo->Subject, CERT_X500_NAME_STR,
-                               s.data(), n);
-                subject = QString::fromWCharArray(s.c_str());
-                CertFreeCertificateContext(cert);
-            }
-        }
-    }
-    CryptMsgClose(msg);
-    CertCloseStore(store, 0);
-    return subject;
-}
-
-// Authenticode, with chains built from the machine's stores only: a root the
-// user added to their own store (which needs no elevation) proves nothing here.
-LONG verifyAuthenticode(const QString& path)
-{
-    const std::wstring w = native(path);
-    WINTRUST_FILE_INFO file{};
-    file.cbStruct = sizeof(file);
-    file.pcwszFilePath = w.c_str();
-    WINTRUST_DATA data{};
-    data.cbStruct = sizeof(data);
-    data.dwUIChoice = WTD_UI_NONE;
-    data.fdwRevocationChecks = WTD_REVOKE_NONE;
-    data.dwUnionChoice = WTD_CHOICE_FILE;
-    data.pFile = &file;
-    data.dwStateAction = WTD_STATEACTION_VERIFY;
-    data.dwProvFlags =
-        WTD_USE_LOCAL_MACHINE_CERTS | WTD_REVOCATION_CHECK_NONE | WTD_DISABLE_MD2_MD4;
-    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-    const LONG result = WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
-    data.dwStateAction = WTD_STATEACTION_CLOSE;
-    WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
-    return result;
 }
 
 // The chain the TLS connection presented, judged again by the machine's chain
@@ -461,16 +402,22 @@ int run()
     // 4. The signer, for a signed install. An unsigned one (a fork, a CI run
     //    without the signing secrets) has nothing to compare with, and the
     //    digest above is the whole proof.
-    const QString installedSigner = signerSubject(QCoreApplication::applicationFilePath());
+    const QString installedSigner =
+        Authenticode::signerSubject(QCoreApplication::applicationFilePath());
     if (!installedSigner.isEmpty()) {
-        if (const LONG trust = verifyAuthenticode(copy); trust != ERROR_SUCCESS)
+        const LONG trust = Authenticode::verify(copy);
+        const QString signer =
+            trust == ERROR_SUCCESS ? Authenticode::signerSubject(copy) : QString();
+        switch (UpdateApplyRules::signerVerdict(installedSigner, trust == ERROR_SUCCESS, signer)) {
+        case UpdateApplyRules::Signer::MayRun: break;
+        case UpdateApplyRules::Signer::NotVerified:
             return refuse(QStringLiteral("the installer's signature does not verify: %1")
                               .arg(lastError(DWORD(trust))));
-        const QString signer = signerSubject(copy);
-        if (signer != installedSigner)
+        case UpdateApplyRules::Signer::OtherSigner:
             return refuse(
                 QStringLiteral("the installer is signed by \"%1\", this install by \"%2\"")
                     .arg(signer, installedSigner));
+        }
     }
 
     // 5. Run it, and get out of its way.

@@ -24,6 +24,13 @@
 
 namespace UpdateApplyRules {
 
+Signer signerVerdict(const QString& installedSigner, bool verified, const QString& installerSigner)
+{
+    if (installedSigner.isEmpty()) return Signer::MayRun;
+    if (!verified) return Signer::NotVerified;
+    return installerSigner == installedSigner ? Signer::MayRun : Signer::OtherSigner;
+}
+
 QString windowsAssetSuffix(bool arm64)
 {
     return arm64 ? QStringLiteral("win-arm64.exe") : QStringLiteral("win-x64.exe");

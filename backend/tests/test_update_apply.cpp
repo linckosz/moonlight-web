@@ -19,8 +19,16 @@
 #include "network/UpdateApplyRules.h"
 #include "test_framework.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTemporaryDir>
+
+#ifdef Q_OS_WIN
+#include "network/Authenticode.h"
+#endif
 
 // The pure half of the elevated update helper: which installer it accepts to
 // run, decided from GitHub's answer alone, and which inherited variables every
@@ -179,6 +187,61 @@ void run_update_apply_tests()
     CHECK(!matches(want, want.size, other).isEmpty());
     CHECK(!matches(want, want.size, QString()).isEmpty()); // unreadable copy
     CHECK(!matches(Installer{}, 0, QString()).isEmpty());  // nothing to compare with
+
+    SECTION("UpdateApply — whose signature lets the installer run");
+    {
+        using UpdateApplyRules::Signer;
+        using UpdateApplyRules::signerVerdict;
+        const QString a = QStringLiteral("CN=Example Signer A, O=A, C=FR");
+        const QString b = QStringLiteral("CN=Example Signer B, O=B, C=FR");
+        // An unsigned install (a fork, a CI run without the signing secrets):
+        // nothing to compare with, the digest is the whole proof.
+        CHECK(signerVerdict(QString(), false, QString()) == Signer::MayRun);
+        CHECK(signerVerdict(QString(), true, b) == Signer::MayRun);
+        // Signed by A, the same A on an installer that verifies: it runs.
+        CHECK(signerVerdict(a, true, a) == Signer::MayRun);
+        // Signed by A, an installer signed by B: refused.
+        CHECK(signerVerdict(a, true, b) == Signer::OtherSigner);
+        // Signed by A, an installer that verifies but names no signer: refused.
+        CHECK(signerVerdict(a, true, QString()) == Signer::OtherSigner);
+        // Signed by A, an installer whose signature does not verify: refused,
+        // whatever subject it claims.
+        CHECK(signerVerdict(a, false, a) == Signer::NotVerified);
+        CHECK(signerVerdict(a, false, b) == Signer::NotVerified);
+    }
+
+    SECTION("UpdateApply — a signed install refuses an unsigned installer");
+    // The installer carries no signature at all: it does not verify, and no
+    // subject can be read from it.
+    CHECK(UpdateApplyRules::signerVerdict(QStringLiteral("CN=Example Signer A"), false,
+                                          QString()) == UpdateApplyRules::Signer::NotVerified);
+
+#ifdef Q_OS_WIN
+    SECTION("Authenticode — who signed a file, read from the file itself");
+    {
+        // This test binary is built here and never signed.
+        const QString self = QCoreApplication::applicationFilePath();
+        CHECK(Authenticode::signerSubject(self).isEmpty());
+        CHECK(Authenticode::verify(self) != 0);
+        // A file made by the test, not a PE at all.
+        QTemporaryDir tmp;
+        CHECK(tmp.isValid());
+        const QString junk = tmp.filePath(QStringLiteral("not-signed.exe"));
+        QFile f(junk);
+        CHECK(f.open(QIODevice::WriteOnly));
+        f.write("MZ this is not an executable");
+        f.close();
+        CHECK(Authenticode::signerSubject(junk).isEmpty());
+        CHECK(Authenticode::verify(junk) != 0);
+        // A system file with an embedded signature (the kernel image carries
+        // its own, unlike most of System32, which is signed by catalog).
+        const QString kernel = QDir(QString::fromLocal8Bit(qgetenv("SystemRoot")))
+                                   .filePath(QStringLiteral("System32/ntoskrnl.exe"));
+        const QString subject = Authenticode::signerSubject(kernel);
+        CHECK(subject.contains(QStringLiteral("Microsoft")));
+        CHECK(Authenticode::verify(kernel) == 0);
+    }
+#endif
 
     SECTION("InheritedEnvironment — what loads code goes, the rest stays");
     using mw::inheritedenv::isCodeLoading;

@@ -437,6 +437,7 @@ add_executable(mw-server
     src/network/SelfUpdater.cpp
     src/network/UpdateApply.cpp
     src/network/UpdateApplyRules.cpp
+    src/network/Authenticode.cpp
     src/network/MdnsAdvertiser.cpp
     src/TrayManager.cpp
     src/ViewerNotices.cpp
@@ -930,8 +931,10 @@ if(MW_BUILD_TESTS)
         MW_INSTALLER_DRIVERS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/installer/drivers")
     target_link_libraries(mw-security-tests PRIVATE Qt6::Core Qt6::Network OpenSSL::Crypto)
     if(WIN32)
-        # DriverPackage.cpp's catalog signer check (CryptQueryObject).
-        target_link_libraries(mw-security-tests PRIVATE Crypt32)
+        # DriverPackage.cpp's catalog signer check (CryptQueryObject), and the
+        # update helper's Authenticode reads (Authenticode.cpp, WinVerifyTrust).
+        target_sources(mw-security-tests PRIVATE src/network/Authenticode.cpp)
+        target_link_libraries(mw-security-tests PRIVATE Crypt32 wintrust)
     endif()
     add_test(NAME security-tnr COMMAND mw-security-tests)
 endif()

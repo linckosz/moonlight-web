@@ -56,4 +56,18 @@ QString expectedInstaller(const QJsonObject& release, const QString& productName
 /// Empty when it is, the reason otherwise.
 QString matches(const Installer& expected, qint64 size, const QString& sha256Hex);
 
+/// Step 4: whether the staged installer may run, by who signed what.
+enum class Signer
+{
+    MayRun,      ///< this install is unsigned (nothing to compare with), or the same signer
+    NotVerified, ///< this install is signed, the installer's Authenticode does not verify
+    OtherSigner, ///< both verify, but the installer is signed by someone else
+};
+
+/// `installedSigner` is the subject that signed the running exe (empty when it
+/// is unsigned), `verified` whether the installer's Authenticode verified, and
+/// `installerSigner` the subject that signed the installer. An unsigned install
+/// runs whatever passed the digest: the digest is then the whole proof.
+Signer signerVerdict(const QString& installedSigner, bool verified, const QString& installerSigner);
+
 } // namespace UpdateApplyRules
