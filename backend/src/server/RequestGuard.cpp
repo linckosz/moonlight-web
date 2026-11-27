@@ -592,21 +592,29 @@ ServerVerdict serverVerdict(const ServerFacts& facts, const QString& accountSid,
     const bool ownerSystem = owner == system;
     if (!ownerMine && !ownerAdmins && !ownerSystem) return ServerVerdict::OtherOwner;
 
-    if (facts.image.isEmpty() || facts.ownImage.isEmpty()) return ServerVerdict::Unreadable;
-    if (facts.image.compare(facts.ownImage, Qt::CaseInsensitive) != 0)
+    if (facts.ownImage.isEmpty()) return ServerVerdict::Unreadable;
+    // The server's executable, when it can be read, is this one.
+    if (!facts.image.isEmpty() && facts.image.compare(facts.ownImage, Qt::CaseInsensitive) != 0)
         return ServerVerdict::OtherProgram;
 
     const QString& user = facts.tokenUserSid;
-    // This account's own server, run as it is or elevated.
-    if (!user.isEmpty() && !accountSid.isEmpty() && user == accountSid && user != system)
+    // This account's own server, run as it is or elevated: its executable is
+    // always this account's to read.
+    if (!user.isEmpty() && !accountSid.isEmpty() && user == accountSid && user != system) {
+        if (facts.image.isEmpty()) return ServerVerdict::Unreadable;
         return ownerMine || ownerAdmins ? ServerVerdict::Ours : ServerVerdict::OtherOwner;
+    }
     // A service: the system's token, or none to read and the system's pipe.
+    // A standard account may open neither its token nor its process, so it is
+    // known from the pipe alone: the system's, served from session 0, by this
+    // install, whose folder only the system and administrators may write to.
     if (user == system || (user.isEmpty() && ownerSystem)) {
         if (!ownerSystem) return ServerVerdict::OtherOwner;
         if (!facts.sessionRead || facts.sessionId != 0) return ServerVerdict::NotSessionZero;
         if (!facts.installDirLocked) return ServerVerdict::NotLocked;
         return ServerVerdict::Ours;
     }
+    if (facts.image.isEmpty()) return ServerVerdict::Unreadable;
     return ServerVerdict::OtherAccount;
 }
 

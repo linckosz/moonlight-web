@@ -2883,7 +2883,9 @@ int main(int argc, char* argv[])
         case LaunchStep::Refuse:
             if (decision.refusal == Refusal::Refused)
                 Logger::warning(QStringLiteral("[LocalChannel] a program that is not this "
-                                               "install's server holds its channel: not started"));
+                                               "install's server holds its channel: not started "
+                                               "(%1)")
+                                    .arg(refusedProbeReason(found)));
             return refuseLaunch(app, decision.refusal, !restart);
         }
     }

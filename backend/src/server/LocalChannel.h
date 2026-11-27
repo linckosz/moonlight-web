@@ -414,6 +414,12 @@ Refusal refusalFor(const Probe& probe);
 /// The two texts, fixed: nothing read from the channel goes into them.
 QString refusalText(Refusal refusal);
 
+/// Why a launch's probe was refused, for its log: one fixed text per stage,
+/// and for a server that is not this install's, the verdict's own fixed text
+/// (RequestGuard::serverVerdictText), else a neutral one. Empty for a probe
+/// that was not refused.
+QString refusedProbeReason(const Probe& probe);
+
 /// How a refusal is told.
 enum class NoticeWay
 {

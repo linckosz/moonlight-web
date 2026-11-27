@@ -322,11 +322,14 @@ struct ServerFacts
     QString pipeOwnerSid; ///< the pipe's owner
     QString tokenUserSid; ///< the server process's account, from its token
     bool sessionRead = false;
-    quint32 sessionId = 0; ///< the server process's session
-    QString image;         ///< the server's executable, its final path
-    QString ownImage;      ///< this program's executable, the same way
-    /// The server image's folder passes checkInstallDir: owned and writable
-    /// by SYSTEM, Administrators and TrustedInstaller alone.
+    quint32 sessionId = 0; ///< the server's session, read from the pipe
+    /// The server's executable, its final path; empty when its process is not
+    /// this account's to open, as a service's is not to a standard account.
+    QString image;
+    QString ownImage; ///< this program's executable, the same way
+    /// This install's folder (this program's, the same file as the server's
+    /// when that one is read) passes checkInstallDir: owned and writable by
+    /// SYSTEM, Administrators and TrustedInstaller alone.
     bool installDirLocked = false;
 };
 
@@ -346,14 +349,18 @@ enum class ServerVerdict
 ///   - the pipe's owner unread → Unreadable; neither this account
 ///     (@p accountSid), its administrators (@p administratorsSid) nor the
 ///     system → OtherOwner;
-///   - either executable unread → Unreadable; not the same file → OtherProgram;
-///   - the server's token read and this account's: Ours, the pipe owned by
-///     this account or, for a server it started elevated, its administrators;
+///   - this program's executable unread → Unreadable; the server's, when read,
+///     not the same file → OtherProgram;
+///   - the server's token read and this account's: its executable read, and
+///     Ours with the pipe owned by this account or, for a server it started
+///     elevated, its administrators;
 ///   - the server's token read and the system's, or not read (a standard
-///     account may not open a service's) with a pipe the system owns: a
-///     service, so the pipe owned by the system exactly, session 0, and a
-///     locked install folder; else OtherOwner, NotSessionZero or NotLocked;
-///   - any other token, or none read without the system as owner → OtherAccount.
+///     account may open neither a service's token nor its process) with a
+///     pipe the system owns: a service, known from the pipe alone, so the
+///     pipe owned by the system exactly, served from session 0, and this
+///     install's folder locked; else OtherOwner, NotSessionZero or NotLocked;
+///   - otherwise, the server's executable unread → Unreadable; any other
+///     token, or none read without the system as owner → OtherAccount.
 /// An administrators' pipe is never enough to find a service.
 ServerVerdict serverVerdict(const ServerFacts& facts, const QString& accountSid,
                             const QString& administratorsSid);

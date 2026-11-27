@@ -141,6 +141,27 @@ void run_svcfind_tests()
         }
     }
 
+    SECTION("SVCFIND — a refused launch's log says why, in fixed words only");
+    {
+        Probe notOurs = probeAt(ProbeOutcome::Refused, ProbeStage::NotOurs);
+        notOurs.why = RequestGuard::serverVerdictText(RequestGuard::ServerVerdict::NotSessionZero);
+        CHECK(refusedProbeReason(notOurs) ==
+              QStringLiteral("the program on the channel is not a service"));
+        // Anything but a verdict's own text stays out of the log.
+        notOurs.why = QStringLiteral("C:\\Users\\x\\evil.exe S-1-5-21-1-2-3-1001");
+        CHECK(refusedProbeReason(notOurs) == QStringLiteral("not this install's server"));
+        Probe notOpened = probeAt(ProbeOutcome::Refused, ProbeStage::NotOpened);
+        notOpened.why = QStringLiteral("the channel cannot be opened (some system text)");
+        CHECK(refusedProbeReason(notOpened) ==
+              QStringLiteral("the channel could not be opened in time"));
+        CHECK(refusedProbeReason(probeAt(ProbeOutcome::Refused, ProbeStage::NoAnswer)) ==
+              QStringLiteral("this install's server did not answer in time"));
+        CHECK(
+            refusedProbeReason(probeAt(ProbeOutcome::None, ProbeStage::NothingListens)).isEmpty());
+        CHECK(
+            refusedProbeReason(probeAt(ProbeOutcome::Found, ProbeStage::Answered, 200)).isEmpty());
+    }
+
     SECTION("SVCFIND — a launch's way: a service or a restart never doubles a server, and a "
             "service goes on beside a squatter");
     {

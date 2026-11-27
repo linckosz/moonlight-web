@@ -1409,10 +1409,45 @@ void run_request_guard_tests()
             f.pipeOwnerSid.clear();
             rows.push_back({"the pipe's owner unread", f, ServerVerdict::Unreadable});
         }
+        // A standard account may not open a service's process: the pipe alone.
         {
             ServerFacts f = service();
             f.image.clear();
-            rows.push_back({"a service whose image is unread", f, ServerVerdict::Unreadable});
+            rows.push_back({"a service whose image is unread", f, ServerVerdict::Ours});
+        }
+        {
+            ServerFacts f = service();
+            f.image.clear();
+            f.sessionId = 2;
+            rows.push_back(
+                {"image unread, a system pipe in session 2", f, ServerVerdict::NotSessionZero});
+        }
+        {
+            ServerFacts f = service();
+            f.image.clear();
+            f.sessionRead = false;
+            rows.push_back(
+                {"image unread, the pipe's session unread", f, ServerVerdict::NotSessionZero});
+        }
+        {
+            ServerFacts f = service();
+            f.image.clear();
+            f.installDirLocked = false;
+            rows.push_back(
+                {"image unread, this install's folder not locked", f, ServerVerdict::NotLocked});
+        }
+        {
+            ServerFacts f = service();
+            f.image.clear();
+            f.pipeOwnerSid = other;
+            rows.push_back({"image unread, another account's pipe", f, ServerVerdict::OtherOwner});
+        }
+        {
+            ServerFacts f = service();
+            f.image.clear();
+            f.pipeOwnerSid = admins;
+            rows.push_back({"image unread, an administrators' pipe, token unread", f,
+                            ServerVerdict::Unreadable});
         }
         {
             ServerFacts f = mine();

@@ -347,6 +347,29 @@ QString refusalText(Refusal refusal)
     return QString();
 }
 
+QString refusedProbeReason(const Probe& probe)
+{
+    if (probe.outcome != ProbeOutcome::Refused) return QString();
+    switch (probe.stage) {
+    case ProbeStage::NotOpened: return QStringLiteral("the channel could not be opened in time");
+    case ProbeStage::NoAnswer:
+        return QStringLiteral("this install's server did not answer in time");
+    case ProbeStage::NotOurs:
+        // Only a verdict's own text: whatever else came with the probe stays out.
+        for (RequestGuard::ServerVerdict v :
+             {RequestGuard::ServerVerdict::OtherOwner, RequestGuard::ServerVerdict::OtherProgram,
+              RequestGuard::ServerVerdict::OtherAccount,
+              RequestGuard::ServerVerdict::NotSessionZero, RequestGuard::ServerVerdict::NotLocked,
+              RequestGuard::ServerVerdict::Unreadable}) {
+            if (probe.why == RequestGuard::serverVerdictText(v)) return probe.why;
+        }
+        return QStringLiteral("not this install's server");
+    case ProbeStage::NothingListens:
+    case ProbeStage::Answered: break;
+    }
+    return QString();
+}
+
 LaunchDecision launchDecision(const Probe& probe, bool serviceLaunch, bool restart)
 {
     switch (probe.outcome) {
@@ -915,28 +938,33 @@ QString tokenUserOf(DWORD pid)
 }
 
 /// What can be read of the server behind @p pipe (RequestGuard::ServerFacts),
-/// all of it from the pipe and from the process it names.
+/// all of it from the pipe and from the process it names. A standard account
+/// may open neither a service's token nor its process: what only they would
+/// tell is then left empty, and the pipe says the rest.
 RequestGuard::ServerFacts serverFactsOf(HANDLE pipe)
 {
     RequestGuard::ServerFacts facts;
     facts.pipeOwnerSid = ownerSidOf(pipe);
     facts.ownImage = ownImage();
-    ULONG pid = 0;
-    if (!::GetNamedPipeServerProcessId(pipe, &pid)) return facts;
-    facts.tokenUserSid = tokenUserOf(pid);
-    DWORD session = 0;
-    if (::ProcessIdToSessionId(pid, &session)) {
+    // The server's session from the pipe itself, not from its process.
+    ULONG session = 0;
+    if (::GetNamedPipeServerSessionId(pipe, &session)) {
         facts.sessionRead = true;
         facts.sessionId = session;
     }
+    ULONG pid = 0;
+    if (!::GetNamedPipeServerProcessId(pipe, &pid)) return facts;
+    facts.tokenUserSid = tokenUserOf(pid);
     facts.image = finalPathOf(imageOf(pid));
-    // Only a service's folder needs to be one nobody else may write to.
+    // Only a service's folder needs to be one nobody else may write to. It is
+    // this install's, which a launch can always read; the server's executable,
+    // when read, is the same file (serverVerdict, else OtherProgram).
     const bool maybeService = facts.tokenUserSid == QLatin1String(RequestGuard::kSystemSid) ||
                               (facts.tokenUserSid.isEmpty() &&
                                facts.pipeOwnerSid == QLatin1String(RequestGuard::kSystemSid));
-    if (maybeService && !facts.image.isEmpty())
+    if (maybeService && !facts.ownImage.isEmpty())
         facts.installDirLocked =
-            mw::place::win::checkInstallDir(QFileInfo(facts.image).absolutePath(), {}) ==
+            mw::place::win::checkInstallDir(QFileInfo(facts.ownImage).absolutePath(), {}) ==
             mw::place::win::Check::Ok;
     return facts;
 }
