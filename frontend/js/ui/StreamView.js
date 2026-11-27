@@ -9749,6 +9749,9 @@ export class StreamView {
                 if (e.movementX || dy) {
                     this._sendRelativeMouse(e.movementX, dy);
                     this._noteMouseSent(e);
+                    // The host's pointer moves by deltas again: its reports
+                    // place the drawing (_clientCursorHostSaid).
+                    this._steeredAbsolute = false;
                     // Where the page draws the host's pointer (a tablet), that
                     // drawing is the only thing to aim with: move it by the
                     // same motion the host was sent (IPADAIM, 15/11/2026).
@@ -10422,6 +10425,9 @@ export class StreamView {
         const s = this._hostCursorScale > 0 ? this._hostCursorScale : 1;
         p.x = Math.max(0, Math.min(fw - 1, p.x + cssDx * sens * gain * s));
         p.y = Math.max(0, Math.min(fh - 1, p.y + cssDy * sens * gain * s));
+        // The host's pointer is put exactly here: until the mouse sends deltas
+        // again, a report of its position can only be late (IPADJUMPFIX).
+        this._steeredAbsolute = true;
         this.webrtc.send({
             type: 'mousemove',
             x: Math.round(p.x),
@@ -10475,12 +10481,16 @@ export class StreamView {
         // reports the deltas move it (see _onGamingMouseMove). Only while the
         // moves go out as deltas: in between they are absolute again
         // (_lookFreeByDeltas), and the drawing follows the viewer's pointer;
-        // before the first move has said which, the deltas are assumed.
+        // before the first move has said which, the deltas are assumed. Not
+        // after a finger or the remote has put the host's pointer at an exact
+        // point (_steeredAbsolute): a report a round trip old would pull the
+        // drawing back behind the finger (IPADJUMPFIX, iPad, 27/11/2026).
         const lookFree =
             this._gamingMode &&
             this._pointerLockRefused &&
             this._lockFreeLook &&
-            this._lookFreeDeltas !== false;
+            this._lookFreeDeltas !== false &&
+            !this._steeredAbsolute;
         if (this._clientCursorPos && !lookFree) return;
         if (msg.visible === false) return;
         let x = Number(msg.x),
@@ -14401,6 +14411,7 @@ export class StreamView {
             const fw = this._pictureWidth(),
                 fh = this._pictureHeight();
             if (p && fw > 0 && fh > 0) {
+                this._steeredAbsolute = true; // as the finger: see _clientCursorSteer
                 this._sendToHost({
                     type: 'mousemove',
                     x: Math.round(p.x),

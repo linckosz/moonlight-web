@@ -164,3 +164,72 @@ describe('lock-free look follows whether the host shows its pointer', () => {
         expect(sent[3]).toMatchObject({ x: 300, y: 200 });
     });
 });
+
+/**
+ * IPADJUMPFIX: a finger (or a remote) puts the host's pointer at an exact
+ * point. A report of its position then comes a round trip late, and putting
+ * the drawing back on it made the pointer jump back behind the finger at every
+ * report (iPad, gaming mode, lock refused, 27/11/2026). Only the mouse's
+ * deltas let the host's word place the drawing again.
+ */
+describe('a finger that steers the pointer is not pulled back by late reports', () => {
+    function steering() {
+        const r = view();
+        r.v._pointerLockRefused = true;
+        r.v.webrtc = { send: (m) => r.sent.push(m) };
+        r.v._clientCursorHostSaid({ x: 960, y: 540, visible: true });
+        r.sent.length = 0;
+        return r;
+    }
+
+    it('keeps the drawing where the finger put it before any mouse move', () => {
+        const { v, sent } = steering();
+        v._clientCursorSteer(100, 0, 1);
+        const at = { ...v._clientCursorPos };
+        expect(at.x).toBeGreaterThan(960);
+        expect(sent).toEqual([
+            {
+                type: 'mousemove',
+                x: Math.round(at.x),
+                y: 540,
+                referenceWidth: 1920,
+                referenceHeight: 1080,
+            },
+        ]);
+        // The host's word from before the move.
+        v._clientCursorHostSaid({ x: 960, y: 540, visible: true });
+        expect(v._clientCursorPos).toEqual(at);
+    });
+
+    it('keeps it there after the mouse turned a camera with deltas', () => {
+        const { v } = steering();
+        v._hostDrawsCursor = true;
+        v._hostCursorVisible = false;
+        v._onGamingMouseMove({ movementX: 7, movementY: 3, clientX: 0, clientY: 0, buttons: 0 });
+        expect(v._lookFreeDeltas).toBe(true);
+        v._clientCursorSteer(0, 80, 1);
+        const at = { ...v._clientCursorPos };
+        v._clientCursorHostSaid({ x: 967, y: 543, visible: true });
+        expect(v._clientCursorPos).toEqual(at);
+        // The mouse's own state is left as it was.
+        expect(v._lookFreeDeltas).toBe(true);
+    });
+
+    it("lets the host's word place the drawing again once the mouse sends deltas", () => {
+        const { v } = steering();
+        v._clientCursorSteer(100, 0, 1);
+        v._onGamingMouseMove({ movementX: 30, movementY: 0, clientX: 0, clientY: 0, buttons: 0 });
+        v._clientCursorHostSaid({ x: 1100, y: 540, visible: true });
+        expect(v._clientCursorPos).toEqual({ x: 1100, y: 540 });
+    });
+
+    it('does the same for a remote that steers the pointer', () => {
+        const { v, sent } = steering();
+        v._remotePointerMove(50, 0);
+        expect(sent).toEqual([
+            { type: 'mousemove', x: 1010, y: 540, referenceWidth: 1920, referenceHeight: 1080 },
+        ]);
+        v._clientCursorHostSaid({ x: 960, y: 540, visible: true });
+        expect(v._clientCursorPos).toEqual({ x: 1010, y: 540 });
+    });
+});
