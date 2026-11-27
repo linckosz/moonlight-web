@@ -16,6 +16,7 @@
  */
 
 #include "test_framework.h"
+#include "common/Logger.h"
 #include "server/CertManager.h"
 
 #include <QDateTime>
@@ -361,5 +362,177 @@ void run_cert_manager_tests()
                                             nullptr, halfPair));
         CHECK(!CertManager::pairFromSources("MW_SFX_TEST_UNSET", keyBuild, QString(), &chain, &key,
                                             nullptr, halfPair));
+    }
+
+    SECTION("CertManager: a pair that is there is never written over");
+    {
+        // Temporary folders only: never the runner's AppData, never a profile.
+        QTemporaryDir tmp;
+        CHECK(tmp.isValid());
+        QStringList warnings;
+        Logger::instance()->setTap([&warnings](Logger::Level level, const QString& line) {
+            if (level == Logger::Warning) warnings << line;
+        });
+        const QString kept = QStringLiteral("the existing files were left as they are");
+        auto write = [](const QString& path, const QByteArray& bytes) {
+            QFile f(path);
+            return f.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                   f.write(bytes) == bytes.size();
+        };
+
+        // A damaged pair: neither file can be read as PEM.
+        const QString damaged = tmp.path() + "/damaged/";
+        QDir().mkpath(damaged);
+        const QByteArray badCert =
+            "-----BEGIN CERTIFICATE-----\nnot base64 !\n-----END CERTIFICATE-----\n";
+        const QByteArray badKey =
+            "-----BEGIN PRIVATE KEY-----\nnot a key\n-----END PRIVATE KEY-----\n";
+        CHECK(write(damaged + "cert.pem", badCert));
+        CHECK(write(damaged + "key.pem", badKey));
+        warnings.clear();
+        CertManager d;
+        CHECK(d.selfSignedFallback(damaged, true, {damaged}));
+        CHECK(readAll(damaged + "cert.pem") == badCert);
+        CHECK(readAll(damaged + "key.pem") == badKey);
+        CHECK(QDir(damaged).entryList(QDir::Files).size() == 2);
+        CHECK(!d.publicConfig().localCertificate().isNull());
+        CHECK(!d.publicConfig().privateKey().isNull());
+        CHECK(warnings.size() == 1);
+        CHECK(warnings.value(0).contains("/damaged/cert.pem"));
+        CHECK(warnings.value(0).contains("no certificate that can be read"));
+        CHECK(warnings.value(0).contains(kept));
+        CHECK(!warnings.value(0).contains("PRIVATE KEY"));
+
+        // A key that is not the certificate's own: both real, both kept.
+        const QString mismatch = tmp.path() + "/mismatch/";
+        const QString other = tmp.path() + "/other/";
+        QDir().mkpath(mismatch);
+        QDir().mkpath(other);
+        CHECK(makePair(mismatch + "cert.pem", mismatch + "key.pem", "a.example"));
+        CHECK(makePair(other + "cert.pem", other + "key.pem", "b.example"));
+        CHECK(write(mismatch + "key.pem", readAll(other + "key.pem")));
+        const QByteArray certM = readAll(mismatch + "cert.pem");
+        const QByteArray keyM = readAll(mismatch + "key.pem");
+        warnings.clear();
+        CertManager m;
+        CHECK(m.selfSignedFallback(mismatch, true, {mismatch}));
+        CHECK(readAll(mismatch + "cert.pem") == certM);
+        CHECK(readAll(mismatch + "key.pem") == keyM);
+        CHECK(QDir(mismatch).entryList(QDir::Files).size() == 2);
+        CHECK(m.publicConfig().localCertificate() !=
+              QSslCertificate::fromData(certM, QSsl::Pem).value(0));
+        CHECK(warnings.size() == 1);
+        CHECK(warnings.value(0).contains("no private key beside it matches it"));
+        CHECK(warnings.value(0).contains(kept));
+
+        // A cert.pem that cannot even be opened (a folder of that name) still
+        // counts as someone's.
+        const QString odd = tmp.path() + "/odd/";
+        QDir().mkpath(odd + "cert.pem");
+        warnings.clear();
+        CertManager o;
+        CHECK(o.selfSignedFallback(odd, true, {odd}));
+        CHECK(QFileInfo(odd + "cert.pem").isDir());
+        CHECK(!QFileInfo::exists(odd + "key.pem"));
+        CHECK(warnings.size() == 1);
+        CHECK(warnings.value(0).contains(kept));
+
+        // A pair elsewhere among the folders the scan reads: nothing is written
+        // where it would hide it at the next start.
+        const QString empty = tmp.path() + "/empty/";
+        QDir().mkpath(empty);
+        warnings.clear();
+        CertManager e;
+        CHECK(e.selfSignedFallback(empty, true, {empty, other}));
+        CHECK(QDir(empty).entryList(QDir::Files).isEmpty());
+        CHECK(warnings.size() == 1);
+        CHECK(warnings.value(0).contains("/other/"));
+
+        // No TLS backend in Qt (simulated): HTTPS off, the files untouched.
+        warnings.clear();
+        CertManager n;
+        CHECK(!n.selfSignedFallback(mismatch, false, {mismatch}));
+        CHECK(readAll(mismatch + "cert.pem") == certM);
+        CHECK(readAll(mismatch + "key.pem") == keyM);
+        CHECK(QDir(mismatch).entryList(QDir::Files).size() == 2);
+        CHECK(warnings.size() == 1);
+        CHECK(warnings.value(0).contains("no TLS backend"));
+        CHECK(warnings.value(0).contains(kept));
+
+        // No pair at all (the local pair is not one): one is made and kept.
+        const QString fresh = tmp.path() + "/fresh/";
+        QDir().mkpath(fresh);
+        CHECK(makePair(fresh + "local-cert.pem", fresh + "local-key.pem", "local.example"));
+        CHECK(CertManager::existingPairFile(fresh, {fresh}).isEmpty());
+        CertManager f;
+        CHECK(f.selfSignedFallback(fresh, true, {fresh}));
+        CHECK(certMatchesKey(fresh + "cert.pem", fresh + "key.pem"));
+        CHECK(!f.publicConfig().localCertificate().isNull());
+        // From then on it is a pair that is there.
+        CHECK(CertManager::existingPairFile(fresh, {fresh}).endsWith("/fresh/cert.pem"));
+
+        // A pair given by cert_pem / cert_key that cannot be used: no scan, and
+        // nothing written in its place where the server keeps its own.
+        const QString own = CertManager::selfSignedDir();
+        const bool ownCert = QFileInfo::exists(own + "cert.pem");
+        const bool ownKey = QFileInfo::exists(own + "key.pem");
+        warnings.clear();
+        CertManager c;
+        c.setCertPem(mismatch + "cert.pem");
+        c.setCertKey(mismatch + "key.pem");
+        CHECK(c.loadCert());
+        CHECK(readAll(mismatch + "cert.pem") == certM);
+        CHECK(readAll(mismatch + "key.pem") == keyM);
+        CHECK(QFileInfo::exists(own + "cert.pem") == ownCert);
+        CHECK(QFileInfo::exists(own + "key.pem") == ownKey);
+        CHECK(!c.publicConfig().localCertificate().isNull());
+        CHECK(warnings.size() == 1);
+        CHECK(warnings.value(0).contains("configured by cert_pem"));
+        CHECK(warnings.value(0).contains("does not match"));
+        CHECK(warnings.value(0).contains(kept));
+
+        // The same with the PEM itself in a variable: named, never quoted.
+        qputenv("MW_CK_TEST_CERT", badCert);
+        qunsetenv("MW_CK_TEST_KEY");
+        warnings.clear();
+        CertManager v;
+        v.setCertPem("MW_CK_TEST_CERT");
+        v.setCertKey("MW_CK_TEST_KEY");
+        CHECK(v.loadCert());
+        CHECK(QFileInfo::exists(own + "cert.pem") == ownCert);
+        CHECK(QFileInfo::exists(own + "key.pem") == ownKey);
+        CHECK(warnings.size() == 1);
+        CHECK(warnings.value(0).contains("MW_CK_TEST_CERT"));
+        CHECK(!warnings.value(0).contains("not base64"));
+        CHECK(warnings.value(0).contains(kept));
+        qunsetenv("MW_CK_TEST_CERT");
+
+        // cert_pem at its default and unset, a key in the key's variable: no
+        // certificate was given, and the scan goes on (a key in MW_CERT_KEY
+        // can be the one of a certificate it finds).
+        {
+            const QByteArray savedPem = qgetenv("MW_CERT_PEM");
+            qunsetenv("MW_CERT_PEM");
+            qputenv("MW_CK_TEST_KEY", readAll(other + "key.pem"));
+            CertManager::SourceFailure failure = CertManager::SourceFailure::None;
+            QString why;
+            QList<QSslCertificate> chain;
+            QSslKey key;
+            CHECK(!CertManager::pairFromSources("MW_CERT_PEM", "MW_CK_TEST_KEY", QString(), &chain,
+                                                &key, nullptr, CertManager::BuiltInPair(), &failure,
+                                                &why));
+            CHECK(failure == CertManager::SourceFailure::NotGiven);
+            // cert_pem given (another variable, set) and unusable: Unusable.
+            qputenv("MW_CK_TEST_CERT", badCert);
+            CHECK(!CertManager::pairFromSources("MW_CK_TEST_CERT", "MW_CK_TEST_KEY", QString(),
+                                                &chain, &key, nullptr, CertManager::BuiltInPair(),
+                                                &failure, &why));
+            CHECK(failure == CertManager::SourceFailure::Unusable);
+            qunsetenv("MW_CK_TEST_CERT");
+            qunsetenv("MW_CK_TEST_KEY");
+            if (!savedPem.isEmpty()) qputenv("MW_CERT_PEM", savedPem);
+        }
+
+        Logger::instance()->setTap({});
     }
 }

@@ -28,6 +28,7 @@
 #include <QNetworkInterface>
 #include <QRandomGenerator>
 #include <QSslCertificate>
+#include <QSslSocket>
 #include <QStandardPaths>
 #include <functional>
 
@@ -99,7 +100,7 @@ static QSslKey keyFromPem(const QByteArray& pem)
 /// is PEM, else the content of the file it names when that is a regular file
 /// of at most kMaxPemFileBytes holding PEM. @p filePath gets that file's path.
 /// A variable that is set but is neither is reported by its name only.
-static QByteArray pemFromEnv(const QString& name, QString* filePath = nullptr)
+static QByteArray pemFromEnv(const QString& name, QString* filePath = nullptr, bool quiet = false)
 {
     if (name.isEmpty()) return {};
     const QByteArray value = qgetenv(name.toUtf8().constData());
@@ -112,9 +113,10 @@ static QByteArray pemFromEnv(const QString& name, QString* filePath = nullptr)
         return data;
     }
     data.fill('\0');
-    Logger::warning(QString("[CERT] %1 is set in this server's environment but is neither PEM "
-                            "nor a readable file: ignored")
-                        .arg(name));
+    if (!quiet)
+        Logger::warning(QString("[CERT] %1 is set in this server's environment but is neither PEM "
+                                "nor a readable file: ignored")
+                            .arg(name));
     return {};
 }
 
@@ -141,23 +143,37 @@ static bool keyMatchesCert(const QSslCertificate& cert, const QSslKey& key)
     return match;
 }
 
-/// Generate a self-signed RSA-2048 certificate + private key entirely via
-/// libcrypto — no external openssl.exe dependency (CI artifacts run on clean
-/// machines without OpenSSL on PATH). `sans` entries use the OpenSSL v3 conf
-/// syntax ("DNS:localhost", "IP:127.0.0.1", ...). Writes PEM files.
-///
-/// With @p reuseKey, a usable key already at @p keyPath signs the new
-/// certificate and its file is left untouched (@p keptKey reports it); a key
-/// that cannot be read is replaced by a fresh one.
-static bool generateSelfSignedToFiles(const QString& certPath, const QString& keyPath,
-                                      const QStringList& sans, const QString& commonName,
-                                      bool reuseKey = false, bool* keptKey = nullptr)
+/// What @p dump writes into a memory BIO, as PEM bytes; empty when it fails.
+static QByteArray pemFromBio(const std::function<int(BIO*)>& dump)
 {
-    bool ok = false;
-    EVP_PKEY* pkey = reuseKey ? readPrivateKeyFile(keyPath) : nullptr;
-    const bool kept = pkey != nullptr;
-    if (keptKey) *keptKey = kept;
-    if (!pkey) pkey = EVP_RSA_gen(2048);
+    BIO* bio = BIO_new(BIO_s_mem());
+    if (!bio) return {};
+    QByteArray pem;
+    if (dump(bio) == 1) {
+        char* data = nullptr;
+        const long len = BIO_get_mem_data(bio, &data);
+        if (len > 0 && data) pem = QByteArray(data, static_cast<qsizetype>(len));
+    }
+    BIO_free(bio);
+    return pem;
+}
+
+/// Write @p pem to @p path through QFile (it handles the unicode paths that
+/// BIO_new_file mishandles on Windows).
+static bool writePemFile(const QString& path, const QByteArray& pem)
+{
+    if (pem.isEmpty()) return false;
+    QFile f(path);
+    return f.open(QIODevice::WriteOnly | QIODevice::Truncate) && f.write(pem) == pem.size();
+}
+
+/// A self-signed certificate for @p pkey, as PEM: RSA or EC, one year, CN
+/// @p commonName, and @p sans in the OpenSSL v3 conf syntax ("DNS:localhost",
+/// "IP:127.0.0.1", ...). Empty when libcrypto fails.
+static QByteArray selfSignedCertPem(EVP_PKEY* pkey, const QStringList& sans,
+                                    const QString& commonName)
+{
+    QByteArray pem;
     X509* x509 = X509_new();
 
     do {
@@ -189,38 +205,59 @@ static bool generateSelfSignedToFiles(const QString& certPath, const QString& ke
         }
 
         if (!X509_sign(x509, pkey, EVP_sha256())) break;
-
-        // Serialize to PEM in memory, then write via QFile (handles unicode paths
-        // that BIO_new_file mishandles on Windows).
-        auto writePem = [](const QString& path, const std::function<int(BIO*)>& dump) -> bool {
-            BIO* bio = BIO_new(BIO_s_mem());
-            if (!bio) return false;
-            bool wrote = false;
-            if (dump(bio) == 1) {
-                char* data = nullptr;
-                long len = BIO_get_mem_data(bio, &data);
-                if (len > 0 && data) {
-                    QFile f(path);
-                    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-                        wrote = (f.write(data, len) == len);
-                }
-            }
-            BIO_free(bio);
-            return wrote;
-        };
-
-        if (!kept && !writePem(keyPath, [pkey](BIO* b) {
-                return PEM_write_bio_PrivateKey(b, pkey, nullptr, nullptr, 0, nullptr, nullptr);
-            }))
-            break;
-        if (!writePem(certPath, [x509](BIO* b) { return PEM_write_bio_X509(b, x509); })) break;
-
-        ok = true;
+        pem = pemFromBio([x509](BIO* b) { return PEM_write_bio_X509(b, x509); });
     } while (false);
 
     if (x509) X509_free(x509);
+    return pem;
+}
+
+/// @p pkey's private key as PEM, unencrypted. The caller wipes it after use.
+static QByteArray privateKeyPem(EVP_PKEY* pkey)
+{
+    if (!pkey) return {};
+    return pemFromBio([pkey](BIO* b) {
+        return PEM_write_bio_PrivateKey(b, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+    });
+}
+
+/// Generate a self-signed RSA-2048 certificate + private key entirely via
+/// libcrypto — no external openssl.exe dependency (CI artifacts run on clean
+/// machines without OpenSSL on PATH). Writes PEM files.
+///
+/// With @p reuseKey, a usable key already at @p keyPath signs the new
+/// certificate and its file is left untouched (@p keptKey reports it); a key
+/// that cannot be read is replaced by a fresh one.
+static bool generateSelfSignedToFiles(const QString& certPath, const QString& keyPath,
+                                      const QStringList& sans, const QString& commonName,
+                                      bool reuseKey = false, bool* keptKey = nullptr)
+{
+    EVP_PKEY* pkey = reuseKey ? readPrivateKeyFile(keyPath) : nullptr;
+    const bool kept = pkey != nullptr;
+    if (keptKey) *keptKey = kept;
+    if (!pkey) pkey = EVP_RSA_gen(2048);
+    const QByteArray certPem = selfSignedCertPem(pkey, sans, commonName);
+    bool ok = !certPem.isEmpty();
+    if (ok && !kept) {
+        QByteArray keyPem = privateKeyPem(pkey);
+        ok = writePemFile(keyPath, keyPem);
+        keyPem.fill('\0');
+    }
+    ok = ok && writePemFile(certPath, certPem);
     if (pkey) EVP_PKEY_free(pkey);
     return ok;
+}
+
+/// The same as generateSelfSignedToFiles() with a fresh key, kept in memory
+/// only: @p certPem and @p keyPem get the PEM (the caller wipes the key).
+static bool generateSelfSignedInMemory(const QStringList& sans, const QString& commonName,
+                                       QByteArray* certPem, QByteArray* keyPem)
+{
+    EVP_PKEY* pkey = EVP_RSA_gen(2048);
+    *certPem = selfSignedCertPem(pkey, sans, commonName);
+    *keyPem = certPem->isEmpty() ? QByteArray() : privateKeyPem(pkey);
+    if (pkey) EVP_PKEY_free(pkey);
+    return !certPem->isEmpty() && !keyPem->isEmpty();
 }
 
 /// Whether the local certificate already on disk can be served again as is: it
@@ -310,19 +347,164 @@ static QList<QHostAddress> getPrivateLanAddresses()
     return result;
 }
 
+/// The names of the SANs the server's own self-signed certificates carry:
+/// localhost, loopback, and every private address this machine has now, so
+/// that every local way in gets a certificate naming it and the browser shows
+/// a single "untrusted CA" warning, never a hostname mismatch.
+static QStringList selfSignedSans()
+{
+    QStringList sans;
+    sans << "DNS:localhost"
+         << "DNS:*.local"
+         << "IP:127.0.0.1"
+         << "IP:::1";
+    for (const QHostAddress& addr : getPrivateLanAddresses()) {
+        // Strip scope ID from IPv6 addresses (e.g. "%ethernet_32770")
+        // — OpenSSL SAN entries only accept bare IPv6 addresses.
+        QHostAddress clean(addr);
+        if (addr.protocol() == QAbstractSocket::IPv6Protocol) clean.setScopeId(QString());
+        sans << "IP:" + clean.toString();
+    }
+    return sans;
+}
+
+/// What is wrong with the certificate or key file at @p path that the scan
+/// could not use. Never anything of the key itself.
+static QString pairFileProblem(const QString& path)
+{
+    const QFileInfo fi(path);
+    if (!fi.isFile()) return QStringLiteral("it is not a regular file");
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return "it cannot be read (" + f.errorString() + ")";
+    QByteArray data = f.read(kMaxPemFileBytes);
+    f.close();
+    QString why;
+    if (data.contains("PRIVATE KEY") && !data.contains("CERTIFICATE")) {
+        why = keyFromPem(data).isNull()
+                  ? QStringLiteral("it holds no private key that can be read")
+                  : QStringLiteral("no certificate that can be read goes with this key");
+    } else if (QSslCertificate::fromData(data, QSsl::Pem).isEmpty()) {
+        why = QStringLiteral("it holds no certificate that can be read");
+    } else {
+        why = QStringLiteral("no private key beside it matches it");
+    }
+    data.fill('\0');
+    return why;
+}
+
 // --- CertManager ---------------------------------------------------------------
 
-QString CertManager::findCertDir()
+QString CertManager::selfSignedDir()
 {
-    // Build list of root directories to scan
-    QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QStringList candidates = {
-        appData + "/cert/",
+    // AppData for writability — Program Files is read-only for MSI installs.
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
+}
+
+QStringList CertManager::certRoots()
+{
+    return {
+        selfSignedDir(),
         QString(CERT_DIR),
         QCoreApplication::applicationDirPath() + "/cert/",
         QCoreApplication::applicationDirPath() + "/../cert/",
         QString(FRONTEND_DIR) + "/../backend/cert/",
     };
+}
+
+QString CertManager::existingPairFile(const QString& certDir, const QStringList& roots)
+{
+    // The two files the server writes itself count whatever they hold, even
+    // when they cannot be opened at all: they are someone's.
+    for (const QString& name : {QStringLiteral("cert.pem"), QStringLiteral("key.pem")}) {
+        const QString path = QDir(certDir).filePath(name);
+        if (QFileInfo::exists(path)) return path;
+    }
+    // Anywhere the scan looks, a PEM file the scan could not use. Read as bytes
+    // only, never through Qt's TLS: without a TLS backend Qt reads no
+    // certificate at all, and every pair would look absent. The local pair
+    // (ensureLocalSslConfig) and a leftover ACME account key are not one.
+    for (const QString& root : roots) {
+        if (root.isEmpty() || !QDir(root).exists()) continue;
+        QDirIterator it(root, {"*.pem"}, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            const QString name = QFileInfo(path).fileName();
+            if (name == QLatin1String("local-cert.pem") || name == QLatin1String("local-key.pem") ||
+                name == QLatin1String("account_key.pem"))
+                continue;
+            QByteArray data = readSmallRegularFile(path);
+            const bool pem = looksLikePem(data);
+            data.fill('\0');
+            if (pem) return path;
+        }
+    }
+    return {};
+}
+
+bool CertManager::serveSelfSignedFromMemory(const QString& path, const QString& cause,
+                                            bool tlsAvailable)
+{
+    const QString kept = QStringLiteral("the existing files were left as they are");
+    if (!tlsAvailable) {
+        Logger::warning(QString("[CERT] The certificate %1 cannot be used: Qt has no TLS backend "
+                                "(its tls plugin is missing). HTTPS is off; %2.")
+                            .arg(path, kept));
+        return false;
+    }
+    QByteArray certPem;
+    QByteArray keyPem;
+    const bool made =
+        generateSelfSignedInMemory(selfSignedSans(), "MoonlightWeb", &certPem, &keyPem);
+    const QList<QSslCertificate> chain =
+        made ? QSslCertificate::fromData(certPem, QSsl::Pem) : QList<QSslCertificate>();
+    const QSslKey key = made ? keyFromPem(keyPem) : QSslKey();
+    keyPem.fill('\0');
+    if (chain.isEmpty() || key.isNull()) {
+        Logger::warning(QString("[CERT] The certificate %1 cannot be used: %2. No self-signed "
+                                "certificate could be made in its place (libcrypto), HTTPS is "
+                                "off; %3.")
+                            .arg(path, cause, kept));
+        return false;
+    }
+    m_SslConfig = QSslConfiguration::defaultConfiguration();
+    m_SslConfig.setLocalCertificateChain(chain);
+    m_SslConfig.setPrivateKey(key);
+    m_SslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    Logger::warning(QString("[CERT] The certificate %1 cannot be used: %2. A self-signed "
+                            "certificate held in memory is served until the next start; %3.")
+                        .arg(path, cause, kept));
+    return true;
+}
+
+bool CertManager::selfSignedFallback(const QString& certDir, bool tlsAvailable,
+                                     const QStringList& roots)
+{
+    const QString existing = existingPairFile(certDir, roots);
+    if (!existing.isEmpty())
+        return serveSelfSignedFromMemory(existing, pairFileProblem(existing), tlsAvailable);
+
+    // No pair anywhere: the server makes its own and keeps it.
+    Logger::warning("No SSL certificate files found, generating self-signed certificate");
+    QDir().mkpath(certDir);
+    const QStringList sans = selfSignedSans();
+    const QString certPath = QDir(certDir).filePath("cert.pem");
+    const QString keyPath = QDir(certDir).filePath("key.pem");
+    if (!generateSelfSignedToFiles(certPath, keyPath, sans, "MoonlightWeb")) {
+        Logger::error("Failed to generate self-signed certificate (libcrypto)");
+        return false;
+    }
+    Logger::info(QString("Self-signed certificate generated with %1 SANs in %2")
+                     .arg(sans.size())
+                     .arg(certDir));
+
+    // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).
+    QFile::setPermissions(keyPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    return loadCertFiles(certDir);
+}
+
+QString CertManager::findCertDir()
+{
+    const QStringList candidates = certRoots();
 
     // 2. Domain is set: find a cert whose CN matches the current domain
     if (!m_Domain.isEmpty()) {
@@ -341,17 +523,7 @@ QString CertManager::findCertDir()
 
 QString CertManager::findCertByDomain(const QString& domain)
 {
-    // Build root candidates (same as findCertDir)
-    QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QStringList candidates = {
-        appData + "/cert/",
-        QString(CERT_DIR),
-        QCoreApplication::applicationDirPath() + "/cert/",
-        QCoreApplication::applicationDirPath() + "/../cert/",
-        QString(FRONTEND_DIR) + "/../backend/cert/",
-    };
-
-    for (const auto& rootDir : candidates) {
+    for (const auto& rootDir : certRoots()) {
         if (!QDir(rootDir).exists()) continue;
 
         // Recursively scan for PEM files
@@ -489,12 +661,12 @@ QSslKey CertManager::loadKeyFromEnv() const
     return key;
 }
 
-QByteArray CertManager::resolvePemValue(const QString& value, QString* filePath)
+QByteArray CertManager::resolvePemValue(const QString& value, QString* filePath, bool quiet)
 {
     if (value.isEmpty()) return {};
 
     // 1. An environment variable of that name: PEM, or the path of a PEM file
-    if (!qgetenv(value.toUtf8().constData()).isEmpty()) return pemFromEnv(value, filePath);
+    if (!qgetenv(value.toUtf8().constData()).isEmpty()) return pemFromEnv(value, filePath, quiet);
 
     // 2. A file path: a regular file of at most kMaxPemFileBytes
     QByteArray data = readSmallRegularFile(value);
@@ -515,7 +687,7 @@ CertManager::BuiltInPair CertManager::builtInPair()
 }
 
 QString CertManager::keyBesideCert(const QString& certFile, const QSslCertificate& cert,
-                                   QSslKey* key)
+                                   QSslKey* key, bool quiet)
 {
     const QFileInfo fi(certFile);
     const QDir dir = fi.absoluteDir();
@@ -528,8 +700,9 @@ QString CertManager::keyBesideCert(const QString& certFile, const QSslCertificat
         data.fill('\0');
         if (candidate.isNull()) continue;
         if (!keyMatchesCert(cert, candidate)) {
-            Logger::warning(QString("[CERT] %1 does not match the certificate %2: skipped")
-                                .arg(path, certFile));
+            if (!quiet)
+                Logger::warning(QString("[CERT] %1 does not match the certificate %2: skipped")
+                                    .arg(path, certFile));
             continue;
         }
         if (key) *key = candidate;
@@ -540,12 +713,26 @@ QString CertManager::keyBesideCert(const QString& certFile, const QSslCertificat
 
 bool CertManager::pairFromSources(const QString& certPem, const QString& certKey,
                                   const QString& domain, QList<QSslCertificate>* chainOut,
-                                  QSslKey* keyOut, QString* described, const BuiltInPair& builtIn)
+                                  QSslKey* keyOut, QString* described, const BuiltInPair& builtIn,
+                                  SourceFailure* failure, QString* why)
 {
+    if (failure) *failure = SourceFailure::None;
+    // Said in the log, or handed to the caller who says it once. Sources are
+    // named by their variable or path, never by their content.
+    auto fail = [&](SourceFailure kind, const QString& reason) {
+        if (failure) *failure = kind;
+        if (why)
+            *why = reason;
+        else
+            Logger::warning("[CERT] " + reason);
+        return false;
+    };
+    const bool quiet = why != nullptr;
+
     QString certFile;
     QString keyFile;
-    QByteArray certData = resolvePemValue(certPem, &certFile);
-    QByteArray keyData = resolvePemValue(certKey, &keyFile);
+    QByteArray certData = resolvePemValue(certPem, &certFile, quiet);
+    QByteArray keyData = resolvePemValue(certKey, &keyFile, quiet);
     QString certSource = certFile.isEmpty() ? certPem : certFile;
     QString keySource = keyFile.isEmpty() ? certKey : keyFile;
 
@@ -567,20 +754,32 @@ bool CertManager::pairFromSources(const QString& certPem, const QString& certKey
     }
 
     if (certData.isEmpty()) {
-        // The defaults name variables that are usually unset: say nothing then.
-        if (certPem != QLatin1String("MW_CERT_PEM") || !keyData.isEmpty())
-            Logger::warning(QString("[CERT] cert_pem (%1) gave no certificate: it is neither set "
-                                    "in this server's environment nor a readable file")
-                                .arg(certPem));
+        // cert_pem left at its default names a variable that is usually unset:
+        // no certificate was given then, whatever the key, and the scan goes
+        // on — a key in MW_CERT_KEY can be the one of a certificate it finds.
+        const bool given = certPem != QLatin1String("MW_CERT_PEM") ||
+                           !qgetenv(certPem.toUtf8().constData()).isEmpty();
+        const bool keyGiven = !keyData.isEmpty();
         keyData.fill('\0');
-        return false;
+        if (!given) {
+            if (keyGiven)
+                Logger::warning(QString("[CERT] cert_pem (%1) gave no certificate: it is neither "
+                                        "set in this server's environment nor a readable file")
+                                    .arg(certPem));
+            if (failure) *failure = SourceFailure::NotGiven;
+            return false;
+        }
+        return fail(SourceFailure::Unusable,
+                    QString("cert_pem (%1) gave no certificate: it is neither set in this "
+                            "server's environment nor a readable file")
+                        .arg(certPem));
     }
 
     const QList<QSslCertificate> chain = QSslCertificate::fromData(certData, QSsl::Pem);
     if (chain.isEmpty()) {
-        Logger::warning(QString("[CERT] cert_pem (%1) holds no PEM certificate").arg(certSource));
         keyData.fill('\0');
-        return false;
+        return fail(SourceFailure::Unusable,
+                    QString("cert_pem (%1) holds no PEM certificate").arg(certSource));
     }
 
     // If domain is set, the cert must cover it (CN or SAN). One for a
@@ -589,52 +788,47 @@ bool CertManager::pairFromSources(const QString& certPem, const QString& certKey
     // install) must not be used — fall through to the file scan.
     if (!domain.isEmpty() && !certMatchesDomain(chain.first(), domain)) {
         const QString cn = chain.first().subjectInfo(QSslCertificate::CommonName).value(0);
-        Logger::warning(QString("[CERT] The certificate from %1 (CN=%2) does not cover domain=%3 "
-                                "— falling back to file scan")
-                            .arg(certSource, cn, domain));
         keyData.fill('\0');
-        return false;
+        return fail(SourceFailure::OtherDomain,
+                    QString("The certificate from %1 (CN=%2) does not cover domain=%3")
+                        .arg(certSource, cn, domain));
     }
 
     QSslKey key;
     if (!keyData.isEmpty()) {
         key = keyFromPem(keyData);
         keyData.fill('\0');
-        if (key.isNull()) {
-            Logger::warning(QString("[CERT] cert_key (%1) holds no RSA or EC private key in PEM, "
-                                    "unencrypted")
-                                .arg(keySource));
-            return false;
-        }
+        if (key.isNull())
+            return fail(SourceFailure::Unusable,
+                        QString("cert_key (%1) holds no RSA or EC private key in PEM, unencrypted")
+                            .arg(keySource));
     } else if (!certFile.isEmpty()) {
         // No key from cert_key: one beside a certificate file, under fixed names.
-        keySource = keyBesideCert(certFile, chain.first(), &key);
-        if (keySource.isEmpty()) {
-            Logger::warning(
-                QString("[CERT] cert_pem (%1) gave a certificate but cert_key (%2) gave no private "
+        keySource = keyBesideCert(certFile, chain.first(), &key, quiet);
+        if (keySource.isEmpty())
+            return fail(
+                SourceFailure::Unusable,
+                QString("cert_pem (%1) gave a certificate but cert_key (%2) gave no private "
                         "key: it is neither set in this server's environment nor a readable "
                         "file, and no privkey.pem, key.pem or %3.key beside the certificate "
                         "matches it. Set cert_key in settings.json to the key file's path, "
                         "readable by the account the server runs as.")
                     .arg(certFile, certKey, QFileInfo(certFile).completeBaseName()));
-            return false;
-        }
     } else {
-        Logger::warning(
-            QString("[CERT] cert_pem (%1) gave a certificate but cert_key (%2) gave no private "
+        return fail(
+            SourceFailure::Unusable,
+            QString("cert_pem (%1) gave a certificate but cert_key (%2) gave no private "
                     "key: it is neither set in this server's environment nor a readable file. "
                     "Set cert_key in settings.json to the key file's path, readable by the "
                     "account the server runs as, or %2 in the server's own environment.")
                 .arg(certSource, certKey));
-        return false;
     }
 
-    if (!keyMatchesCert(chain.first(), key)) {
-        Logger::warning(QString("[CERT] The private key from %1 does not match the certificate "
-                                "from %2: neither is used")
-                            .arg(keySource, certSource));
-        return false;
-    }
+    if (!keyMatchesCert(chain.first(), key))
+        return fail(SourceFailure::Unusable,
+                    QString("The private key from %1 does not match the certificate from %2: "
+                            "neither is used")
+                        .arg(keySource, certSource));
 
     if (chainOut) *chainOut = chain;
     if (keyOut) *keyOut = key;
@@ -642,8 +836,19 @@ bool CertManager::pairFromSources(const QString& certPem, const QString& certKey
     return true;
 }
 
-bool CertManager::loadCertFiles(const QString& certDir)
+bool CertManager::loadCertFiles(const QString& certDir, QString* failedPath, QString* why)
 {
+    // Said in the log, or handed to the caller who says it once.
+    auto fail = [&](const QString& path, const QString& reason, const QString& line) {
+        if (why) {
+            *why = reason;
+            if (failedPath) *failedPath = path;
+        } else {
+            Logger::warning(line);
+        }
+        return false;
+    };
+
     // Find the best certificate. Priority: root dir > subdirs, CN match > any cert.
     auto findCert = [this](const QString& dir, bool subdirs, const QString& domain) -> QString {
         auto flags = subdirs ? QDirIterator::Subdirectories : QDirIterator::NoIteratorFlags;
@@ -678,23 +883,20 @@ bool CertManager::loadCertFiles(const QString& certDir)
     // 4. Subdirectories, any cert
     if (certPath.isEmpty()) certPath = findCert(certDir, true, QString());
 
-    if (certPath.isEmpty()) {
-        Logger::warning("No certificate found in " + certDir);
-        return false;
-    }
+    if (certPath.isEmpty())
+        return fail(certDir, QStringLiteral("it holds no certificate that can be read"),
+                    "No certificate found in " + certDir);
 
     // Load cert chain
     QFile certFile(certPath);
-    if (!certFile.open(QIODevice::ReadOnly)) {
-        Logger::warning("Failed to open cert file: " + certFile.errorString());
-        return false;
-    }
+    if (!certFile.open(QIODevice::ReadOnly))
+        return fail(certPath, "it cannot be read (" + certFile.errorString() + ")",
+                    "Failed to open cert file: " + certFile.errorString());
     QList<QSslCertificate> chain = QSslCertificate::fromDevice(&certFile, QSsl::Pem);
     certFile.close();
-    if (chain.isEmpty()) {
-        Logger::warning("SSL cert chain invalid: " + certPath);
-        return false;
-    }
+    if (chain.isEmpty())
+        return fail(certPath, QStringLiteral("it holds no certificate that can be read"),
+                    "SSL cert chain invalid: " + certPath);
 
     // Load private key. Prefer a key file sitting next to the certificate —
     // a cert and its key are dropped in together — and of those, the one that
@@ -720,17 +922,16 @@ bool CertManager::loadCertFiles(const QString& certDir)
             if (keyMatchesCert(chain.first(), envKey)) {
                 key = envKey;
                 keySource = "env:MW_CERT_KEY";
-            } else {
+            } else if (!why) {
                 Logger::warning("[CERT] The key from MW_CERT_KEY does not match the certificate " +
                                 certPath + ": not used");
             }
         }
     }
 
-    if (key.isNull()) {
-        Logger::warning("[CERT] No private key that matches the certificate " + certPath);
-        return false;
-    }
+    if (key.isNull())
+        return fail(certPath, QStringLiteral("no private key beside it matches it"),
+                    "[CERT] No private key that matches the certificate " + certPath);
 
     m_SslConfig = QSslConfiguration::defaultConfiguration();
     m_SslConfig.setLocalCertificateChain(chain);
@@ -819,7 +1020,10 @@ bool CertManager::loadCert()
     QList<QSslCertificate> chain;
     QSslKey key;
     QString described;
-    if (pairFromSources(m_CertPem, m_CertKey, m_Domain, &chain, &key, &described)) {
+    SourceFailure failure = SourceFailure::None;
+    QString sourceWhy;
+    if (pairFromSources(m_CertPem, m_CertKey, m_Domain, &chain, &key, &described, builtInPair(),
+                        &failure, &sourceWhy)) {
         m_SslConfig = QSslConfiguration::defaultConfiguration();
         m_SslConfig.setLocalCertificateChain(chain);
         m_SslConfig.setPrivateKey(key);
@@ -830,16 +1034,31 @@ bool CertManager::loadCert()
         return true;
     }
 
-    // Case 3: scan by domain + fallback
+    // A pair given by cert_pem / cert_key (or the build's own) that cannot be
+    // used is not replaced, neither by another found by the scan nor by one the
+    // server would write: a self-signed certificate in memory stands in for it.
+    const QString configured =
+        QString("configured by cert_pem (%1) and cert_key (%2)").arg(m_CertPem, m_CertKey);
+    if (failure == SourceFailure::Unusable)
+        return serveSelfSignedFromMemory(configured, sourceWhy, QSslSocket::supportsSsl());
+
+    // Case 3: scan by domain + fallback. A good pair for another domain is
+    // the one exception: the scan may find the domain's own (a leftover from
+    // a previous unique_id, the build's shared-domain certificate on an
+    // install with a domain of its own).
     QString certDir = findCertDir();
 
     if (!certDir.isEmpty()) {
         Logger::info("SSL certificate found in " + certDir);
+        if (failure == SourceFailure::OtherDomain)
+            Logger::info("[CERT] " + sourceWhy + ": the file scan is used instead");
 
-        if (!loadCertFiles(certDir)) {
-            Logger::warning("Failed to load certificate files");
-            return generateSelfSignedCert();
-        }
+        // A pair that is there but cannot be served stays as it is: a
+        // self-signed certificate in memory stands in for it until it is fixed.
+        QString failedPath;
+        QString why;
+        if (!loadCertFiles(certDir, &failedPath, &why))
+            return serveSelfSignedFromMemory(failedPath, why, QSslSocket::supportsSsl());
 
         // A loaded certificate is always kept, even close to expiry: replacing a
         // real (if ageing) certificate with a self-signed one turns a warning
@@ -857,7 +1076,10 @@ bool CertManager::loadCert()
         return true;
     }
 
-    Logger::warning("No SSL certificate files found, generating self-signed certificate");
+    // The scan found nothing for the domain either: the configured pair is
+    // still the one, and nothing is written that would stand in for it.
+    if (failure == SourceFailure::OtherDomain)
+        return serveSelfSignedFromMemory(configured, sourceWhy, QSslSocket::supportsSsl());
     return generateSelfSignedCert();
 }
 
@@ -885,42 +1107,7 @@ bool CertManager::reloadTls()
 
 bool CertManager::generateSelfSignedCert()
 {
-    // Use AppData for writability — Program Files is read-only for MSI installs.
-    QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
-    QDir().mkpath(certDir);
-
-    // Build SAN list dynamically: localhost, loopback, and all detected LAN IPs.
-    // This ensures the self-signed certificate matches all local access methods
-    // (localhost, 127.0.0.1, ::1, 192.168.x.x, 10.x.x.x, Tailscale's 100.x, etc.) and the browser
-    // only shows a single "untrusted CA" warning (no hostname mismatch).
-    QStringList sans;
-    sans << "DNS:localhost"
-         << "DNS:*.local"
-         << "IP:127.0.0.1"
-         << "IP:::1";
-
-    for (const QHostAddress& addr : getPrivateLanAddresses()) {
-        QHostAddress clean(addr);
-        if (addr.protocol() == QAbstractSocket::IPv6Protocol) clean.setScopeId(QString());
-        sans << "IP:" + clean.toString();
-    }
-
-    // Erase old cert/key before generating new ones.
-    QFile::remove(certDir + "key.pem");
-    QFile::remove(certDir + "cert.pem");
-
-    if (!generateSelfSignedToFiles(certDir + "cert.pem", certDir + "key.pem", sans,
-                                   "MoonlightWeb")) {
-        Logger::error("Failed to generate self-signed certificate (libcrypto)");
-        return false;
-    }
-    Logger::info(QString("Self-signed certificate generated with %1 SANs in %2")
-                     .arg(sans.size())
-                     .arg(certDir));
-
-    // Restrict the private key to the owner (0600 on Unix, owner-only ACL on Win).
-    QFile::setPermissions(certDir + "key.pem", QFileDevice::ReadOwner | QFileDevice::WriteOwner);
-    return loadCertFiles(certDir);
+    return selfSignedFallback(selfSignedDir(), QSslSocket::supportsSsl(), certRoots());
 }
 
 void CertManager::ensureLocalSslConfig()
@@ -936,7 +1123,7 @@ void CertManager::ensureLocalSslConfig()
     // key on first contact (MoonlightWeb TV pins the SPKI) would otherwise see
     // a "server key changed" after every restart. Deleting local-key.pem
     // rotates it.
-    QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/cert/";
+    QString certDir = selfSignedDir();
     QDir().mkpath(certDir);
 
     // Dedicated filenames for the local self-signed cert. These MUST NOT
@@ -947,17 +1134,7 @@ void CertManager::ensureLocalSslConfig()
     QString certPath = certDir + "local-cert.pem";
     QString keyPath = certDir + "local-key.pem";
 
-    // Build SAN list with current LAN IPs
-    QStringList sans;
-    sans << "DNS:localhost" << "DNS:*.local"
-         << "IP:127.0.0.1" << "IP:::1";
-    for (const QHostAddress& addr : getPrivateLanAddresses()) {
-        // Strip scope ID from IPv6 addresses (e.g. "%ethernet_32770")
-        // — OpenSSL SAN entries only accept bare IPv6 addresses.
-        QHostAddress clean(addr);
-        if (addr.protocol() == QAbstractSocket::IPv6Protocol) clean.setScopeId(QString());
-        sans << "IP:" + clean.toString();
-    }
+    const QStringList sans = selfSignedSans();
 
     if (localCertReusable(certPath, keyPath, sans, kLocalCertMinDaysLeft)) {
         Logger::info("[CERT] Local cert kept: it still covers this machine's addresses");

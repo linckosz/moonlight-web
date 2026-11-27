@@ -22,6 +22,7 @@
 #include <QSslConfiguration>
 #include <QSslKey>
 #include <QString>
+#include <QStringList>
 
 /// Owns everything TLS-certificate related, extracted out of HttpServer so the
 /// socket server no longer mixes network I/O with certificate discovery,
@@ -67,9 +68,30 @@ public:
     /// is responsible for pushing the new config onto the live listener.
     bool reloadTls();
 
-    /// Generate a fresh self-signed cert in AppData/cert/ and load it as the
-    /// public config. Returns true on success.
+    /// What loadCert() falls back to when the scan found no pair it can serve:
+    /// selfSignedFallback() on AppData/cert/, with Qt's own TLS support and the
+    /// folders the scan reads. Returns true when HTTPS can be served.
     bool generateSelfSignedCert();
+
+    /// Where the server writes the pair it makes for itself: AppData/cert/.
+    static QString selfSignedDir();
+    /// The folders the certificate scan reads, AppData/cert/ first.
+    static QStringList certRoots();
+
+    /// With no pair anywhere — no cert.pem nor key.pem in @p certDir, and no
+    /// PEM file under @p roots — a self-signed pair is generated, written to
+    /// @p certDir and loaded. With one that could not be used (unreadable,
+    /// damaged, a key that is not the certificate's, or no TLS backend in Qt,
+    /// @p tlsAvailable false), nothing is written, renamed or removed: a
+    /// self-signed certificate held in memory is served instead, with one
+    /// warning saying why, where, and that the files were left as they are.
+    bool selfSignedFallback(const QString& certDir, bool tlsAvailable, const QStringList& roots);
+
+    /// The first file of a pair that is already there: cert.pem or key.pem in
+    /// @p certDir whatever they hold, else a PEM file under @p roots (read as
+    /// bytes, never through Qt's TLS), other than the local pair and an old
+    /// ACME account key. Empty when there is none.
+    static QString existingPairFile(const QString& certDir, const QStringList& roots);
 
     /// True when @p cert is valid for @p domain: the CN or any DNS subject
     /// alternative name matches, wildcards included. SANs are what browsers
@@ -98,14 +120,35 @@ public:
     /// the certificate's own. False, with a warning that names the sources and
     /// never their content, when anything is missing or does not match.
     /// @p described gets "cert=<source>, key=<source>".
+    ///
+    /// On failure @p failure says which (nothing given, a pair for another
+    /// domain, or one that cannot be used); with @p why the reason goes there
+    /// instead of the log, for the caller to say once.
+    enum class SourceFailure
+    {
+        None,
+        NotGiven,
+        OtherDomain,
+        Unusable,
+    };
     static bool pairFromSources(const QString& certPem, const QString& certKey,
                                 const QString& domain, QList<QSslCertificate>* chain, QSslKey* key,
                                 QString* described = nullptr,
-                                const BuiltInPair& builtIn = builtInPair());
+                                const BuiltInPair& builtIn = builtInPair(),
+                                SourceFailure* failure = nullptr, QString* why = nullptr);
 
 private:
     QString findCertDir();
-    bool loadCertFiles(const QString& certDir);
+    /// Load the best pair in @p certDir. On failure, with @p why, the reason
+    /// and the file it concerns (@p failedPath) go to the caller instead of
+    /// the log.
+    bool loadCertFiles(const QString& certDir, QString* failedPath = nullptr,
+                       QString* why = nullptr);
+    /// Serve a self-signed certificate made in memory in place of the pair at
+    /// @p path, which @p cause stops from being used: one warning, and the
+    /// files are never touched. False when it cannot (no TLS backend, or
+    /// libcrypto failed): HTTPS is then off.
+    bool serveSelfSignedFromMemory(const QString& path, const QString& cause, bool tlsAvailable);
     bool loadCertFilesExplicit(const QString& certFilePath);
     QString findCertByDomain(const QString& domain);
     QString extractCertCN(const QString& pemPath);
@@ -117,12 +160,13 @@ private:
     QStringList scanKeysInDir(const QString& dir) const;
     /// The first of privkey.pem, key.pem, <base name>.key beside @p certFile that
     /// is @p cert's key; empty when none is.
-    static QString keyBesideCert(const QString& certFile, const QSslCertificate& cert,
-                                 QSslKey* key);
+    static QString keyBesideCert(const QString& certFile, const QSslCertificate& cert, QSslKey* key,
+                                 bool quiet = false);
     QSslKey loadKeyFromEnv() const;
     QString scanCertInDir(const QString& dir, const QString& domain = QString()) const;
 
-    static QByteArray resolvePemValue(const QString& value, QString* filePath = nullptr);
+    static QByteArray resolvePemValue(const QString& value, QString* filePath = nullptr,
+                                      bool quiet = false);
 
     /// Public config (PositiveSSL/LE cert for public-domain clients).
     QSslConfiguration m_SslConfig;
