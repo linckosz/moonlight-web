@@ -6,7 +6,7 @@
 # firewall's port 53 has not propagated yet — the CA cannot resolve the domain,
 # so no cert is minted and browsers get ERR_SSL_PROTOCOL_ERROR / TLS alert 80.
 #
-# Run this AFTER `dig +short api.{MW_DOMAIN} @8.8.8.8` returns your VM's IP: it
+# Run this AFTER `dig +short stream.{MW_DOMAIN} @8.8.8.8` returns your VM's IP: it
 # confirms public resolution, then restarts Caddy so it retries issuance, and
 # tails the log until a certificate is obtained (or an error is shown).
 #
@@ -36,7 +36,7 @@ set -a; . ./.env; set +a
 # it also works from the DNS box itself, which cannot test its own inbound :53.
 echo "Checking public DNS resolution for ${MW_DOMAIN} ..."
 all_ok=1
-for host in "api.${MW_DOMAIN}" "stats.${MW_DOMAIN}" "${MW_DOMAIN}"; do
+for host in "stream.${MW_DOMAIN}" "stats.${MW_DOMAIN}" "${MW_DOMAIN}"; do
     ans="$(curl -fsS -m 10 "https://dns.google/resolve?name=${host}&type=A" 2>/dev/null || true)"
     case "$ans" in
         *'"Status":0'*)

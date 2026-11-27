@@ -412,7 +412,7 @@ echo " Your VM is up and running. Containers:"
 echo "   pdns     PowerDNS authoritative + REST API (internal only)"
 echo "   mw-proxy restricted DNS API https://dnsapi.${MW_DOMAIN:-<MW_DOMAIN>} (internal, via caddy)"
 echo "   dnsdist  public DNS front on :53 (UDP/TCP)"
-echo "   caddy    public API https://api.${MW_DOMAIN:-<MW_DOMAIN>} (:80/:443)"
+echo "   caddy    public HTTPS front (:80/:443): website, stream., dnsapi., updates., stats."
 echo "   umami    web analytics  https://stats.${MW_DOMAIN:-<MW_DOMAIN>} (internal, via caddy)"
 echo "   mw-proxy update relay   https://updates.${MW_DOMAIN:-<MW_DOMAIN>} (cached release + version census)"
 echo "   umami-db Postgres for Umami (internal only)"
@@ -445,7 +445,7 @@ echo "         (Azure NSG, AWS SG, GCP firewall, etc.):"
 echo "            53/udp   public DNS"
 echo "            53/tcp   public DNS (truncated answers, DNSSEC)"
 echo "            80/tcp   Let's Encrypt HTTP-01 challenge"
-echo "            443/tcp  PowerDNS REST API (api.${MW_DOMAIN:-<MW_DOMAIN>})"
+echo "            443/tcp  HTTPS (website, stream., dnsapi., updates., stats.)"
 echo "            22/tcp   SSH — restrict to YOUR IP only"
 echo
 echo "  [ ] 2. At your domain REGISTRAR (where you bought the domain):"
@@ -473,7 +473,7 @@ echo "            MW_PDNS_TOKEN=<the MW_PDNS_PROXY_KEY value from $HERE/.env>"
 echo
 echo "  [ ] 5. Verify once DNS delegation has propagated (minutes to hours):"
 echo "            dig +short NS ${MW_DOMAIN:-<MW_DOMAIN>}"
-echo "            dig +short api.${MW_DOMAIN:-<MW_DOMAIN>} @8.8.8.8"
+echo "            dig +short stream.${MW_DOMAIN:-<MW_DOMAIN>} @8.8.8.8"
 echo "         Then (re)issue the HTTPS certificates — Caddy's first attempt at"
 echo "         install time fails if DNS was not yet resolvable (ERR_SSL_PROTOCOL"
 echo "         _ERROR / TLS alert 80). This helper checks public DNS then retries:"
@@ -532,13 +532,13 @@ if command -v dig >/dev/null 2>&1; then
     fi
 fi
 
-doh_a="$(curl -fsS -m 10 "https://dns.google/resolve?name=api.${MW_DOMAIN}&type=A" 2>/dev/null || true)"
+doh_a="$(curl -fsS -m 10 "https://dns.google/resolve?name=stream.${MW_DOMAIN}&type=A" 2>/dev/null || true)"
 case "$doh_a" in
     *'"Status":0'*)
         if printf '%s' "$doh_a" | grep -q "\"data\":\"${MW_PUBLIC_IP}\""; then
-            ok "public resolvers reach this VM (api.${MW_DOMAIN} -> ${MW_PUBLIC_IP})"
+            ok "public resolvers reach this VM (stream.${MW_DOMAIN} -> ${MW_PUBLIC_IP})"
         else
-            warn "api.${MW_DOMAIN} publicly resolves to a DIFFERENT address than ${MW_PUBLIC_IP}:"
+            warn "stream.${MW_DOMAIN} publicly resolves to a DIFFERENT address than ${MW_PUBLIC_IP}:"
             printf '%s' "$doh_a" | grep -o '"data":"[^"]*"' | sed 's/^/         /'
             warn "another DNS server still answers for this zone (stale registrar glue,"
             warn "cached delegation, or a PREVIOUS VM still running) — shut the old"

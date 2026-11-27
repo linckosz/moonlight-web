@@ -2,7 +2,9 @@
 #
 #   dnsdist  public DNS entry point :53  → pdns:5300  (anti-amplification, rate-limit)
 #   pdns     official PowerDNS image, internal only    (DNS :5300 + REST API :8081)
-#   caddy    public :80/:443 → pdns:8081 / umami:3000  (HTTPS API + site + stats, auto-TLS)
+#   caddy    public :80/:443 → site + stats (umami:3000), auto-TLS
+#            also dnsapi.{domain} → mw-proxy (the only caller of pdns:8081)
+#            also api.{domain}: closed, 410 Gone
 #            also updates.{domain} → mw-proxy:8080 (cached release mirror + census)
 #            also metrics.{domain} → mw-proxy:8080 (session census)
 #            also stream.{domain} → bootstrap page + /v1/ → mw-rendezvous:8090
@@ -268,7 +270,7 @@ services:
       MW_TLS_INTERNAL: ${MW_TLS_INTERNAL:-}
     ports:
       - "80:80/tcp"      # Let's Encrypt HTTP-01 challenge
-      - "443:443/tcp"    # PowerDNS REST API over HTTPS (api.${MW_DOMAIN})
+      - "443:443/tcp"    # HTTPS: website, stream., dnsapi., updates., metrics., stats.
     volumes:
       - caddy_data:/data             # cert storage (Let's Encrypt)
       - caddy_config:/config

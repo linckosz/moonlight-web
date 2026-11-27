@@ -1,5 +1,5 @@
 # Caddy — HTTPS for the public-facing parts of the DNS stack:
-#   - api.{MW_DOMAIN}        reverse proxy to the PowerDNS REST API
+#   - api.{MW_DOMAIN}        closed: answers 410 Gone to every request
 #   - {MW_DOMAIN} + www.*    static presentation website (./site)
 #   - stream.{MW_DOMAIN}     the entry page + the rendezvous API (stream.caddy)
 #   - stream.dev.{MW_DOMAIN} the STAGING copy of the above, proxied to the
@@ -82,22 +82,16 @@ import /etc/caddy/stream.caddy
 	}
 }
 
+# api.* used to pass requests straight to the PowerDNS REST API, for 0.1.x
+# clients. It is closed: nothing is forwarded any more, every request gets
+# 410 Gone. 0.2.0 and later register through the restricted dnsapi.* gateway
+# below, and nothing from 0.3.0 on registers at all. The PowerDNS API itself
+# stays on the compose network: no public host forwards to it, only mw-proxy
+# calls it.
 api.@MW_DOMAIN@ {
 	@TLS_LINE@
 	import no_index
-	# Per subscriber: an IPv6 /64 is one (subscriber_key, stream.caddy).
-	import subscriber_key
-	rate_limit {
-		zone mw_api {
-			key {mw_subscriber}
-			events 60
-			window 1m
-		}
-	}
-	# pdns = the PowerDNS service on the compose network (API on :8081).
-	# Compatibility path: direct PowerDNS API. New clients (0.2.0+) use the
-	# restricted dnsapi.* gateway below. This block is retired in a later release.
-	reverse_proxy pdns:8081
+	respond "Gone" 410
 }
 
 # Restricted DNS-registration API (0.2.0+). Fronts the mw-proxy filtering
