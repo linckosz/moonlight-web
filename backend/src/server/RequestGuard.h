@@ -253,6 +253,63 @@ Decision evaluate(const Request& req, const Context& ctx);
 /// and sessions have no business on it.
 bool localChannelRoute(const QString& method, const QString& path);
 
+/// One entry of localChannelRoute()'s list.
+struct LocalRoute
+{
+    const char* method;
+    const char* path;
+};
+
+/// The list localChannelRoute() reads, as it is: what a test walks, so that a
+/// route added to it later is covered by every test of the channel's gate.
+QList<LocalRoute> localChannelRoutes();
+
+/// Group attributes a token states, as winnt.h numbers them (checked against
+/// it on Windows, LocalChannel.cpp), so the verdict can be tested everywhere.
+inline constexpr quint32 kGroupEnabled = 0x00000004;  ///< SE_GROUP_ENABLED
+inline constexpr quint32 kGroupDenyOnly = 0x00000010; ///< SE_GROUP_USE_FOR_DENY_ONLY
+/// SECURITY_MANDATORY_MEDIUM_RID: the level of a program a person started.
+inline constexpr quint32 kMediumIntegrity = 0x00002000;
+
+/// Who the local channel lets in, from what its server end read of the caller.
+enum class LocalVerdict
+{
+    Admit,
+    StandardAccount, ///< read, and neither the server's account nor an administrator
+    Sandboxed,       ///< below medium integrity, an AppContainer, or a restricted token
+    Unreadable,      ///< the caller's token could not be read in full
+};
+
+/// The verdict on a caller of the local channel (Windows: what LocalChannel
+/// read of its token). Closed whenever in doubt:
+///   - nothing of the caller read → Unreadable;
+///   - a token below medium integrity, an AppContainer or a restricted one →
+///     Sandboxed, whoever it belongs to: a browser's renderer is the person's
+///     own account and an administrator's too;
+///   - the server's own account (@p serverSid) → Admit;
+///   - for a server that runs as a service (@p service), a member of the
+///     administrators (@p administratorsSid) → Admit, whether the group is
+///     enabled or there for deny only, as UAC leaves it in an administrator's
+///     unelevated programs: an administrator of this PC may already act as
+///     the system. Nobody else.
+/// Every SID here is the text one function writes (LocalChannel's sidText),
+/// compared with itself, never with text from elsewhere.
+LocalVerdict localCallerVerdict(bool service, const QString& serverSid,
+                                const QString& administratorsSid, const LocalCaller& caller);
+
+/// What the local channel answers before any route of it runs.
+enum class LocalGate
+{
+    Pass,      ///< the caller is let in and the route is one of the channel's
+    Forbidden, ///< 403 for any route: the caller is not let in
+    NotFound,  ///< 404: let in, but not a route of the channel
+};
+
+/// The local channel's one gate, in its order: who asks first, then what.
+/// A caller that is not let in is answered 403 whatever it asks, a route of
+/// the channel or not, so nothing about the routes is told to it.
+LocalGate localChannelGate(const QString& method, const QString& path, LocalVerdict verdict);
+
 /// The HTTP status a refused outcome must be answered with, 0 for Allow. Here
 /// rather than at the call site so the status is part of the tested contract.
 int blockStatus(Outcome outcome);

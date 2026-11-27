@@ -22,6 +22,8 @@
 #include <QStringList>
 #include <QUrl>
 
+#include <iterator>
+
 namespace RequestGuard {
 
 namespace {
@@ -511,43 +513,72 @@ Decision evaluate(const Request& req, const Context& ctx)
     return d;
 }
 
+namespace {
+
+// Exact paths, exact verbs: what main.cpp's command-line verbs, tray client
+// and second launch call, and the two reads a script of this machine asks
+// besides (--local-request): what this machine can capture and encode, and
+// the state of its virtual display (read only: changing it is a session's).
+const LocalRoute kRoutes[] = {
+    {"GET", "/api/health"},
+    {"GET", "/api/native/status"},
+    {"GET", "/api/native/virtual-display"},
+    {"GET", "/api/server/status"},
+    {"GET", "/api/server/remote-link"},
+    {"GET", "/api/server/stream-activity"},
+    {"GET", "/api/setup/status"},
+    {"GET", "/api/auth/status"},
+    {"GET", "/api/internet/status"},
+    {"GET", "/api/internet/upnp-probe"},
+    {"POST", "/api/internet/enable"},
+    {"GET", "/api/settings/streaming"},
+    {"POST", "/api/settings/streaming"},
+    {"POST", "/api/admin/pin/generate"},
+    {"POST", "/api/admin/password"},
+    {"POST", "/api/system/restart"},
+    {"POST", "/api/system/quit"},
+    // The tray's Disconnect (issue #42): the icon of a server that runs as
+    // a service asks it this way. Never a script's (LocalRequest).
+    {"POST", "/api/server/stream-disconnect"},
+    {"POST", "/api/local/focus"},
+};
+
+} // namespace
+
 bool localChannelRoute(const QString& method, const QString& path)
 {
-    struct Route
-    {
-        const char* method;
-        const char* path;
-    };
-    // Exact paths, exact verbs: what main.cpp's command-line verbs, tray client
-    // and second launch call, and the two reads a script of this machine asks
-    // besides (--local-request): what this machine can capture and encode, and
-    // the state of its virtual display (read only: changing it is a session's).
-    static const Route kRoutes[] = {
-        {"GET", "/api/health"},
-        {"GET", "/api/native/status"},
-        {"GET", "/api/native/virtual-display"},
-        {"GET", "/api/server/status"},
-        {"GET", "/api/server/remote-link"},
-        {"GET", "/api/server/stream-activity"},
-        {"GET", "/api/setup/status"},
-        {"GET", "/api/auth/status"},
-        {"GET", "/api/internet/status"},
-        {"GET", "/api/internet/upnp-probe"},
-        {"POST", "/api/internet/enable"},
-        {"GET", "/api/settings/streaming"},
-        {"POST", "/api/settings/streaming"},
-        {"POST", "/api/admin/pin/generate"},
-        {"POST", "/api/admin/password"},
-        {"POST", "/api/system/restart"},
-        {"POST", "/api/system/quit"},
-        // The tray's Disconnect (issue #42): the icon of a server that runs as
-        // a service asks it this way. Never a script's (LocalRequest).
-        {"POST", "/api/server/stream-disconnect"},
-        {"POST", "/api/local/focus"},
-    };
-    for (const Route& route : kRoutes)
+    for (const LocalRoute& route : kRoutes)
         if (method == QLatin1String(route.method) && path == QLatin1String(route.path)) return true;
     return false;
+}
+
+QList<LocalRoute> localChannelRoutes()
+{
+    return QList<LocalRoute>(std::begin(kRoutes), std::end(kRoutes));
+}
+
+LocalVerdict localCallerVerdict(bool service, const QString& serverSid,
+                                const QString& administratorsSid, const LocalCaller& caller)
+{
+    if (!caller.readable || caller.sid.isEmpty() || serverSid.isEmpty())
+        return LocalVerdict::Unreadable;
+    // Before any account: a sandbox of the server's own account, or of an
+    // administrator's, is still a sandbox.
+    if (caller.integrityRid < kMediumIntegrity || caller.appContainer || caller.restricted)
+        return LocalVerdict::Sandboxed;
+    if (caller.sid == serverSid) return LocalVerdict::Admit;
+    if (!service || administratorsSid.isEmpty()) return LocalVerdict::StandardAccount;
+    for (const TokenGroup& group : caller.groups)
+        if (group.sid == administratorsSid &&
+            (group.attributes & (kGroupEnabled | kGroupDenyOnly)) != 0)
+            return LocalVerdict::Admit;
+    return LocalVerdict::StandardAccount;
+}
+
+LocalGate localChannelGate(const QString& method, const QString& path, LocalVerdict verdict)
+{
+    if (verdict != LocalVerdict::Admit) return LocalGate::Forbidden;
+    return localChannelRoute(method, path) ? LocalGate::Pass : LocalGate::NotFound;
 }
 
 AdminTokenReply adminTokenReply(const Decision& decision, const Context& ctx, bool authenticated)

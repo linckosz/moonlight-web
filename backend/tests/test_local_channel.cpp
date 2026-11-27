@@ -442,6 +442,72 @@ void run_local_channel_tests()
         CHECK(!encodeReply(reply).contains("mw_session"));
     }
 
+    SECTION("Local channel — who asked goes to the router as the server's end read it, and never "
+            "over the wire");
+    {
+        Request r;
+        r.method = QStringLiteral("GET");
+        r.path = QStringLiteral("/api/health");
+        r.caller.readable = true;
+        r.caller.sid = QStringLiteral("S-1-5-18");
+        r.caller.groups = {TokenGroup{QStringLiteral("S-1-5-32-544"), RequestGuard::kGroupEnabled}};
+        r.caller.integrityRid = 0x4000;
+        r.service = true;
+        r.callerLabel = QStringLiteral("forged-label");
+        // What a caller sends holds none of it: the server's end sets it.
+        const QByteArray wire = encodeRequest(r);
+        CHECK(!wire.contains("S-1-5-18"));
+        CHECK(!wire.contains("forged-label"));
+        const std::optional<Request> back = decodeRequest(wire);
+        CHECK(back.has_value());
+        if (back) {
+            CHECK(!back->caller.readable);
+            CHECK(back->caller.sid.isEmpty());
+            CHECK(back->caller.groups.isEmpty());
+            CHECK(!back->service);
+            CHECK(back->callerLabel.isEmpty());
+        }
+        // And what the server's end set reaches the router as it is.
+        const HttpRequest http = httpRequestFor(r);
+        CHECK(http.localCaller.readable);
+        CHECK(http.localCaller.sid == QStringLiteral("S-1-5-18"));
+        CHECK_EQ(static_cast<int>(http.localCaller.groups.size()), 1);
+        CHECK(http.localChannelService);
+        CHECK(http.localCallerLabel == QStringLiteral("forged-label"));
+    }
+
+    SECTION("Local channel — callers turned away are counted, and said at most once a minute, "
+            "never who");
+    {
+        qint64 now = 0;
+        RefusalLog log([&now]() { return now; });
+        const QString first = log.note(RefusalLog::Kind::StandardAccount);
+        CHECK(first.startsWith(QStringLiteral("[LocalChannel] 1 caller(s) turned away")));
+        CHECK(first.contains(QStringLiteral("(1 standard account)")));
+        int lines = 0;
+        for (int i = 0; i < 99; ++i) {
+            now += 100;
+            if (!log.note(RefusalLog::Kind::StandardAccount).isEmpty()) ++lines;
+        }
+        for (int i = 0; i < 20; ++i)
+            if (!log.note(RefusalLog::Kind::Sandboxed).isEmpty()) ++lines;
+        now = kRefusalLineMs - 1;
+        if (!log.note(RefusalLog::Kind::Unreadable).isEmpty()) ++lines;
+        CHECK_EQ(lines, 0);
+        now = kRefusalLineMs;
+        const QString next = log.note(RefusalLog::Kind::OtherAccount);
+        CHECK(next.startsWith(QStringLiteral("[LocalChannel] 121 caller(s) turned away")));
+        CHECK(next.contains(QStringLiteral(
+            "(99 standard account, 20 sandboxed, 1 unreadable, 1 another account)")));
+        // Counted again from nothing, and quiet for the next minute.
+        now += kRefusalLineMs - 1;
+        CHECK(log.note(RefusalLog::Kind::StandardAccount).isEmpty());
+        now += 1;
+        CHECK(log.note(RefusalLog::Kind::StandardAccount)
+                  .contains(QStringLiteral("2 caller(s) turned away since the last such line "
+                                           "(2 standard account)")));
+    }
+
     // ── Both ends, for real ─────────────────────────────────────────────────
     QTemporaryDir data;
     const QString endpoint = endpointFor(
@@ -492,6 +558,31 @@ void run_local_channel_tests()
             CHECK(seen[0].path == QStringLiteral("/api/system/restart"));
             CHECK(seen[0].query == QStringLiteral("p=/admin"));
             CHECK(seen[0].body == QByteArray("{\"x\":1}"));
+            // Who asked, as the server's end read it: a label for the log, and
+            // a channel opened to this account alone.
+            CHECK(!seen[0].callerLabel.isEmpty());
+            CHECK(!seen[0].service);
+            CHECK(verdictOf(seen[0].caller, false) == RequestGuard::LocalVerdict::Admit);
+#ifdef Q_OS_WIN
+            // From this process's own token, lent by the pipe: its account, at
+            // the level a person's program runs, and no sandbox.
+            CHECK(seen[0].caller.readable);
+            CHECK(!seen[0].caller.sid.isEmpty());
+            CHECK(!seen[0].caller.groups.isEmpty());
+            CHECK(seen[0].caller.integrityRid >= RequestGuard::kMediumIntegrity);
+            CHECK(!seen[0].caller.appContainer);
+            CHECK(!seen[0].caller.restricted);
+            CHECK(verdictOf(seen[0].caller, true) == RequestGuard::LocalVerdict::Admit);
+            // The same facts with a sandbox's level are shut out.
+            LocalCaller low = seen[0].caller;
+            low.integrityRid = 0x1000;
+            CHECK(verdictOf(low, false) == RequestGuard::LocalVerdict::Sandboxed);
+            // And another account is another account, for a server in its
+            // owner's session.
+            LocalCaller other = seen[0].caller;
+            other.sid += QStringLiteral("0");
+            CHECK(verdictOf(other, false) == RequestGuard::LocalVerdict::StandardAccount);
+#endif
         }
 
         // The channel is there for the next caller, and the one after.

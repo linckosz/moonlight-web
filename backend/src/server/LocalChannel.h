@@ -18,6 +18,7 @@
 #pragma once
 
 #include "common/Types.h"
+#include "server/RequestGuard.h"
 
 #include <QByteArray>
 #include <QObject>
@@ -25,6 +26,7 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 /**
@@ -56,6 +58,14 @@ struct Request
     QString path;    ///< "/api/…", no query
     QString query;   ///< "a=b&c=d", may be empty
     QByteArray body; ///< JSON as the route reads it, may be empty
+
+    // Set by the server's end once the request has come in, never on the wire.
+    /// Who asked, as the server's end read it (Windows: the caller's token).
+    LocalCaller caller;
+    /// The channel is open to the people signed in at this PC (Audience::SignedIn).
+    bool service = false;
+    /// Who asked, for the log alone: never part of a decision.
+    QString callerLabel;
 };
 
 /// What it is answered. @c status 0: the request never got an answer.
@@ -208,6 +218,49 @@ HttpRequest httpRequestFor(const Request& request);
 
 /// What goes back of the server's answer: its status and its body, no header.
 Reply replyFor(const HttpResponse& response);
+
+/// Whether this caller is let in: RequestGuard::localCallerVerdict with this
+/// server's account and the administrators' group as sidText() writes them,
+/// on Windows. Elsewhere the socket's peer was judged when it connected
+/// (this account or root, read by the kernel), and nobody else got this far.
+RequestGuard::LocalVerdict verdictOf(const LocalCaller& caller, bool service);
+
+/// One line per request let in: who asked, and for what, never the body. A
+/// caller repeating itself is counted, one line a minute says how many times.
+void logAdmitted(const QString& caller, const QString& method, const QString& path);
+
+/// How long the refusals are counted before a line says how many there were.
+inline constexpr qint64 kRefusalLineMs = 60 * 1000;
+
+/// The callers the channel turned away: at most one line a minute, saying how
+/// many and of which sort. Never which account, process or program.
+class RefusalLog
+{
+public:
+    enum class Kind
+    {
+        StandardAccount, ///< an account that is neither the server's nor an administrator
+        Sandboxed,       ///< a low-integrity, AppContainer or restricted token
+        Unreadable,      ///< a caller whose token could not be read
+        OtherAccount,    ///< a socket peer that is neither this account nor root
+    };
+
+    /// @p nowMs: a monotonic clock in milliseconds, the process's when empty.
+    explicit RefusalLog(std::function<qint64()> nowMs = {});
+
+    /// Counts one refusal. The line to write now, or empty until a minute has
+    /// passed since the last one, the refusals meanwhile being counted.
+    QString note(Kind kind);
+
+private:
+    std::mutex m_Mutex;
+    std::function<qint64()> m_NowMs;
+    qint64 m_SaidAt = -1;
+    int m_Counts[4] = {};
+};
+
+/// The process's refusals, which both ends of the code write to.
+RefusalLog& refusals();
 
 // ── A caller's end ──────────────────────────────────────────────────────────
 

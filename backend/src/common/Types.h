@@ -18,12 +18,35 @@
 #pragma once
 
 #include <QByteArray>
+#include <QList>
 #include <QMap>
 #include <QSet>
 #include <QString>
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <functional>
+
+/// One group of a Windows token: its SID as text, and its attributes as the
+/// token states them (SE_GROUP_ENABLED, SE_GROUP_USE_FOR_DENY_ONLY, …).
+struct TokenGroup
+{
+    QString sid;
+    quint32 attributes = 0;
+};
+
+/// Who asked over the local channel, as the server's end of the channel read it
+/// (LocalChannel.cpp): the caller's own token on Windows, taken from the pipe
+/// once per connection. Facts only; RequestGuard::localCallerVerdict decides.
+/// Nothing in it comes from what the caller wrote, nor from its process ID.
+struct LocalCaller
+{
+    bool readable = false;     ///< false: nothing below could be read
+    QString sid;               ///< the account, as LocalChannel's sidText() writes it
+    QList<TokenGroup> groups;  ///< every group of the token, with its attributes
+    quint32 integrityRid = 0;  ///< the token's mandatory level (SECURITY_MANDATORY_*_RID)
+    bool appContainer = false; ///< an AppContainer token
+    bool restricted = false;   ///< a restricted token (IsTokenRestricted)
+};
 
 struct HttpRequest
 {
@@ -98,6 +121,14 @@ struct HttpRequest
     bool localChannel = false;  // Asked over the local channel by a program of this
                                 // install (server/LocalChannel.h), set by HttpServer
                                 // alone: the tray of a server that runs as a service.
+
+    // With localChannel, set by the channel's server end and never from the
+    // wire: who asked, as that end read it (LocalChannel.cpp);
+    LocalCaller localCaller;
+    // whether the channel was opened to the people signed in at this PC (a service);
+    bool localChannelService = false;
+    // and who asked, for the log alone (process and image), never part of a decision.
+    QString localCallerLabel;
 };
 
 struct HttpResponse

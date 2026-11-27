@@ -1132,6 +1132,180 @@ void run_request_guard_tests()
     CHECK(!localChannelRoute("GET", "/api/healthz"));
     CHECK(!localChannelRoute("GET", ""));
 
+    // Who the local channel lets in (localCallerVerdict), from what its server
+    // end read of the caller's token. SIDs as LocalChannel's sidText() writes them.
+    const QString serverSid = QStringLiteral("S-1-5-21-1111-2222-3333-1001");
+    const QString otherSid = QStringLiteral("S-1-5-21-1111-2222-3333-1002");
+    const QString systemSid = QStringLiteral("S-1-5-18");
+    const QString adminsSid = QStringLiteral("S-1-5-32-544");
+    const TokenGroup usersGroup{QStringLiteral("S-1-5-32-545"), kGroupEnabled};
+    // As an elevated administrator's token states it (mandatory, by default, enabled, owner)…
+    const TokenGroup adminsEnabled{adminsSid, 0x1 | 0x2 | kGroupEnabled | 0x8};
+    // …and as UAC leaves it in that administrator's other programs.
+    const TokenGroup adminsDenyOnly{adminsSid, kGroupDenyOnly};
+    auto caller = [](const QString& sid, const QList<TokenGroup>& groups) {
+        LocalCaller c;
+        c.readable = true;
+        c.sid = sid;
+        c.groups = groups;
+        c.integrityRid = kMediumIntegrity;
+        return c;
+    };
+
+    SECTION("RequestGuard — the local channel lets in the server's account, and a service its "
+            "administrators too");
+    {
+        for (bool service : {false, true}) {
+            // The server's own account, whatever its groups.
+            CHECK(localCallerVerdict(service, serverSid, adminsSid,
+                                     caller(serverSid, {usersGroup})) == LocalVerdict::Admit);
+            // Another account, with no administrators' group: never.
+            CHECK(
+                localCallerVerdict(service, serverSid, adminsSid, caller(otherSid, {usersGroup})) ==
+                LocalVerdict::StandardAccount);
+        }
+        // An administrator of this PC, for a service: elevated or not.
+        CHECK(localCallerVerdict(true, serverSid, adminsSid,
+                                 caller(otherSid, {usersGroup, adminsEnabled})) ==
+              LocalVerdict::Admit);
+        CHECK(localCallerVerdict(true, serverSid, adminsSid,
+                                 caller(otherSid, {usersGroup, adminsDenyOnly})) ==
+              LocalVerdict::Admit);
+        // Never for a server in its owner's session: its channel is that account's.
+        CHECK(localCallerVerdict(false, serverSid, adminsSid, caller(otherSid, {adminsEnabled})) ==
+              LocalVerdict::StandardAccount);
+        CHECK(localCallerVerdict(false, serverSid, adminsSid, caller(otherSid, {adminsDenyOnly})) ==
+              LocalVerdict::StandardAccount);
+        // The group stated neither enabled nor for deny only: not counted.
+        CHECK(localCallerVerdict(true, serverSid, adminsSid,
+                                 caller(otherSid, {TokenGroup{adminsSid, 0x1 | 0x2}})) ==
+              LocalVerdict::StandardAccount);
+        // A group that is not the administrators', however it is stated.
+        CHECK(localCallerVerdict(
+                  true, serverSid, adminsSid,
+                  caller(otherSid, {TokenGroup{QStringLiteral("S-1-5-32-5440"), kGroupEnabled}})) ==
+              LocalVerdict::StandardAccount);
+        // The system's own token holds the administrators, enabled: in for a
+        // service, as an administrator; a server in its owner's session, never.
+        CHECK(localCallerVerdict(true, serverSid, adminsSid, caller(systemSid, {adminsEnabled})) ==
+              LocalVerdict::Admit);
+        CHECK(localCallerVerdict(false, serverSid, adminsSid, caller(systemSid, {adminsEnabled})) ==
+              LocalVerdict::StandardAccount);
+        // A service that runs as the system: the system is its own account.
+        CHECK(localCallerVerdict(true, systemSid, adminsSid, caller(systemSid, {})) ==
+              LocalVerdict::Admit);
+        // The local service, the network service, the anonymous: accounts like any other.
+        for (const char* sid : {"S-1-5-19", "S-1-5-20", "S-1-5-7"})
+            CHECK(localCallerVerdict(true, serverSid, adminsSid,
+                                     caller(QString::fromLatin1(sid), {usersGroup})) ==
+                  LocalVerdict::StandardAccount);
+        // Text that is not the server's SID as sidText() writes it is another account.
+        CHECK(localCallerVerdict(true, serverSid, adminsSid,
+                                 caller(serverSid.toLower(), {usersGroup})) ==
+              LocalVerdict::StandardAccount);
+        // The administrators' SID not read: nobody is let in as one.
+        CHECK(localCallerVerdict(true, serverSid, QString(), caller(otherSid, {adminsEnabled})) ==
+              LocalVerdict::StandardAccount);
+        CHECK(localCallerVerdict(true, serverSid, QString(), caller(serverSid, {})) ==
+              LocalVerdict::Admit);
+    }
+
+    SECTION("RequestGuard — a sandbox is shut out of the local channel, whoever it belongs to");
+    {
+        const QList<LocalCaller> welcome = {caller(serverSid, {usersGroup}),
+                                            caller(otherSid, {usersGroup, adminsEnabled}),
+                                            caller(otherSid, {usersGroup, adminsDenyOnly})};
+        for (const LocalCaller& base : welcome) {
+            CHECK(localCallerVerdict(true, serverSid, adminsSid, base) == LocalVerdict::Admit);
+            for (quint32 level : {0x0000u, 0x1000u, 0x1FFFu}) { // untrusted, low, just below medium
+                LocalCaller c = base;
+                c.integrityRid = level;
+                CHECK(localCallerVerdict(true, serverSid, adminsSid, c) == LocalVerdict::Sandboxed);
+                CHECK(localCallerVerdict(false, serverSid, adminsSid, c) ==
+                      LocalVerdict::Sandboxed);
+            }
+            LocalCaller container = base;
+            container.appContainer = true;
+            CHECK(localCallerVerdict(true, serverSid, adminsSid, container) ==
+                  LocalVerdict::Sandboxed);
+            CHECK(localCallerVerdict(false, serverSid, adminsSid, container) ==
+                  LocalVerdict::Sandboxed);
+            LocalCaller restricted = base;
+            restricted.restricted = true;
+            CHECK(localCallerVerdict(true, serverSid, adminsSid, restricted) ==
+                  LocalVerdict::Sandboxed);
+            CHECK(localCallerVerdict(false, serverSid, adminsSid, restricted) ==
+                  LocalVerdict::Sandboxed);
+        }
+        // Above medium is no sandbox: an elevated program, the system.
+        for (quint32 level : {0x2000u, 0x2100u, 0x3000u, 0x4000u}) {
+            LocalCaller c = caller(serverSid, {});
+            c.integrityRid = level;
+            CHECK(localCallerVerdict(false, serverSid, adminsSid, c) == LocalVerdict::Admit);
+        }
+    }
+
+    SECTION("RequestGuard — a caller of the local channel that cannot be read is shut out");
+    {
+        for (bool service : {false, true}) {
+            // Nothing read.
+            CHECK(localCallerVerdict(service, serverSid, adminsSid, LocalCaller{}) ==
+                  LocalVerdict::Unreadable);
+            // Said read, with no account: not read.
+            LocalCaller noAccount = caller(QString(), {adminsEnabled});
+            CHECK(localCallerVerdict(service, serverSid, adminsSid, noAccount) ==
+                  LocalVerdict::Unreadable);
+            // Facts there, but not marked read: not read, even the server's own.
+            LocalCaller unmarked = caller(serverSid, {adminsEnabled});
+            unmarked.readable = false;
+            CHECK(localCallerVerdict(service, serverSid, adminsSid, unmarked) ==
+                  LocalVerdict::Unreadable);
+            // The server's own account not read: nobody is let in.
+            CHECK(localCallerVerdict(service, QString(), adminsSid, caller(serverSid, {})) ==
+                  LocalVerdict::Unreadable);
+            CHECK(localCallerVerdict(service, QString(), adminsSid,
+                                     caller(otherSid, {adminsEnabled})) ==
+                  LocalVerdict::Unreadable);
+        }
+    }
+
+    SECTION("RequestGuard — the local channel asks who before what, on every one of its routes");
+    {
+        const QList<LocalRoute> routes = localChannelRoutes();
+        CHECK(routes.size() >= 19);
+        // The ones that matter most are there, so the walk below covers them.
+        auto listed = [&routes](const char* method, const char* path) {
+            for (const LocalRoute& r : routes)
+                if (QLatin1String(r.method) == QLatin1String(method) &&
+                    QLatin1String(r.path) == QLatin1String(path))
+                    return true;
+            return false;
+        };
+        CHECK(listed("GET", "/api/server/remote-link"));
+        CHECK(listed("POST", "/api/admin/pin/generate"));
+        CHECK(listed("POST", "/api/admin/password"));
+        CHECK(listed("POST", "/api/system/quit"));
+
+        for (const LocalRoute& r : routes) {
+            const QString method = QString::fromLatin1(r.method);
+            const QString path = QString::fromLatin1(r.path);
+            CHECK(localChannelRoute(method, path));
+            CHECK(localChannelGate(method, path, LocalVerdict::Admit) == LocalGate::Pass);
+            for (LocalVerdict refused :
+                 {LocalVerdict::StandardAccount, LocalVerdict::Sandboxed, LocalVerdict::Unreadable})
+                CHECK(localChannelGate(method, path, refused) == LocalGate::Forbidden);
+        }
+        // Not a route of the channel: 404 for who is let in, and the same 403
+        // as for every route to anyone else, who learns nothing of the list.
+        CHECK(localChannelGate("GET", "/api/admin/token", LocalVerdict::Admit) ==
+              LocalGate::NotFound);
+        CHECK(localChannelGate("GET", "/api/admin/token", LocalVerdict::StandardAccount) ==
+              LocalGate::Forbidden);
+        CHECK(localChannelGate("POST", "/api/health", LocalVerdict::Sandboxed) ==
+              LocalGate::Forbidden);
+        CHECK(localChannelGate("GET", "", LocalVerdict::Unreadable) == LocalGate::Forbidden);
+    }
+
     SECTION("RequestGuard — a session on another browser's key");
 
     {

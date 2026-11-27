@@ -1350,11 +1350,33 @@ void HttpServer::serveRequest(HttpRequest req, Arrival arrival, ResponseCallback
     // this machine. It reaches the routes named for it and no other — not a
     // page, not a stream, not a session — and it carries no cookie: whatever
     // such a request holds, none is read.
+    //
+    // Who asks comes first, whatever it asks (RequestGuard::localChannelGate):
+    // read by the channel from the caller's own token, never from the request.
     const bool viaLocal = (arrival == Arrival::Local);
     req.localChannel = viaLocal;
-    if (viaLocal && !RequestGuard::localChannelRoute(req.method, req.path)) {
-        respond(HttpResponse::error(404, "Not Found"));
-        return;
+    if (viaLocal) {
+        const RequestGuard::LocalVerdict verdict =
+            mw::localchannel::verdictOf(req.localCaller, req.localChannelService);
+        switch (RequestGuard::localChannelGate(req.method, req.path, verdict)) {
+        case RequestGuard::LocalGate::Forbidden: {
+            using Kind = mw::localchannel::RefusalLog::Kind;
+            const Kind kind = verdict == RequestGuard::LocalVerdict::Sandboxed ? Kind::Sandboxed
+                              : verdict == RequestGuard::LocalVerdict::Unreadable
+                                  ? Kind::Unreadable
+                                  : Kind::StandardAccount;
+            const QString line = mw::localchannel::refusals().note(kind);
+            if (!line.isEmpty()) Logger::info(line);
+            respond(HttpResponse::json(QJsonObject{{"error", "forbidden"}}, 403));
+            return;
+        }
+        case RequestGuard::LocalGate::NotFound:
+            respond(HttpResponse::error(404, "Not Found"));
+            return;
+        case RequestGuard::LocalGate::Pass:
+            mw::localchannel::logAdmitted(req.localCallerLabel, req.method, req.path);
+            break;
+        }
     }
 
     const bool peerLocal = arrival == Arrival::Socket && isLocalRequest(req.clientAddress);

@@ -24,6 +24,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
+#include <QStringList>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -303,6 +304,10 @@ HttpRequest httpRequestFor(const Request& request)
         out.headers.insert(QStringLiteral("content-type"), QStringLiteral("application/json"));
     out.headers.insert(QStringLiteral("content-length"), QString::number(request.body.size()));
     out.clientAddress = QLatin1String(kClientLabel);
+    // What the server's end read, never anything of the wire.
+    out.localCaller = request.caller;
+    out.localChannelService = request.service;
+    out.localCallerLabel = request.callerLabel;
     return out;
 }
 
@@ -314,22 +319,51 @@ Reply replyFor(const HttpResponse& response)
     return out;
 }
 
-namespace {
-
-/// The answer a caller gets when the server could not make one.
-Reply refusal(int status, const char* why)
+RefusalLog::RefusalLog(std::function<qint64()> nowMs)
+    : m_NowMs(std::move(nowMs))
 {
-    Reply out;
-    out.status = status;
-    out.body = QJsonDocument(QJsonObject{{QStringLiteral("error"), QLatin1String(why)}})
-                   .toJson(QJsonDocument::Compact);
-    return out;
+    if (!m_NowMs) {
+        m_NowMs = []() {
+            static const QElapsedTimer since = []() {
+                QElapsedTimer timer;
+                timer.start();
+                return timer;
+            }();
+            return since.elapsed();
+        };
+    }
 }
 
-/// One line per request let in: who asked, and for what, never the body. The
-/// tray asks the same thing every two seconds, so a caller repeating itself is
-/// counted rather than written: one line a minute says how many times.
-void logAdmitted(const QString& caller, const Request& request)
+QString RefusalLog::note(Kind kind)
+{
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    ++m_Counts[static_cast<int>(kind)];
+    const qint64 now = m_NowMs();
+    if (m_SaidAt >= 0 && now - m_SaidAt < kRefusalLineMs) return {};
+
+    static const char* const kNames[] = {"standard account", "sandboxed", "unreadable",
+                                         "another account"};
+    int total = 0;
+    QStringList sorts;
+    for (int i = 0; i < 4; ++i) {
+        if (m_Counts[i] == 0) continue;
+        total += m_Counts[i];
+        sorts << QStringLiteral("%1 %2").arg(m_Counts[i]).arg(QLatin1String(kNames[i]));
+        m_Counts[i] = 0;
+    }
+    m_SaidAt = now;
+    return QStringLiteral("[LocalChannel] %1 caller(s) turned away since the last such line (%2)")
+        .arg(total)
+        .arg(sorts.join(QStringLiteral(", ")));
+}
+
+RefusalLog& refusals()
+{
+    static RefusalLog log;
+    return log;
+}
+
+void logAdmitted(const QString& caller, const QString& method, const QString& path)
 {
     struct Seen
     {
@@ -345,8 +379,7 @@ void logAdmitted(const QString& caller, const Request& request)
         std::lock_guard<std::mutex> lock(mutex);
         if (!clock.isValid()) clock.start();
         if (seen.size() > 256) seen.clear();
-        Seen& s =
-            seen[caller + QLatin1Char('|') + request.method + QLatin1Char('|') + request.path];
+        Seen& s = seen[caller + QLatin1Char('|') + method + QLatin1Char('|') + path];
         const qint64 now = clock.elapsed();
         if (s.loggedAt != 0 && now - s.loggedAt < 60000) {
             ++s.since;
@@ -357,8 +390,20 @@ void logAdmitted(const QString& caller, const Request& request)
         s.loggedAt = now + 1; // never 0: 0 means "not yet written"
         s.since = 0;
     }
-    Logger::info(QStringLiteral("[LocalChannel] %1 %2 from %3%4")
-                     .arg(request.method, request.path, caller, repeats));
+    Logger::info(
+        QStringLiteral("[LocalChannel] %1 %2 from %3%4").arg(method, path, caller, repeats));
+}
+
+namespace {
+
+/// The answer a caller gets when the server could not make one.
+Reply refusal(int status, const char* why)
+{
+    Reply out;
+    out.status = status;
+    out.body = QJsonDocument(QJsonObject{{QStringLiteral("error"), QLatin1String(why)}})
+                   .toJson(QJsonDocument::Compact);
+    return out;
 }
 
 /// An answer as it goes on the wire: one too large for a frame becomes a
@@ -459,23 +504,176 @@ bool readFrame(HANDLE pipe, FrameReader& reader, int timeoutMs, QString* why)
     return true;
 }
 
-/// This process's account, as the text form of its SID.
+static_assert(RequestGuard::kGroupEnabled == SE_GROUP_ENABLED);
+static_assert(RequestGuard::kGroupDenyOnly == SE_GROUP_USE_FOR_DENY_ONLY);
+static_assert(RequestGuard::kMediumIntegrity == SECURITY_MANDATORY_MEDIUM_RID);
+
+/// A SID as text. The one writer of every SID the channel compares, so that
+/// two of them are equal exactly when the SIDs are; empty when it fails.
+QString sidText(PSID sid)
+{
+    if (!sid || !::IsValidSid(sid)) return {};
+    LPWSTR text = nullptr;
+    if (!::ConvertSidToStringSidW(sid, &text)) return {};
+    QString out = QString::fromWCharArray(text);
+    ::LocalFree(text);
+    return out;
+}
+
+/// One class of information of @p token; empty when it cannot be read.
+std::vector<unsigned char> tokenInfo(HANDLE token, TOKEN_INFORMATION_CLASS what)
+{
+    DWORD size = 0;
+    ::GetTokenInformation(token, what, nullptr, 0, &size);
+    if (size == 0) return {};
+    std::vector<unsigned char> out(size);
+    if (!::GetTokenInformation(token, what, out.data(), size, &size)) return {};
+    return out;
+}
+
+/// This process's account, as sidText() writes it.
+QString accountSid()
+{
+    static const QString own = []() {
+        QString out;
+        HANDLE token = nullptr;
+        if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) return out;
+        const std::vector<unsigned char> user = tokenInfo(token, TokenUser);
+        if (!user.empty())
+            out = sidText(reinterpret_cast<const TOKEN_USER*>(user.data())->User.Sid);
+        ::CloseHandle(token);
+        return out;
+    }();
+    return own;
+}
+
+/// BUILTIN\Administrators, as sidText() writes it.
+QString administratorsSid()
+{
+    static const QString admins = []() {
+        BYTE sid[SECURITY_MAX_SID_SIZE];
+        DWORD size = sizeof(sid);
+        if (!::CreateWellKnownSid(WinBuiltinAdministratorsSid, nullptr, sid, &size))
+            return QString();
+        return sidText(sid);
+    }();
+    return admins;
+}
+
 std::wstring ownSid()
 {
-    std::wstring out;
+    return accountSid().toStdWString();
+}
+
+/// The caller's identity on this thread, for as long as it takes to open its
+/// token, and never longer: end() lets it go, and so does leaving the scope.
+class Impersonation
+{
+public:
+    explicit Impersonation(HANDLE pipe)
+        : m_Active(::ImpersonateNamedPipeClient(pipe) != 0)
+    {}
+    ~Impersonation()
+    {
+        if (m_Active) ::RevertToSelf();
+    }
+    Impersonation(const Impersonation&) = delete;
+    Impersonation& operator=(const Impersonation&) = delete;
+
+    bool active() const { return m_Active; }
+    /// False when this thread could not be given back its own identity.
+    bool end()
+    {
+        if (m_Active && ::RevertToSelf()) m_Active = false;
+        return !m_Active;
+    }
+
+private:
+    bool m_Active;
+};
+
+enum class CallerRead
+{
+    Read,
+    Unreadable,
+    /// This thread still bears the caller's identity: nothing more is done on it.
+    NotReverted,
+};
+
+/// Who is at the other end of a connected instance, from the caller's own
+/// token: the pipe lends it to this thread (the caller opens it at the
+/// identification level, enough to read and never to act), the token is
+/// opened as this process, and the thread is given back its own identity
+/// before anything is read. Nothing of the process ID, nothing the caller wrote.
+/// A pipe lends its caller's token only once something was read from it.
+CallerRead readCaller(HANDLE pipe, LocalCaller& out)
+{
+    out = LocalCaller{};
     HANDLE token = nullptr;
-    if (!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token)) return out;
-    DWORD size = 0;
-    ::GetTokenInformation(token, TokenUser, nullptr, 0, &size);
-    std::vector<unsigned char> user(size);
-    LPWSTR sid = nullptr;
-    if (size && ::GetTokenInformation(token, TokenUser, user.data(), size, &size) &&
-        ::ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid, &sid)) {
-        out = sid;
-        ::LocalFree(sid);
+    {
+        Impersonation as(pipe);
+        if (!as.active()) return CallerRead::Unreadable;
+        const BOOL opened = ::OpenThreadToken(::GetCurrentThread(), TOKEN_QUERY, TRUE, &token);
+        if (!as.end()) {
+            if (opened) ::CloseHandle(token);
+            return CallerRead::NotReverted;
+        }
+        if (!opened) return CallerRead::Unreadable;
+    }
+
+    bool ok = true;
+    LocalCaller read;
+    const std::vector<unsigned char> user = tokenInfo(token, TokenUser);
+    if (!user.empty())
+        read.sid = sidText(reinterpret_cast<const TOKEN_USER*>(user.data())->User.Sid);
+    ok = ok && !read.sid.isEmpty();
+
+    const std::vector<unsigned char> groups = tokenInfo(token, TokenGroups);
+    if (ok && !groups.empty()) {
+        const auto* list = reinterpret_cast<const TOKEN_GROUPS*>(groups.data());
+        for (DWORD i = 0; i < list->GroupCount; ++i) {
+            const QString sid = sidText(list->Groups[i].Sid);
+            if (sid.isEmpty()) {
+                ok = false;
+                break;
+            }
+            read.groups.append(TokenGroup{sid, list->Groups[i].Attributes});
+        }
+    } else {
+        ok = false;
+    }
+
+    const std::vector<unsigned char> level = tokenInfo(token, TokenIntegrityLevel);
+    if (ok && !level.empty()) {
+        const PSID label = reinterpret_cast<const TOKEN_MANDATORY_LABEL*>(level.data())->Label.Sid;
+        if (label && ::IsValidSid(label) && *::GetSidSubAuthorityCount(label) > 0)
+            read.integrityRid = *::GetSidSubAuthority(label, *::GetSidSubAuthorityCount(label) - 1);
+        else
+            ok = false;
+    } else {
+        ok = false;
+    }
+
+    const std::vector<unsigned char> container = tokenInfo(token, TokenIsAppContainer);
+    if (ok && container.size() >= sizeof(DWORD))
+        read.appContainer = *reinterpret_cast<const DWORD*>(container.data()) != 0;
+    else
+        ok = false;
+
+    if (ok) {
+        ::SetLastError(ERROR_SUCCESS);
+        const BOOL restricted = ::IsTokenRestricted(token);
+        if (!restricted && ::GetLastError() != ERROR_SUCCESS)
+            ok = false;
+        else
+            read.restricted = restricted != 0;
     }
     ::CloseHandle(token);
-    return out;
+
+    if (!ok) return CallerRead::Unreadable;
+    read.readable = true;
+    out = read;
+    return CallerRead::Read;
 }
 
 QString imageOf(DWORD pid)
@@ -524,11 +722,8 @@ PipeOwner ownerOf(HANDLE pipe)
         return PipeOwner::Unreadable;
     }
     PipeOwner out = PipeOwner::Other;
-    LPWSTR text = nullptr;
-    if (::ConvertSidToStringSidW(owner, &text)) {
-        if (ownSid() == text) out = PipeOwner::Mine;
-        ::LocalFree(text);
-    }
+    const QString text = sidText(owner);
+    if (!text.isEmpty() && text == accountSid()) out = PipeOwner::Mine;
     if (out == PipeOwner::Other && (::IsWellKnownSid(owner, WinLocalSystemSid) ||
                                     ::IsWellKnownSid(owner, WinBuiltinAdministratorsSid)))
         out = PipeOwner::Trusted;
@@ -575,6 +770,11 @@ bool serverIsOurs(HANDLE pipe, QString* why)
 
 } // namespace
 
+RequestGuard::LocalVerdict verdictOf(const LocalCaller& caller, bool service)
+{
+    return RequestGuard::localCallerVerdict(service, accountSid(), administratorsSid(), caller);
+}
+
 struct Server::Impl
 {
     std::wstring path;
@@ -587,6 +787,7 @@ struct Server::Impl
     HANDLE first = INVALID_HANDLE_VALUE; // the instance listen() made
     std::thread acceptor;
     bool listening = false;
+    bool service = false; // opened to the people signed in at this PC (Audience::SignedIn)
 
     // Guards `context`: once `stopping`, no thread posts to it again.
     std::mutex dispatch;
@@ -752,6 +953,29 @@ static void acceptLoop(const std::shared_ptr<Server::Impl>& impl)
     if (pipe != INVALID_HANDLE_VALUE) ::CloseHandle(pipe);
 }
 
+/// A thread that read a caller could not be given back its own identity: the
+/// channel serves nobody else until the server starts again, and says so from
+/// the server's thread. The rest of the server goes on. Never expected.
+static void shutChannel(const std::shared_ptr<Server::Impl>& impl)
+{
+    {
+        std::lock_guard<std::mutex> lock(impl->dispatch);
+        if (!impl->stopping) {
+            QMetaObject::invokeMethod(
+                impl->context,
+                []() {
+                    Logger::error(QStringLiteral(
+                        "[LocalChannel] a caller's identity could not be let go of on the "
+                        "thread that read it: the channel is shut until the server starts "
+                        "again"));
+                },
+                Qt::QueuedConnection);
+            impl->stopping = true;
+        }
+    }
+    ::SetEvent(impl->stopEvent);
+}
+
 static void serveConnection(const std::shared_ptr<Server::Impl>& impl, HANDLE pipe)
 {
     FrameReader reader(true, kMaxRequestBytes);
@@ -762,13 +986,19 @@ static void serveConnection(const std::shared_ptr<Server::Impl>& impl, HANDLE pi
         finish(pipe, false);
         return;
     }
+    // Who asks, from its own token, before anything it wrote is looked at.
+    LocalCaller caller;
+    if (readCaller(pipe, caller) == CallerRead::NotReverted) {
+        shutChannel(impl);
+        finish(pipe, false);
+        return;
+    }
     const std::optional<Request> request = decodeRequest(reader.payload());
     if (!request) {
         Logger::warning(QStringLiteral("[LocalChannel] a caller refused: not a request"));
         finish(pipe, writeAll(pipe, replyFrame(refusal(400, "bad_request")), kRequestReadMs));
         return;
     }
-    logAdmitted(callerOf(pipe), *request);
 
     auto pending = std::make_shared<Pending>();
     bool posted = false;
@@ -776,7 +1006,10 @@ static void serveConnection(const std::shared_ptr<Server::Impl>& impl, HANDLE pi
         std::lock_guard<std::mutex> lock(impl->dispatch);
         if (!impl->stopping) {
             const Server::Handler handler = impl->handler;
-            const Request asked = *request;
+            Request asked = *request;
+            asked.caller = caller;
+            asked.service = impl->service;
+            asked.callerLabel = callerOf(pipe);
             posted = QMetaObject::invokeMethod(
                 impl->context,
                 [handler, asked, pending]() {
@@ -836,6 +1069,7 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error, Au
     m_Impl->endpoint = endpoint;
     m_Impl->path = endpoint.toStdWString();
     m_Impl->handler = std::move(handler);
+    m_Impl->service = audience == Audience::SignedIn;
 
     // Who may open it: pipeAccessList().
     const std::wstring self = ownSid();
@@ -1077,6 +1311,15 @@ bool folderIsOursAlone(const QString& dir, QString* why)
 
 } // namespace
 
+RequestGuard::LocalVerdict verdictOf(const LocalCaller& caller, bool service)
+{
+    // The kernel's word on the peer was taken when it connected: this
+    // account or root, nobody else (accountAllowed).
+    Q_UNUSED(caller);
+    Q_UNUSED(service);
+    return RequestGuard::LocalVerdict::Admit;
+}
+
 struct Server::Impl
 {
     QLocalServer* server = nullptr;
@@ -1141,9 +1384,9 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error, Au
         while (QLocalSocket* socket = m_Impl->server->nextPendingConnection()) {
             const qint64 uid = peerUid(socket->socketDescriptor());
             if (!accountAllowed(uid)) {
-                Logger::warning(QStringLiteral("[LocalChannel] a caller refused: account %1 is "
-                                               "not the server's")
-                                    .arg(uid));
+                const QString line = refusals().note(uid < 0 ? RefusalLog::Kind::Unreadable
+                                                             : RefusalLog::Kind::OtherAccount);
+                if (!line.isEmpty()) Logger::info(line);
                 socket->abort();
                 socket->deleteLater();
                 continue;
@@ -1188,10 +1431,12 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error, Au
                     respond(refusal(400, "bad_request"));
                     return;
                 }
-                logAdmitted(callerOf(socket->socketDescriptor()), *request);
+                // Its account was judged when it connected (accountAllowed).
+                Request asked = *request;
+                asked.callerLabel = callerOf(socket->socketDescriptor());
                 QTimer::singleShot(kHandlerMs, socket,
                                    [respond]() { respond(refusal(504, "no_answer_in_time")); });
-                m_Impl->handler(*request, respond);
+                m_Impl->handler(asked, respond);
             });
         }
     });
