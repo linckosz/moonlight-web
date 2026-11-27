@@ -18,6 +18,7 @@
 #include "PortalScreenCast.h"
 
 #include "../../core/Log.h"
+#include "../../core/PortalCursorMode.h"
 #include "KwinVirtualOutput.h"
 #include "MutterScreenCast.h"
 
@@ -256,7 +257,7 @@ int helperMain(int socket)
         ok ? "ok\n" + std::to_string(stream.nodeId) + "\n" + std::to_string(stream.width) + "\n" +
                  std::to_string(stream.height) + "\n" + (stream.hasPosition ? "1" : "0") + "\n" +
                  std::to_string(stream.x) + "\n" + std::to_string(stream.y) + "\n" +
-                 stream.restoreToken
+                 std::to_string(stream.cursorMode) + "\n" + stream.restoreToken
            : "error\n" + error;
     iovec part = {reply.data(), reply.size()};
     msghdr message = {};
@@ -572,7 +573,7 @@ bool PortalScreenCast::startInHelper(const std::string& restoreToken, int timeou
         return false;
     }
     const std::vector<std::string> reply =
-        splitLines(std::string(buffer, static_cast<size_t>(n)), 8);
+        splitLines(std::string(buffer, static_cast<size_t>(n)), 9);
     if (reply.front() != "ok") {
         error =
             reply.size() > 1 && reply.front() == "error" ? reply[1] : "the portal helper failed";
@@ -581,8 +582,18 @@ bool PortalScreenCast::startInHelper(const std::string& restoreToken, int timeou
         return false;
     }
     // KWin's node is on the session's PipeWire: no descriptor comes with it.
-    if ((fd < 0 && !d->kwin) || reply.size() != 8) {
+    if ((fd < 0 && !d->kwin) || reply.size() != 9) {
         error = "the portal helper's answer carried no PipeWire descriptor";
+        if (fd >= 0) ::close(fd);
+        stopHelper();
+        return false;
+    }
+    // The cursor_mode asked of the portal: one of its three, or none on KWin's
+    // virtual output, which asks no portal for one. Anything else is a helper
+    // gone wrong, not a pointer to guess about.
+    const std::string& mode = reply[7];
+    if (!(mode == "1" || mode == "2" || mode == "4" || (d->kwin && mode == "0"))) {
+        error = "the portal helper's answer named no cursor mode";
         if (fd >= 0) ::close(fd);
         stopHelper();
         return false;
@@ -594,7 +605,8 @@ bool PortalScreenCast::startInHelper(const std::string& restoreToken, int timeou
     out.hasPosition = reply[4] == "1";
     out.x = std::atoi(reply[5].c_str());
     out.y = std::atoi(reply[6].c_str());
-    out.restoreToken = reply[7];
+    out.cursorMode = static_cast<uint32_t>(mode[0] - '0');
+    out.restoreToken = reply[8];
     out.sessionPipeWire = d->kwin;
     return true;
 }
@@ -725,6 +737,24 @@ bool PortalScreenCast::startHere(const std::string& restoreToken, int timeoutMs,
         return false;
     }
 
+    // The pointers this portal can hand over. One it does not offer fails the
+    // whole SelectSources, and the stream with it: xdg-desktop-portal-wlr 0.7
+    // has no METADATA, so a Sway desktop got no picture at all.
+    uint32_t offeredCursorModes = 0;
+    {
+        sd_bus_error modesError = SD_BUS_ERROR_NULL;
+        if (sd_bus_get_property_trivial(d->bus, kBus, kObject, kScreenCast, "AvailableCursorModes",
+                                        &modesError, 'u', &offeredCursorModes) < 0)
+            offeredCursorModes = 0;
+        sd_bus_error_free(&modesError);
+    }
+    const uint32_t cursorMode = portalCursorMode(offeredCursorModes, d->embedCursor);
+    if (cursorMode != (d->embedCursor ? kPortalCursorEmbedded : kPortalCursorMetadata))
+        log::info(
+            "[native] portal: no pointer beside the pictures here (cursor modes " +
+            std::to_string(offeredCursorModes) + "): " +
+            (cursorMode == kPortalCursorEmbedded ? "it is painted into them" : "none at all"));
+
     Answer selected;
     if (!step(
             "SelectSources",
@@ -736,12 +766,12 @@ bool PortalScreenCast::startHere(const std::string& restoreToken, int timeoutMs,
                 // beside the picture rather than burnt into it — the same
                 // contract CursorState carries everywhere else, which is what
                 // lets the client keep drawing its own. 2 = EMBEDDED where
-                // GNOME paints it into the pictures anyway (setEmbedCursor).
+                // GNOME paints it into the pictures anyway (setEmbedCursor),
+                // and where the portal offers no METADATA (portalCursorMode).
                 // persist_mode 2 = remember until the user revokes it, which is
                 // what buys a restore token and, with it, silence next time.
                 // types 4 = VIRTUAL instead: a monitor made for this session.
                 const uint32_t types = d->virtualMonitor ? kSourceVirtual : kSourceMonitor;
-                const uint32_t cursorMode = d->embedCursor ? 2 : 4;
                 if (restoreToken.empty())
                     return sd_bus_message_append(m, "a{sv}", 5, "handle_token", "s", token.c_str(),
                                                  "types", "u", types, "multiple", "b", 0,
@@ -812,6 +842,7 @@ bool PortalScreenCast::startHere(const std::string& restoreToken, int timeoutMs,
     out.hasPosition = started.hasPosition;
     out.x = started.x;
     out.y = started.y;
+    out.cursorMode = cursorMode;
     return true;
 }
 

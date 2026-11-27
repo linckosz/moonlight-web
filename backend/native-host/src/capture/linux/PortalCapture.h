@@ -184,7 +184,9 @@ public:
     /// into every picture (MutterScreenCast::embedsPointer), and its frames
     /// are taken in shared memory while it may show — Mutter's DMA-BUF ones
     /// leave trails of it (setDmabufWhilePointerHidden). Never on a monitor
-    /// KWin makes, nor from GNOME 48.
+    /// KWin makes, nor from GNOME 48. And any stream of a portal that hands
+    /// over no pointer beside the pictures (PortalStream::cursorMode), such as
+    /// the wlroots one: it is painted in, and the client draws none.
     bool cursorInPicture() const override;
 
 private:

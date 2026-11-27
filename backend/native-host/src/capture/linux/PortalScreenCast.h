@@ -114,6 +114,11 @@ struct PortalStream
     /// descriptor: KWin's virtual output (setKwinVirtualOutput) streams there.
     bool sessionPipeWire = false;
 
+    /// The cursor_mode the portal was asked for (portalCursorMode): 2, the
+    /// pointer painted into the pictures, also when METADATA was wanted and the
+    /// portal does not offer it. 0 on the routes that ask no portal for one.
+    uint32_t cursorMode = 0;
+
     bool valid() const { return nodeId != 0 && (pipewireFd >= 0 || sessionPipeWire); }
 };
 

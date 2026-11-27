@@ -19,6 +19,7 @@
 
 #include "../../audio/linux/PipeWireLibrary.h"
 #include "../../core/Log.h"
+#include "../../core/PortalCursorMode.h"
 #include "MutterScreenCast.h"
 #include "XFixesCursor.h"
 
@@ -179,6 +180,9 @@ struct PortalCapture::Impl
     /// One of GNOME's virtual monitors before GNOME 48: its pointer is asked
     /// painted into every picture (MutterScreenCast::embedsPointer).
     bool embedCursor = false;
+    /// A portal that hands over no pointer beside the pictures painted it into
+    /// them instead (PortalStream::cursorMode): the client must not draw one.
+    bool cursorPainted = false;
     /// When acquire() next asks whether Mutter ended the screen cast.
     int64_t nextEndCheckUs = 0;
     /// gamescope's node, read on the session's PipeWire with no handshake at
@@ -639,6 +643,7 @@ bool PortalCapture::start(std::string& error)
             gnomeVirtual && MutterScreenCast::embedsPointer(MutterScreenCast::shellMajor());
         d->portal.setEmbedCursor(d->embedCursor);
         if (!d->portal.start(d->restore, 0, d->granted, error)) return false;
+        d->cursorPainted = d->granted.cursorMode == kPortalCursorEmbedded;
     }
     if (!d->granted.valid()) {
         error = "the portal granted nothing usable";
@@ -979,7 +984,7 @@ const CursorState& PortalCapture::cursor() const
 
 bool PortalCapture::cursorInPicture() const
 {
-    return d->embedCursor;
+    return d->embedCursor || d->cursorPainted;
 }
 
 } // namespace mw::native::capture
