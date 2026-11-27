@@ -22,7 +22,7 @@ This wiki is the canonical technical documentation for contributors and for AI c
 | 6 | [Security](06-Security.md) | Auth (PIN/certificate/host-key), sessions, rate limiting, TLS, the pairing signature that keeps the introduction server out of the middle, the versioned internet consent |
 | 7 | [Settings Reference](07-Settings-Reference.md) | Every `settings.json` key, `.env` variables, build-time embedded secrets |
 | 8 | [REST API](08-REST-API.md) | Every HTTP endpoint and WebSocket surface exposed by the server |
-| 9 | [Installers & Packaging](09-Installers-and-Packaging.md) | Windows (Inno Setup, SignPath), macOS (.pkg, Homebrew cask), Linux (.deb/.rpm/AppImage, signed APT/DNF repositories, AUR), Docker images on GHCR, services, auto-update |
+| 9 | [Installers & Packaging](09-Installers-and-Packaging.md) | Windows (Inno Setup, SignPath, not in effect yet), macOS (.pkg, Homebrew cask), Linux (.deb/.rpm/AppImage, signed APT/DNF repositories, AUR), Docker images on GHCR, services, auto-update |
 | 10 | [Infrastructure Stack](10-Infrastructure-Stack.md) | The one public VM: introduction server, bootstrap entry page, STUN, authoritative DNS, update relay & censuses — Docker stack, installer, manual steps |
 | 11 | [Build, CI & Testing](11-Build-CI-Testing.md) | CMake build, GitHub Actions pipelines, test suites and coverage gates |
 | 12 | [Agentic Coding](12-Agentic-Coding.md) | Recommended AI-agent setup (Claude Code, GitHub Copilot): master agent, skills, sub-agents |
