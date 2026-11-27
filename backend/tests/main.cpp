@@ -141,6 +141,7 @@ void run_auth_status_route_tests();
 void run_host_key_route_tests();
 void run_launch_gate_tests();
 void run_local_channel_tests();
+void run_svcfind_tests();
 void run_host_key_vault_tests();
 void run_owner_handoff_tests();
 void run_owner_link_wait_tests();
@@ -332,6 +333,7 @@ int main(int argc, char** argv)
     run_host_key_route_tests();
     run_launch_gate_tests();
     run_local_channel_tests();
+    run_svcfind_tests();
     run_host_key_vault_tests();
     run_owner_handoff_tests();
     run_owner_link_wait_tests();

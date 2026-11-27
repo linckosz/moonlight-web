@@ -23,11 +23,15 @@
 #include <QByteArray>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
+
+class QTimer;
 
 /**
  * The channel between the running server and the other programs of this
@@ -193,16 +197,55 @@ public:
     /// either way.
     bool listen(const QString& endpoint, Handler handler, QString* error = nullptr,
                 Audience audience = Audience::OwnAccount);
+
+    /// As listen(); and when the name is held by another program (kNameHeld),
+    /// one warning, then another try every @p retryMs on this thread until the
+    /// channel opens, with a line when it does. Everything else the server
+    /// does goes on meanwhile: the holder only keeps the channel shut.
+    bool listenKeepTrying(const QString& endpoint, Handler handler, QString* error = nullptr,
+                          Audience audience = Audience::OwnAccount, int retryMs = kRetryMs);
+    /// Closes the channel, and stops trying to open it.
     void close();
     bool isListening() const;
+    /// Whether it waits for the name to be let go (listenKeepTrying).
+    bool isRetrying() const;
     QString endpoint() const;
+
+    /// While the server this channel belongs to starts: every request is
+    /// answered earlyReply() on the channel's own thread, without the handler,
+    /// so that a launch at the same moment is answered even though the thread
+    /// the Server lives on is busy starting and turns no event loop yet.
+    /// Asked before listen(), it holds from the first caller on.
+    void holdUntilRouted();
+    /// From now on, the handler answers.
+    void route();
+    bool isHeld() const;
+
+    /// The pause between two tries of listenKeepTrying().
+    static constexpr int kRetryMs = 30000;
 
     /// The platform's side of it (LocalChannel.cpp): nothing a caller uses.
     struct Impl;
 
 private:
+    void stopRetrying();
+
     std::shared_ptr<Impl> m_Impl;
+    QTimer* m_Retry = nullptr;
+    /// Shared with each listen()'s state, read on the channel's thread.
+    std::shared_ptr<std::atomic<bool>> m_Early;
 };
+
+/// What the channel answers while the server it belongs to is still starting:
+/// it is opened first, so that a launch at the same moment finds this server
+/// rather than nothing. The same gate as once the server runs, in the same
+/// order (verdictOf, then RequestGuard::localChannelGate): 403 to a caller
+/// that is not let in, 404 to a route that is not the channel's, and 503
+/// "starting" to the rest, with nothing more in it.
+Reply earlyReply(const Request& request);
+
+/// What listen() says in its error when the channel's name is held already.
+inline constexpr char kNameHeld[] = "the channel's name is already held by another program";
 
 // ── Into the server ─────────────────────────────────────────────────────────
 
@@ -285,5 +328,132 @@ Reply request(const QString& endpoint, const Request& request, int timeoutMs,
 Reply requestHoldingServer(const QString& endpoint, const Request& request, int timeoutMs,
                            void** serverProcess, QString* error = nullptr);
 #endif
+
+// ── Finding the server before starting one ──────────────────────────────────
+//
+// A launch asks the channel whether this install's server already runs, as a
+// service or as this account, before it takes its account's lock: a
+// service's lock lives in another profile, and only its channel is common
+// to the machine.
+
+/// How far one probe of the channel went.
+enum class ProbeStage
+{
+    NothingListens, ///< no pipe, no socket of that name: the only "nobody"
+    NotOpened,      ///< there, but busy past the budget, or refused, or broken
+    NotOurs,        ///< opened, and not this install's server: nothing was written
+    NoAnswer,       ///< this install's server, and no answer of the channel in time
+    Answered,       ///< this install's server answered, whatever its status
+};
+
+/// What a launch makes of a probe:
+///   - None: nothing listens; it goes on and starts its server;
+///   - Found: this install's server answered; it surfaces that one;
+///   - Refused: anything else; it starts nothing and says so.
+/// Once the server proved to be this install's, the launch never starts a
+/// second one, whatever comes after.
+enum class ProbeOutcome
+{
+    None,
+    Found,
+    Refused,
+};
+
+ProbeOutcome probeOutcome(ProbeStage stage);
+
+/// The longest a probe takes, end to end: opening, waiting for the pipe,
+/// the server's identity, writing and reading, on one clock.
+inline constexpr int kProbeBudgetMs = 2000;
+
+struct Probe
+{
+    ProbeOutcome outcome = ProbeOutcome::Refused;
+    ProbeStage stage = ProbeStage::NotOpened;
+    int status = 0; ///< the answer's status, only when the server answered
+    bool service =
+        false;   ///< what was reached is a service's (the system's pipe, the machine's socket)
+    QString why; ///< why it did not, for the log
+};
+
+/// The machine's socket of a server that runs as a service (Linux, macOS:
+/// /run/moonlightweb/local.sock, /run/moonlightweb-dev/ for the DEV build;
+/// the folder is the unit's RuntimeDirectory=); empty on Windows, whose pipe
+/// is the machine's already, and for --dev.
+QString machineEndpoint(bool devBuild, bool devFlag);
+
+/// The endpoints a caller tries, in order: its account's (@p accountEndpoint),
+/// then the machine's when there is one.
+QStringList callerEndpoints(const QString& accountEndpoint, bool devBuild, bool devFlag);
+
+/// One request to the first of @p endpoints where something listens: the next
+/// one is tried only when nothing listens at this one (ProbeStage::NothingListens),
+/// on the same clock.
+Reply requestFirst(const QStringList& endpoints, const Request& request, int timeoutMs,
+                   QString* error = nullptr);
+
+/// One GET /api/health to the first of @p endpoints where something listens,
+/// within @p budgetMs in all: no body, no cookie, nothing else asked.
+Probe probe(const QStringList& endpoints, int budgetMs = kProbeBudgetMs);
+
+/// The request probe() sends.
+Request healthRequest();
+
+/// What a launch tells its person when it starts nothing, chosen from the
+/// probe alone and never from what the server said.
+enum class Refusal
+{
+    None,    ///< nothing to tell: nobody there, or this install's server took the launch
+    Refused, ///< another program holds the channel (F4)
+    Gate,    ///< this install's server runs, and this account may not ask it (F3)
+};
+
+/// Refused for a probe that was refused; Gate for a server found that
+/// answered 403, its status read only once it was found; None otherwise.
+Refusal refusalFor(const Probe& probe);
+
+/// The two texts, fixed: nothing read from the channel goes into them.
+QString refusalText(Refusal refusal);
+
+/// How a refusal is told.
+enum class NoticeWay
+{
+    Tray,   ///< a notification from a short-lived tray icon, then the exit
+    Stderr, ///< a line on standard error, nothing to close
+};
+
+/// Tray only on the server's own launch path (@p serverLaunch: a launch, the
+/// login item, the logon task; never a command-line verb), with a desktop, a
+/// notification area and messages it supports. Standard error otherwise, with
+/// no box in its place.
+NoticeWay refusalNotice(bool serverLaunch, bool hasGui, bool trayAvailable, bool supportsMessages);
+
+/// What a launch does once it asked the channel.
+enum class LaunchStep
+{
+    Start,   ///< go on: take the lock and start the server
+    Surface, ///< this install's server runs: surface it, start nothing
+    Refuse,  ///< start nothing, and tell why (refusal)
+    Stop,    ///< start nothing, and tell nobody: a service or a restart
+};
+
+struct LaunchDecision
+{
+    LaunchStep step = LaunchStep::Refuse;
+    Refusal refusal = Refusal::None;
+};
+
+/// The launch's way, from the probe alone:
+///   - nothing listens → Start;
+///   - this install's server found: Stop for a service (@p serviceLaunch) or a
+///     restart (@p restart, --after-pid, asked once the server it replaces is
+///     gone), so that neither flag ever doubles a server; Refuse with Gate for
+///     a 403; Surface otherwise;
+///   - refused: Start for a service, which serves without its channel and
+///     tries for it again (Server::listenKeepTrying); Refuse otherwise.
+LaunchDecision launchDecision(const Probe& probe, bool serviceLaunch, bool restart);
+
+/// How long the notification shows, and the hard cap on the whole wait.
+inline constexpr int kNoticeShowMs = 8000;
+inline constexpr int kNoticeCapMs = 10000;
 
 } // namespace mw::localchannel

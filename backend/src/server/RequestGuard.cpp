@@ -581,6 +581,75 @@ LocalGate localChannelGate(const QString& method, const QString& path, LocalVerd
     return localChannelRoute(method, path) ? LocalGate::Pass : LocalGate::NotFound;
 }
 
+ServerVerdict serverVerdict(const ServerFacts& facts, const QString& accountSid,
+                            const QString& administratorsSid)
+{
+    const QString system = QLatin1String(kSystemSid);
+    const QString& owner = facts.pipeOwnerSid;
+    if (owner.isEmpty()) return ServerVerdict::Unreadable;
+    const bool ownerMine = !accountSid.isEmpty() && owner == accountSid;
+    const bool ownerAdmins = !administratorsSid.isEmpty() && owner == administratorsSid;
+    const bool ownerSystem = owner == system;
+    if (!ownerMine && !ownerAdmins && !ownerSystem) return ServerVerdict::OtherOwner;
+
+    if (facts.image.isEmpty() || facts.ownImage.isEmpty()) return ServerVerdict::Unreadable;
+    if (facts.image.compare(facts.ownImage, Qt::CaseInsensitive) != 0)
+        return ServerVerdict::OtherProgram;
+
+    const QString& user = facts.tokenUserSid;
+    // This account's own server, run as it is or elevated.
+    if (!user.isEmpty() && !accountSid.isEmpty() && user == accountSid && user != system)
+        return ownerMine || ownerAdmins ? ServerVerdict::Ours : ServerVerdict::OtherOwner;
+    // A service: the system's token, or none to read and the system's pipe.
+    if (user == system || (user.isEmpty() && ownerSystem)) {
+        if (!ownerSystem) return ServerVerdict::OtherOwner;
+        if (!facts.sessionRead || facts.sessionId != 0) return ServerVerdict::NotSessionZero;
+        if (!facts.installDirLocked) return ServerVerdict::NotLocked;
+        return ServerVerdict::Ours;
+    }
+    return ServerVerdict::OtherAccount;
+}
+
+ServerVerdict unixServerVerdict(const UnixServerFacts& facts)
+{
+    if (facts.socketOwner < 0) return ServerVerdict::Unreadable;
+    if (facts.machine) {
+        if (!facts.folderLocked || facts.folderOwner < 0) return ServerVerdict::NotLocked;
+        if (facts.socketOwner != facts.folderOwner) return ServerVerdict::OtherOwner;
+        if (facts.peerUid < 0) return ServerVerdict::Unreadable;
+        if (facts.peerUid != facts.folderOwner) return ServerVerdict::OtherAccount;
+        return ServerVerdict::Ours;
+    }
+    if (facts.ownUid < 0) return ServerVerdict::Unreadable;
+    if (facts.socketOwner != facts.ownUid && facts.socketOwner != 0)
+        return ServerVerdict::OtherOwner;
+    if (!facts.folderLocked) return ServerVerdict::NotLocked;
+    if (facts.peerUid < 0) return ServerVerdict::Unreadable;
+    if (facts.peerUid != facts.ownUid) return ServerVerdict::OtherAccount;
+    if (facts.peerExe.isEmpty() || facts.ownExe.isEmpty()) return ServerVerdict::Unreadable;
+    if (facts.peerExe != facts.ownExe) return ServerVerdict::OtherProgram;
+    return ServerVerdict::Ours;
+}
+
+QString serverVerdictText(ServerVerdict verdict)
+{
+    switch (verdict) {
+    case ServerVerdict::Ours: return QString();
+    case ServerVerdict::Unreadable:
+        return QStringLiteral("the program on the channel cannot be identified");
+    case ServerVerdict::OtherOwner: return QStringLiteral("the channel belongs to another account");
+    case ServerVerdict::OtherProgram:
+        return QStringLiteral("the program on the channel is not this one");
+    case ServerVerdict::OtherAccount:
+        return QStringLiteral("the program on the channel runs as another account");
+    case ServerVerdict::NotSessionZero:
+        return QStringLiteral("the program on the channel is not a service");
+    case ServerVerdict::NotLocked:
+        return QStringLiteral("the channel, or the program on it, is where others may write");
+    }
+    return QStringLiteral("the program on the channel cannot be identified");
+}
+
 AdminTokenReply adminTokenReply(const Decision& decision, const Context& ctx, bool authenticated)
 {
     // The host machine keeps its place without a session, it just holds no key.

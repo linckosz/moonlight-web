@@ -103,6 +103,7 @@ ln -sfn "$PREFIX/bin/moonlightweb-launch" "$PKG/usr/bin/$NAME"
 # rules). postinst enables it only when the machine has no desktop.
 mkdir -p "$PKG/usr/lib/systemd/system"
 sed -e "s|/opt/moonlightweb/|$PREFIX/|g" -e "s|^Description=MoonlightWeb |Description=$APP |" \
+    -e "s|^RuntimeDirectory=moonlightweb\$|RuntimeDirectory=$NAME|" \
     "$(dirname "$0")/../systemd/moonlightweb.service" \
     > "$PKG/usr/lib/systemd/system/$NAME.service"
 

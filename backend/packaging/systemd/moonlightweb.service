@@ -38,6 +38,13 @@ WorkingDirectory=/opt/moonlightweb/bin
 # device. Only a manual launch wins.
 Environment=MW_SERVICE=1
 
+# /run/moonlightweb, made by systemd for this unit alone (its account, 0755):
+# the folder of the machine's local channel, where a launch from a desktop
+# finds this service rather than starting a second server. Only root can make
+# a folder there, so nobody else can stand in for the service.
+RuntimeDirectory=moonlightweb
+RuntimeDirectoryMode=0755
+
 # Restart ONLY on failure (non-zero exit code or terminating signal),
 # never on a clean exit 0.
 Restart=on-failure

@@ -310,6 +310,92 @@ enum class LocalGate
 /// the channel or not, so nothing about the routes is told to it.
 LocalGate localChannelGate(const QString& method, const QString& path, LocalVerdict verdict);
 
+/// The SID of the system account, as LocalChannel's sidText() writes it.
+inline constexpr char kSystemSid[] = "S-1-5-18";
+
+/// What a client of the local channel read of the server at the other end of
+/// its pipe, before it writes a byte (Windows, LocalChannel's serverIsOurs).
+/// Every field comes from the pipe or from the process it names, never from
+/// anything the server wrote. An empty text is one that could not be read.
+struct ServerFacts
+{
+    QString pipeOwnerSid; ///< the pipe's owner
+    QString tokenUserSid; ///< the server process's account, from its token
+    bool sessionRead = false;
+    quint32 sessionId = 0; ///< the server process's session
+    QString image;         ///< the server's executable, its final path
+    QString ownImage;      ///< this program's executable, the same way
+    /// The server image's folder passes checkInstallDir: owned and writable
+    /// by SYSTEM, Administrators and TrustedInstaller alone.
+    bool installDirLocked = false;
+};
+
+/// Whether the server behind a pipe is this install's.
+enum class ServerVerdict
+{
+    Ours,
+    Unreadable,     ///< the pipe's owner, or either executable, could not be read
+    OtherOwner,     ///< the pipe belongs to neither this account, its administrators nor the system
+    OtherProgram,   ///< the server's executable is not this one
+    OtherAccount,   ///< the server runs as neither this account nor the system
+    NotSessionZero, ///< a system server outside session 0: not a service
+    NotLocked,      ///< a system server whose folder someone else may write to
+};
+
+/// The verdict on a server of the local channel. Closed whenever in doubt:
+///   - the pipe's owner unread → Unreadable; neither this account
+///     (@p accountSid), its administrators (@p administratorsSid) nor the
+///     system → OtherOwner;
+///   - either executable unread → Unreadable; not the same file → OtherProgram;
+///   - the server's token read and this account's: Ours, the pipe owned by
+///     this account or, for a server it started elevated, its administrators;
+///   - the server's token read and the system's, or not read (a standard
+///     account may not open a service's) with a pipe the system owns: a
+///     service, so the pipe owned by the system exactly, session 0, and a
+///     locked install folder; else OtherOwner, NotSessionZero or NotLocked;
+///   - any other token, or none read without the system as owner → OtherAccount.
+/// An administrators' pipe is never enough to find a service.
+ServerVerdict serverVerdict(const ServerFacts& facts, const QString& accountSid,
+                            const QString& administratorsSid);
+
+/// What a client of the local channel read of the server at the other end of
+/// its Unix socket, before it writes a byte (Linux, macOS). From the file
+/// system and the kernel, never from anything the server wrote; -1 or an
+/// empty text is what could not be read.
+struct UnixServerFacts
+{
+    /// The machine's socket of a service (LocalChannel's machineEndpoint), not
+    /// this account's.
+    bool machine = false;
+    /// The machine's: every folder from / to the socket's root's, the last
+    /// one root's or the service's, none of them a link or writable by group
+    /// or others. This account's: its folder this account's or root's, closed
+    /// to the writes of group and others.
+    bool folderLocked = false;
+    qint64 folderOwner = -1; ///< the socket's folder's owner
+    qint64 socketOwner = -1; ///< -1 too when it is not a socket
+    qint64 peerUid = -1;     ///< the server's account, from the kernel
+    qint64 ownUid = -1;      ///< this process's
+    QString peerExe;         ///< the server's executable (this account's socket)
+    QString ownExe;          ///< this program's, the same way
+};
+
+/// The verdict on a server of a Unix socket. Closed whenever in doubt:
+///   - the socket unread or not one → Unreadable;
+///   - the machine's: its folders locked (else NotLocked), the socket the
+///     folder owner's (else OtherOwner) and the server that account (else
+///     OtherAccount). The folder can only be made by root, so that is the
+///     service's word, as a pipe the system owns is on Windows;
+///   - this account's: the socket this account's or root's (else
+///     OtherOwner), the folder locked (else NotLocked), the server this
+///     account (else OtherAccount), and its executable read and this one
+///     (else Unreadable, OtherProgram).
+ServerVerdict unixServerVerdict(const UnixServerFacts& facts);
+
+/// A short reason for the log and an error message: what is wrong, with no
+/// path, account or process number in it.
+QString serverVerdictText(ServerVerdict verdict);
+
 /// The HTTP status a refused outcome must be answered with, 0 for Allow. Here
 /// rather than at the call site so the status is part of the tested contract.
 int blockStatus(Outcome outcome);

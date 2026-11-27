@@ -49,6 +49,14 @@
 #include <QSysInfo>
 #include <QJsonArray>
 #include <QRandomGenerator>
+#include <QIcon>
+#include <QScopeGuard>
+#include <QStyle>
+#include <QSystemTrayIcon>
+
+#include <chrono>
+#include <cstdlib>
+#include <thread>
 
 // isatty(): the operator CLI prompts for consent only when a human can answer.
 #include <cstdio>
@@ -562,6 +570,14 @@ static QString localChannelEndpoint()
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
 }
 
+// Where a caller looks for the running server, in order: this account's
+// channel, then the machine's one of a service (Linux, macOS).
+static QStringList localChannelEndpoints()
+{
+    return mw::localchannel::callerEndpoints(localChannelEndpoint(), mw::edition::isDevBuild(),
+                                             mw::edition::devFlag());
+}
+
 // One request to the running server: a GET, or a POST when @p postBody is
 // given. @p target is a route, with its query if it has one.
 static LocalReply localRequest(const QString& target, const QByteArray& postBody = QByteArray(),
@@ -576,7 +592,7 @@ static LocalReply localRequest(const QString& target, const QByteArray& postBody
 
     LocalReply out;
     const mw::localchannel::Reply reply =
-        mw::localchannel::request(localChannelEndpoint(), request, timeoutMs, &out.error);
+        mw::localchannel::requestFirst(localChannelEndpoints(), request, timeoutMs, &out.error);
     out.httpStatus = reply.status;
     out.json = QJsonDocument::fromJson(reply.body).object();
     out.ok = reply.status >= 200 && reply.status < 300;
@@ -1421,7 +1437,7 @@ static int runLocalRequestCommand(const QString& value)
     request.body = body;
     QString why;
     const mw::localchannel::Reply reply =
-        mw::localchannel::request(localChannelEndpoint(), request, 30000, &why);
+        mw::localchannel::requestFirst(localChannelEndpoints(), request, 30000, &why);
     if (reply.status == 0) {
         err << "No answer: " << why << "\n";
         return 1;
@@ -1957,6 +1973,84 @@ static QString streamableAudioSource(const QString& requested)
     }
 #endif
     return source;
+}
+
+// The exit code of a launch that started nothing because the channel said no
+// (SVCFIND): another program holds it, or this install's server runs and this
+// account may not ask it.
+static constexpr int kLaunchRefusedExitCode = 3;
+
+// A launch that found this install's server running: surface its admin page
+// (unless an automatic launch asked for none), then stay as its tray when it
+// has no icon on this desktop. @p persistedHttpsPort is what this account's
+// settings remember, the page's address when the server cannot be asked.
+static int surfaceRunningServer(QApplication& app, bool autostart, quint16 persistedHttpsPort,
+                                bool ownerHidden)
+{
+    if (!hasGuiSession()) return 0;
+    if (!autostart) {
+        const quint16 p = persistedHttpsPort;
+        const QString base = p == 443 ? QStringLiteral("https://localhost")
+                                      : QStringLiteral("https://localhost:%1").arg(p);
+        // Prefer redirecting an already-open tab (no duplicate). Only when the
+        // running instance can't be reached do we open the admin page here.
+        Logger::info("Asking the running instance to surface the admin page: " + base);
+        const FocusAnswer focus = requestFocusAdmin();
+        if (focus == FocusAnswer::Unreachable) {
+            Logger::info("Running instance unreachable — opening the admin page directly");
+            mw::openInBrowser(base + QStringLiteral("/admin"));
+        } else if (focus == FocusAnswer::OpenHere) {
+            // The handoff page, for this process's account, as --open-link
+            // opens it; what it opens when no link can be made: the address
+            // without a key.
+            Logger::info("The running instance has no desktop here — opening the page from "
+                         "this session");
+            if (runOwnerLinkCommand(p, false) != 0)
+                mw::openInBrowser(base + QStringLiteral("/admin"));
+        }
+    }
+    return runTrayClient(app, ownerHidden);
+}
+
+// A launch that starts nothing, and tells its person why (SVCFIND, F3 and F4):
+// one of two fixed texts, nothing read from the channel in it. On the server's
+// own launch path (@p serverLaunch), with a desktop whose tray takes messages,
+// a notification from an icon that shows nothing else and goes with it; else
+// a line on standard error. Never a box: there is nothing to close. The wait
+// is bounded twice: the notification's time, and a watchdog that ends the
+// process even if the event loop never runs. No lock and no listener are
+// held meanwhile: this runs before either is taken.
+static int refuseLaunch(QApplication& app, mw::localchannel::Refusal refusal, bool serverLaunch)
+{
+    using namespace mw::localchannel;
+    const QString text = refusalText(refusal);
+    const NoticeWay way =
+        refusalNotice(serverLaunch, hasGuiSession(), QSystemTrayIcon::isSystemTrayAvailable(),
+                      QSystemTrayIcon::supportsMessages());
+    Logger::info(
+        QStringLiteral("[LocalChannel] refusal notice: %1")
+            .arg(way == NoticeWay::Tray ? QStringLiteral("tray") : QStringLiteral("stderr")));
+    if (way == NoticeWay::Stderr) {
+        QTextStream(stderr) << text << "\n";
+        return kLaunchRefusedExitCode;
+    }
+    std::thread([]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kNoticeCapMs));
+        std::_Exit(kLaunchRefusedExitCode);
+    }).detach();
+    QIcon icon = TrayManager::loadAppIcon();
+    if (icon.isNull()) icon = QApplication::style()->standardIcon(QStyle::SP_MessageBoxWarning);
+    QSystemTrayIcon tray(icon);
+    tray.setToolTip(mw::edition::displayName());
+    tray.show();
+    QEventLoop loop;
+    QObject::connect(&tray, &QSystemTrayIcon::messageClicked, &loop, &QEventLoop::quit);
+    QTimer::singleShot(kNoticeShowMs, &loop, &QEventLoop::quit);
+    tray.showMessage(mw::edition::displayName(), text, QSystemTrayIcon::Warning, kNoticeShowMs);
+    loop.exec();
+    tray.hide();
+    Q_UNUSED(app);
+    return kLaunchRefusedExitCode;
 }
 
 int main(int argc, char* argv[])
@@ -2755,7 +2849,43 @@ int main(int argc, char* argv[])
             Logger::info(QStringLiteral("[System] The server this one replaces has exited"));
         else
             Logger::info(QStringLiteral("[System] No earlier server to wait for, or it did not "
-                                        "exit in 20 s: starting all the same"));
+                                        "exit in 20 s: asking the channel"));
+    }
+
+    // ── This install's server, asked before any lock (SVCFIND) ──────────────
+    // A service keeps its lock in its own profile, out of this account's
+    // sight; its channel is the machine's. So the channel is asked first, and
+    // only "nothing listens" lets this launch go on to start a server. A
+    // server proved to be this install's is never doubled, whatever comes
+    // after; anything else holding the name starts nothing either. A restart
+    // (--after-pid) asks too, once the server it replaces is gone: anybody
+    // may pass that flag. A service that finds the name held goes on, and
+    // tries for its channel again later (Server::listenKeepTrying).
+    {
+        using namespace mw::localchannel;
+        const bool serviceLaunch = !qEnvironmentVariableIsEmpty("MW_SERVICE");
+        const bool restart = parser.isSet(afterPidOption);
+        const Probe found = probe(localChannelEndpoints());
+        if (found.outcome == ProbeOutcome::Found)
+            Logger::info(QStringLiteral("[LocalChannel] this install's server already runs%1")
+                             .arg(found.service ? QStringLiteral(", as a service") : QString()));
+        const LaunchDecision decision = launchDecision(found, serviceLaunch, restart);
+        switch (decision.step) {
+        case LaunchStep::Start: break;
+        case LaunchStep::Stop:
+            Logger::warning(
+                QStringLiteral("[LocalChannel] this install's server already runs: not started"));
+            return kLaunchRefusedExitCode;
+        case LaunchStep::Surface:
+            return surfaceRunningServer(app, parser.isSet(autostartOption),
+                                        appSettings.httpsPort(mw::edition::defaultHttpsPort()),
+                                        found.service);
+        case LaunchStep::Refuse:
+            if (decision.refusal == Refusal::Refused)
+                Logger::warning(QStringLiteral("[LocalChannel] a program that is not this "
+                                               "install's server holds its channel: not started"));
+            return refuseLaunch(app, decision.refusal, !restart);
+        }
     }
 
     // ── Single instance ──────────────────────────────────────────────────────
@@ -2772,29 +2902,6 @@ int main(int argc, char* argv[])
     // installed application, and a second launch has to surface the first.
     if (!mw::edition::devFlag() && !instanceLock.tryLock(100)) {
         Logger::info("Another instance is already running");
-        if (!hasGuiSession()) return 0;
-        if (!parser.isSet(autostartOption)) {
-            quint16 p = appSettings.httpsPort(
-                mw::edition::defaultHttpsPort()); // running instance persisted its port
-            const QString base = p == 443 ? QStringLiteral("https://localhost")
-                                          : QStringLiteral("https://localhost:%1").arg(p);
-            // Prefer redirecting an already-open tab (no duplicate). Only when the
-            // running instance can't be reached do we open the admin page here.
-            Logger::info("Asking the running instance to surface the admin page: " + base);
-            const FocusAnswer focus = requestFocusAdmin();
-            if (focus == FocusAnswer::Unreachable) {
-                Logger::info("Running instance unreachable — opening the admin page directly");
-                mw::openInBrowser(base + QStringLiteral("/admin"));
-            } else if (focus == FocusAnswer::OpenHere) {
-                // The handoff page, for this process's account, as --open-link
-                // opens it; what it opens when no link can be made: the
-                // address without a key.
-                Logger::info("The running instance has no desktop here — opening the page from "
-                             "this session");
-                if (runOwnerLinkCommand(p, false) != 0)
-                    mw::openInBrowser(base + QStringLiteral("/admin"));
-            }
-        }
         // The server we just found may be a service with no desktop to draw on
         // (Windows session 0, systemd). Then this process stays as its tray.
 #ifdef Q_OS_WIN
@@ -2802,10 +2909,68 @@ int main(int argc, char* argv[])
 #else
         const bool ownerHidden = false;
 #endif
-        return runTrayClient(app, ownerHidden);
+        return surfaceRunningServer(app, parser.isSet(autostartOption),
+                                    appSettings.httpsPort(mw::edition::defaultHttpsPort()),
+                                    ownerHidden);
+    }
+
+    // ── The local channel, opened now (SVCFIND) ──────────────────────────────
+    // Before anything else of the server, so that a launch at the same moment
+    // (the login item beside a service at logon) finds this server rather than
+    // nothing. Until every route it may ask for exists, it answers through the
+    // same gate, 503 "starting" to whoever is let in (earlyReply), on its own
+    // thread: this one turns no event loop until the server runs. It is
+    // closed on every way out of here, a start that fails included: its
+    // owners go out of scope.
+    auto localChannelRoute = std::make_shared<mw::localchannel::Server::Handler>();
+    mw::localchannel::Server localChannel;
+    mw::localchannel::Server machineChannel;
+    localChannel.holdUntilRouted();
+    machineChannel.holdUntilRouted();
+    {
+        const mw::localchannel::Server::Handler handler =
+            [localChannelRoute](const mw::localchannel::Request& request,
+                                mw::localchannel::Server::Respond respond) {
+                if (*localChannelRoute) {
+                    (*localChannelRoute)(request, std::move(respond));
+                    return;
+                }
+                respond(mw::localchannel::earlyReply(request));
+            };
+        // Its own account alone, unless it runs as a service: nobody signs in
+        // with a service's account, and the tray icon that stands for it runs
+        // in the session of whoever is at the PC.
+        const bool serviceVar = !qEnvironmentVariableIsEmpty("MW_SERVICE");
+        const mw::localchannel::Audience audience =
+            mw::localchannel::audienceFor(serviceVar, mw::localchannel::runsInSessionZero());
+        QString why;
+        if (localChannel.listenKeepTrying(localChannelEndpoint(), handler, &why, audience))
+            Logger::info(QStringLiteral("[LocalChannel] open"));
+        else if (!localChannel.isRetrying())
+            Logger::error(QStringLiteral("[LocalChannel] not open: %1").arg(why));
+        // Linux, macOS: a service's account is not the desktop's, and its own
+        // socket is out of their reach; the machine's one is where they ask.
+        const QString machine =
+            mw::localchannel::machineEndpoint(mw::edition::isDevBuild(), mw::edition::devFlag());
+        if (serviceVar && !machine.isEmpty()) {
+            if (machineChannel.listenKeepTrying(machine, handler, &why,
+                                                mw::localchannel::Audience::SignedIn))
+                Logger::info(QStringLiteral("[LocalChannel] the machine's channel open"));
+            else if (!machineChannel.isRetrying())
+                Logger::error(
+                    QStringLiteral("[LocalChannel] the machine's channel not open: %1").arg(why));
+        }
     }
 
     HttpServer server(httpPort);
+    // The channel's route to this server goes before the server does: from
+    // then on, until the channel closes, it answers as it did while starting.
+    const auto localChannelUnroute =
+        qScopeGuard([localChannelRoute, &localChannel, &machineChannel]() {
+            localChannel.holdUntilRouted();
+            machineChannel.holdUntilRouted();
+            *localChannelRoute = {};
+        });
 
     // Pass domain and cert settings to HttpServer so loadCert() can find
     // the correct certificate by CN matching (or load from env var / file).
@@ -9402,32 +9567,17 @@ int main(int argc, char* argv[])
 
     // The channel the other programs of this install reach this server by: the
     // tray icon of a server that runs as a service, the command line, a second
-    // launch (server/LocalChannel.h). Opened last, once every route it may ask
-    // for exists. A server that cannot open it says so and runs without one: it
-    // never shares a name something else already holds.
-    mw::localchannel::Server localChannel;
-    {
-        const QString endpoint = mw::localchannel::endpointFor(
-            mw::localchannel::channelName(mw::edition::productName(), mw::edition::devFlag()),
-            QStandardPaths::writableLocation(QStandardPaths::AppDataLocation));
-        // Its own account alone, unless it runs as a service: nobody signs in
-        // with a service's account, and the tray icon that stands for it runs
-        // in the session of whoever is at the PC.
-        const mw::localchannel::Audience audience = mw::localchannel::audienceFor(
-            !qEnvironmentVariableIsEmpty("MW_SERVICE"), mw::localchannel::runsInSessionZero());
-        QString why;
-        const bool open = localChannel.listen(
-            endpoint,
-            [&server](const mw::localchannel::Request& request,
-                      mw::localchannel::Server::Respond respond) {
-                server.serveLocal(request, std::move(respond));
-            },
-            &why, audience);
-        if (open)
-            Logger::info(QStringLiteral("[LocalChannel] open"));
-        else
-            Logger::error(QStringLiteral("[LocalChannel] not open: %1").arg(why));
-    }
+    // launch (server/LocalChannel.h). Open since the start, it is routed to the
+    // server now, once every route it may ask for exists. A server that could
+    // not open it says so and runs without one: it never shares a name
+    // something else already holds.
+    *localChannelRoute = [&server](const mw::localchannel::Request& request,
+                                   mw::localchannel::Server::Respond respond) {
+        server.serveLocal(request, std::move(respond));
+    };
+    localChannel.route();
+    machineChannel.route();
+    Logger::info(QStringLiteral("[LocalChannel] routed to the server"));
 
 #ifndef Q_OS_WIN
     // A stop by signal (systemctl stop, the package's pkill, a shutdown, the

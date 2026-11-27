@@ -172,6 +172,7 @@ add_executable(run_tests
     test_launch_gate.cpp
     test_pairing_chain.cpp
     test_local_channel.cpp
+    test_svcfind.cpp
     test_host_key_vault.cpp
     test_owner_handoff.cpp
     test_owner_link_wait.cpp

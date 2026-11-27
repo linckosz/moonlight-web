@@ -10,6 +10,9 @@
 #include "server/FirstRunLink.h"
 #include "server/RequestGuard.h"
 
+#include <cstdio>
+#include <vector>
+
 namespace {
 
 using Headers = QMap<QString, QString>;
@@ -1344,5 +1347,262 @@ void run_request_guard_tests()
         // No key set: nothing matches, not even nothing.
         CHECK(!secretMatches(QByteArray(), QByteArray()));
         CHECK(!secretMatches(key, QByteArray()));
+    }
+
+    SECTION("RequestGuard — a pipe's server is this install's only when everything read says so "
+            "(serverVerdict)");
+    {
+        const QString me = QStringLiteral("S-1-5-21-1111-2222-3333-1001");
+        const QString other = QStringLiteral("S-1-5-21-1111-2222-3333-1002");
+        const QString admins = QStringLiteral("S-1-5-32-544");
+        const QString system = QLatin1String(kSystemSid);
+        const QString exe = QStringLiteral("C:\\Program Files\\MoonlightWeb\\MoonlightWeb.exe");
+        // A service, as a standard account reads it: the system's pipe, no
+        // token to open, session 0, a locked folder, this same executable.
+        auto service = [&]() {
+            ServerFacts f;
+            f.pipeOwnerSid = system;
+            f.sessionRead = true;
+            f.sessionId = 0;
+            f.image = exe;
+            f.ownImage = exe;
+            f.installDirLocked = true;
+            return f;
+        };
+        // This account's own server, in its session.
+        auto mine = [&]() {
+            ServerFacts f;
+            f.pipeOwnerSid = me;
+            f.tokenUserSid = me;
+            f.sessionRead = true;
+            f.sessionId = 1;
+            f.image = exe;
+            f.ownImage = exe;
+            return f;
+        };
+        struct Row
+        {
+            const char* what;
+            ServerFacts facts;
+            ServerVerdict expected;
+        };
+        std::vector<Row> rows;
+        rows.push_back({"a service, token unread", service(), ServerVerdict::Ours});
+        {
+            ServerFacts f = service();
+            f.tokenUserSid = system;
+            rows.push_back({"a service, token read", f, ServerVerdict::Ours});
+        }
+        rows.push_back({"this account's server", mine(), ServerVerdict::Ours});
+        {
+            ServerFacts f = mine();
+            f.pipeOwnerSid = admins;
+            rows.push_back({"this account's server, elevated", f, ServerVerdict::Ours});
+        }
+        {
+            ServerFacts f = service();
+            f.pipeOwnerSid = other;
+            rows.push_back({"an impostor's pipe, another account", f, ServerVerdict::OtherOwner});
+        }
+        {
+            ServerFacts f = service();
+            f.pipeOwnerSid.clear();
+            rows.push_back({"the pipe's owner unread", f, ServerVerdict::Unreadable});
+        }
+        {
+            ServerFacts f = service();
+            f.image.clear();
+            rows.push_back({"a service whose image is unread", f, ServerVerdict::Unreadable});
+        }
+        {
+            ServerFacts f = mine();
+            f.image.clear();
+            rows.push_back({"this account's server, image unread", f, ServerVerdict::Unreadable});
+        }
+        {
+            ServerFacts f = service();
+            f.image = QStringLiteral("C:\\Program Files\\Other\\MoonlightWeb.exe");
+            rows.push_back(
+                {"a system program installed elsewhere", f, ServerVerdict::OtherProgram});
+        }
+        {
+            ServerFacts f = mine();
+            f.image = QStringLiteral("C:\\Users\\x\\Downloads\\MoonlightWeb.exe");
+            rows.push_back({"this account's server, another exe", f, ServerVerdict::OtherProgram});
+        }
+        {
+            ServerFacts f = service();
+            f.image = exe.toUpper();
+            rows.push_back({"the same path in other case", f, ServerVerdict::Ours});
+        }
+        {
+            ServerFacts f = service();
+            f.installDirLocked = false;
+            rows.push_back(
+                {"a system server in a folder others may write", f, ServerVerdict::NotLocked});
+        }
+        {
+            ServerFacts f = service();
+            f.sessionId = 2;
+            rows.push_back(
+                {"a system pipe, token unread, session 2", f, ServerVerdict::NotSessionZero});
+        }
+        {
+            ServerFacts f = service();
+            f.sessionRead = false;
+            rows.push_back({"a system pipe, session unread", f, ServerVerdict::NotSessionZero});
+        }
+        {
+            ServerFacts f = service();
+            f.pipeOwnerSid = admins;
+            rows.push_back(
+                {"an administrators' pipe, token unread (Q3)", f, ServerVerdict::OtherAccount});
+        }
+        {
+            ServerFacts f = service();
+            f.pipeOwnerSid = admins;
+            f.tokenUserSid = system;
+            rows.push_back(
+                {"the system's token, an administrators' pipe", f, ServerVerdict::OtherOwner});
+        }
+        {
+            ServerFacts f = mine();
+            f.tokenUserSid = other;
+            rows.push_back(
+                {"a pipe of mine, a server of another account", f, ServerVerdict::OtherAccount});
+        }
+        {
+            ServerFacts f = mine();
+            f.pipeOwnerSid = system;
+            rows.push_back({"my token, the system's pipe", f, ServerVerdict::OtherOwner});
+        }
+        {
+            ServerFacts f = mine();
+            f.ownImage.clear();
+            rows.push_back({"this program's own image unread", f, ServerVerdict::Unreadable});
+        }
+        for (const Row& row : rows) {
+            const ServerVerdict got = serverVerdict(row.facts, me, admins);
+            CHECK(got == row.expected);
+            if (got != row.expected)
+                std::fprintf(stderr, "    serverVerdict: %s gave %d\n", row.what,
+                             static_cast<int>(got));
+        }
+        // Nothing of this account read: only a service can be found.
+        CHECK(serverVerdict(mine(), QString(), admins) == ServerVerdict::OtherOwner);
+        CHECK(serverVerdict(service(), QString(), admins) == ServerVerdict::Ours);
+        // The reason never names a path, an account or a number.
+        for (ServerVerdict v : {ServerVerdict::Unreadable, ServerVerdict::OtherOwner,
+                                ServerVerdict::OtherProgram, ServerVerdict::OtherAccount,
+                                ServerVerdict::NotSessionZero, ServerVerdict::NotLocked}) {
+            const QString text = serverVerdictText(v);
+            CHECK(!text.isEmpty());
+            CHECK(!text.contains(QLatin1Char('\\')) && !text.contains(QStringLiteral("S-1-")));
+        }
+        CHECK(serverVerdictText(ServerVerdict::OtherOwner) ==
+              QStringLiteral("the channel belongs to another account"));
+        CHECK(serverVerdictText(ServerVerdict::Ours).isEmpty());
+    }
+
+    SECTION("RequestGuard — a Unix socket's server is this install's only when everything read "
+            "says so (unixServerVerdict)");
+    {
+        const QString exe = QStringLiteral("/opt/moonlightweb/bin/moonlightweb");
+        // The machine's socket of a service that runs as root.
+        auto machine = [&]() {
+            UnixServerFacts f;
+            f.machine = true;
+            f.folderLocked = true;
+            f.folderOwner = 0;
+            f.socketOwner = 0;
+            f.peerUid = 0;
+            f.ownUid = 1000;
+            return f;
+        };
+        // This account's socket, in its data folder.
+        auto mine = [&]() {
+            UnixServerFacts f;
+            f.folderLocked = true;
+            f.folderOwner = 1000;
+            f.socketOwner = 1000;
+            f.peerUid = 1000;
+            f.ownUid = 1000;
+            f.peerExe = exe;
+            f.ownExe = exe;
+            return f;
+        };
+        struct Row
+        {
+            const char* what;
+            UnixServerFacts facts;
+            ServerVerdict expected;
+        };
+        std::vector<Row> rows;
+        rows.push_back({"a root service's machine socket", machine(), ServerVerdict::Ours});
+        {
+            UnixServerFacts f = machine();
+            f.folderOwner = f.socketOwner = f.peerUid = 998;
+            rows.push_back({"a service of its own account (User=)", f, ServerVerdict::Ours});
+        }
+        rows.push_back({"this account's server", mine(), ServerVerdict::Ours});
+        {
+            UnixServerFacts f = machine();
+            f.folderLocked = false;
+            rows.push_back(
+                {"a machine folder someone else may write", f, ServerVerdict::NotLocked});
+        }
+        {
+            UnixServerFacts f = machine();
+            f.socketOwner = 1001;
+            rows.push_back({"a machine socket of another account", f, ServerVerdict::OtherOwner});
+        }
+        {
+            UnixServerFacts f = machine();
+            f.peerUid = 1001;
+            rows.push_back(
+                {"a machine socket served by another account", f, ServerVerdict::OtherAccount});
+        }
+        {
+            UnixServerFacts f = machine();
+            f.peerUid = -1;
+            rows.push_back({"a machine socket, the peer unread", f, ServerVerdict::Unreadable});
+        }
+        {
+            UnixServerFacts f = machine();
+            f.socketOwner = -1;
+            rows.push_back({"not a socket, or a link", f, ServerVerdict::Unreadable});
+        }
+        {
+            UnixServerFacts f = mine();
+            f.socketOwner = 1001;
+            rows.push_back({"my folder, another account's socket", f, ServerVerdict::OtherOwner});
+        }
+        {
+            UnixServerFacts f = mine();
+            f.folderLocked = false;
+            rows.push_back({"my socket, a folder open to others", f, ServerVerdict::NotLocked});
+        }
+        {
+            UnixServerFacts f = mine();
+            f.peerUid = 0;
+            rows.push_back({"my socket, served by root", f, ServerVerdict::OtherAccount});
+        }
+        {
+            UnixServerFacts f = mine();
+            f.peerExe.clear();
+            rows.push_back({"my server, its executable unread", f, ServerVerdict::Unreadable});
+        }
+        {
+            UnixServerFacts f = mine();
+            f.peerExe = QStringLiteral("/tmp/moonlightweb");
+            rows.push_back({"my socket, another program", f, ServerVerdict::OtherProgram});
+        }
+        for (const Row& row : rows) {
+            const ServerVerdict got = unixServerVerdict(row.facts);
+            CHECK(got == row.expected);
+            if (got != row.expected)
+                std::fprintf(stderr, "    unixServerVerdict: %s gave %d\n", row.what,
+                             static_cast<int>(got));
+        }
     }
 }

@@ -21,6 +21,7 @@
 
 #include <QElapsedTimer>
 #include <QHash>
+#include <QTimer>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -41,6 +42,10 @@
 #include <thread>
 #include <vector>
 
+#include "common/PrivilegedPlace.h"
+
+#include <QFileInfo>
+
 #include <windows.h>
 
 #include <aclapi.h>
@@ -50,7 +55,10 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QPointer>
+#include <QThread>
 #include <QTimer>
+
+#include <atomic>
 
 #include <cerrno>
 
@@ -58,6 +66,10 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifdef Q_OS_MACOS
+#include <libproc.h>
+#include <sys/un.h>
+#endif
 #endif
 
 namespace mw::localchannel {
@@ -287,6 +299,75 @@ QString pipeAccessList(const QString& ownerSid, Audience audience)
     return own + QStringLiteral("(A;;0x12008b;;;IU)");
 }
 
+// ── Finding the server ──────────────────────────────────────────────────────
+
+ProbeOutcome probeOutcome(ProbeStage stage)
+{
+    switch (stage) {
+    case ProbeStage::NothingListens: return ProbeOutcome::None;
+    case ProbeStage::Answered: return ProbeOutcome::Found;
+    case ProbeStage::NotOpened:
+    case ProbeStage::NotOurs:
+    case ProbeStage::NoAnswer: return ProbeOutcome::Refused;
+    }
+    return ProbeOutcome::Refused;
+}
+
+Request healthRequest()
+{
+    Request health;
+    health.method = QStringLiteral("GET");
+    health.path = QStringLiteral("/api/health");
+    return health;
+}
+
+Refusal refusalFor(const Probe& probe)
+{
+    switch (probe.outcome) {
+    case ProbeOutcome::None: return Refusal::None;
+    case ProbeOutcome::Refused: return Refusal::Refused;
+    case ProbeOutcome::Found:
+        // The one number read of a server already known to be this install's.
+        return probe.stage == ProbeStage::Answered && probe.status == 403 ? Refusal::Gate
+                                                                          : Refusal::None;
+    }
+    return Refusal::Refused;
+}
+
+QString refusalText(Refusal refusal)
+{
+    switch (refusal) {
+    case Refusal::None: return QString();
+    case Refusal::Refused:
+        return QObject::tr("MoonlightWeb did not start: another program holds its local channel. "
+                           "Restart this PC; if it happens again, tell its administrator.");
+    case Refusal::Gate:
+        return QObject::tr("MoonlightWeb runs as a service on this PC; ask its administrator.");
+    }
+    return QString();
+}
+
+LaunchDecision launchDecision(const Probe& probe, bool serviceLaunch, bool restart)
+{
+    switch (probe.outcome) {
+    case ProbeOutcome::None: return {LaunchStep::Start, Refusal::None};
+    case ProbeOutcome::Found:
+        if (serviceLaunch || restart) return {LaunchStep::Stop, Refusal::None};
+        if (refusalFor(probe) == Refusal::Gate) return {LaunchStep::Refuse, Refusal::Gate};
+        return {LaunchStep::Surface, Refusal::None};
+    case ProbeOutcome::Refused:
+        if (serviceLaunch) return {LaunchStep::Start, Refusal::None};
+        return {LaunchStep::Refuse, Refusal::Refused};
+    }
+    return {LaunchStep::Refuse, Refusal::Refused};
+}
+
+NoticeWay refusalNotice(bool serverLaunch, bool hasGui, bool trayAvailable, bool supportsMessages)
+{
+    return serverLaunch && hasGui && trayAvailable && supportsMessages ? NoticeWay::Tray
+                                                                       : NoticeWay::Stderr;
+}
+
 // ── Into the server ─────────────────────────────────────────────────────────
 
 HttpRequest httpRequestFor(const Request& request)
@@ -417,6 +498,29 @@ QByteArray replyFrame(const Reply& reply)
 }
 
 } // namespace
+
+Reply earlyReply(const Request& request)
+{
+    // The gate the full server applies (HttpServer::serveLocal), in its order:
+    // who asks first, then what. A caller that is not let in learns nothing,
+    // not even that the server is starting.
+    const RequestGuard::LocalVerdict verdict = verdictOf(request.caller, request.service);
+    switch (RequestGuard::localChannelGate(request.method, request.path, verdict)) {
+    case RequestGuard::LocalGate::Forbidden: {
+        using Kind = RefusalLog::Kind;
+        const Kind kind = verdict == RequestGuard::LocalVerdict::Sandboxed ? Kind::Sandboxed
+                          : verdict == RequestGuard::LocalVerdict::Unreadable
+                              ? Kind::Unreadable
+                              : Kind::StandardAccount;
+        const QString line = refusals().note(kind);
+        if (!line.isEmpty()) Logger::info(line);
+        return refusal(403, "forbidden");
+    }
+    case RequestGuard::LocalGate::NotFound: return refusal(404, "not_found");
+    case RequestGuard::LocalGate::Pass: break;
+    }
+    return refusal(503, "starting");
+}
 
 #ifdef Q_OS_WIN
 
@@ -731,41 +835,126 @@ PipeOwner ownerOf(HANDLE pipe)
     return out;
 }
 
-/// Whether the pipe behind @p pipe is this install's server, read from the
-/// pipe itself: its owner is this account, the system or an administrator, and
-/// the program holding the other end, when it can be read, is this executable.
-/// A pipe someone else signed in at this PC made under the same name fails the
-/// first; nothing of what it would answer is read before this.
-bool serverIsOurs(HANDLE pipe, QString* why)
+/// The pipe's owner, as sidText() writes it; empty when it cannot be read.
+QString ownerSidOf(HANDLE pipe)
 {
-    const PipeOwner owner = ownerOf(pipe);
-    if (owner == PipeOwner::Unreadable) {
-        *why = QStringLiteral("the channel's owner cannot be read");
-        return false;
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (::GetSecurityInfo(pipe, SE_KERNEL_OBJECT, OWNER_SECURITY_INFORMATION, &owner, nullptr,
+                          nullptr, nullptr, &sd) != ERROR_SUCCESS ||
+        !owner) {
+        if (sd) ::LocalFree(sd);
+        return {};
     }
-    if (owner == PipeOwner::Other) {
-        *why = QLatin1String(kOtherAccount);
-        return false;
-    }
+    const QString text = sidText(owner);
+    ::LocalFree(sd);
+    return text;
+}
 
+/// The path of the file at @p path as the file system resolves it, links and
+/// short names followed, without its \\?\ prefix; empty when it cannot be opened.
+QString finalPathOf(const QString& path)
+{
+    if (path.isEmpty()) return {};
+    HANDLE file = ::CreateFileW(path.toStdWString().c_str(), FILE_READ_ATTRIBUTES,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return {};
+    std::vector<wchar_t> buffer(MAX_PATH * 2);
+    DWORD size = ::GetFinalPathNameByHandleW(file, buffer.data(), static_cast<DWORD>(buffer.size()),
+                                             FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    if (size >= buffer.size()) {
+        buffer.resize(size + 1);
+        size = ::GetFinalPathNameByHandleW(file, buffer.data(), static_cast<DWORD>(buffer.size()),
+                                           FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+    }
+    ::CloseHandle(file);
+    if (size == 0 || size >= buffer.size()) return {};
+    QString out = QString::fromWCharArray(buffer.data(), static_cast<int>(size));
+    if (out.startsWith(QLatin1String("\\\\?\\UNC\\")))
+        out = QStringLiteral("\\\\") + out.mid(8);
+    else if (out.startsWith(QLatin1String("\\\\?\\")))
+        out = out.mid(4);
+    return out;
+}
+
+/// This program's executable, its final path; read once.
+QString ownImage()
+{
+    static const QString own = []() {
+        std::vector<wchar_t> buffer(MAX_PATH * 2);
+        for (;;) {
+            const DWORD size =
+                ::GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+            if (size == 0) return QString();
+            if (size < buffer.size())
+                return finalPathOf(QString::fromWCharArray(buffer.data(), static_cast<int>(size)));
+            if (buffer.size() > 32768) return QString();
+            buffer.resize(buffer.size() * 2);
+        }
+    }();
+    return own;
+}
+
+/// The account process @p pid runs as, from its token; empty when the token
+/// is not this account's to open, as a service's is not to a standard account.
+QString tokenUserOf(DWORD pid)
+{
+    HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return {};
+    QString out;
+    HANDLE token = nullptr;
+    if (::OpenProcessToken(process, TOKEN_QUERY, &token)) {
+        const std::vector<unsigned char> user = tokenInfo(token, TokenUser);
+        if (!user.empty())
+            out = sidText(reinterpret_cast<const TOKEN_USER*>(user.data())->User.Sid);
+        ::CloseHandle(token);
+    }
+    ::CloseHandle(process);
+    return out;
+}
+
+/// What can be read of the server behind @p pipe (RequestGuard::ServerFacts),
+/// all of it from the pipe and from the process it names.
+RequestGuard::ServerFacts serverFactsOf(HANDLE pipe)
+{
+    RequestGuard::ServerFacts facts;
+    facts.pipeOwnerSid = ownerSidOf(pipe);
+    facts.ownImage = ownImage();
     ULONG pid = 0;
-    if (!::GetNamedPipeServerProcessId(pipe, &pid)) {
-        *why = QStringLiteral("the program on the channel cannot be identified");
-        return false;
+    if (!::GetNamedPipeServerProcessId(pipe, &pid)) return facts;
+    facts.tokenUserSid = tokenUserOf(pid);
+    DWORD session = 0;
+    if (::ProcessIdToSessionId(pid, &session)) {
+        facts.sessionRead = true;
+        facts.sessionId = session;
     }
-    // A server under the system account is not always ours to open: its owner,
-    // checked above, then stands alone.
-    const QString theirs = imageOf(pid);
-    wchar_t ours[MAX_PATH * 2];
-    const DWORD oursSize =
-        ::GetModuleFileNameW(nullptr, ours, static_cast<DWORD>(sizeof(ours) / sizeof(ours[0])));
-    if (theirs.isEmpty() || oursSize == 0) return true;
-    const QString mine = QString::fromWCharArray(ours, static_cast<int>(oursSize));
-    if (theirs.compare(mine, Qt::CaseInsensitive) != 0) {
-        *why = QStringLiteral("the program on the channel is not this one: %1").arg(theirs);
-        return false;
-    }
-    return true;
+    facts.image = finalPathOf(imageOf(pid));
+    // Only a service's folder needs to be one nobody else may write to.
+    const bool maybeService = facts.tokenUserSid == QLatin1String(RequestGuard::kSystemSid) ||
+                              (facts.tokenUserSid.isEmpty() &&
+                               facts.pipeOwnerSid == QLatin1String(RequestGuard::kSystemSid));
+    if (maybeService && !facts.image.isEmpty())
+        facts.installDirLocked =
+            mw::place::win::checkInstallDir(QFileInfo(facts.image).absolutePath(), {}) ==
+            mw::place::win::Check::Ok;
+    return facts;
+}
+
+/// Whether the pipe behind @p pipe is this install's server (RequestGuard's
+/// serverVerdict), read from the pipe and its process alone: nothing of what it
+/// would answer is read before this, and nothing is written.
+bool serverIsOurs(HANDLE pipe, QString* why, bool* service = nullptr)
+{
+    const RequestGuard::ServerFacts facts = serverFactsOf(pipe);
+    const RequestGuard::ServerVerdict verdict =
+        RequestGuard::serverVerdict(facts, accountSid(), administratorsSid());
+    if (service)
+        *service = facts.tokenUserSid != accountSid() &&
+                   facts.pipeOwnerSid == QLatin1String(RequestGuard::kSystemSid);
+    if (verdict == RequestGuard::ServerVerdict::Ours) return true;
+    *why = RequestGuard::serverVerdictText(verdict);
+    return false;
 }
 
 } // namespace
@@ -788,6 +977,8 @@ struct Server::Impl
     std::thread acceptor;
     bool listening = false;
     bool service = false; // opened to the people signed in at this PC (Audience::SignedIn)
+    /// Set while the server it belongs to starts (Server::holdUntilRouted).
+    std::shared_ptr<std::atomic<bool>> early;
 
     // Guards `context`: once `stopping`, no thread posts to it again.
     std::mutex dispatch;
@@ -1000,6 +1191,17 @@ static void serveConnection(const std::shared_ptr<Server::Impl>& impl, HANDLE pi
         return;
     }
 
+    // While the server starts, answered here, on this thread: the one the
+    // handler runs on may be busy starting, with no event loop turning yet.
+    if (impl->early && impl->early->load()) {
+        Request asked = *request;
+        asked.caller = caller;
+        asked.service = impl->service;
+        asked.callerLabel = callerOf(pipe);
+        finish(pipe, writeAll(pipe, replyFrame(earlyReply(asked)), kRequestReadMs));
+        return;
+    }
+
     auto pending = std::make_shared<Pending>();
     bool posted = false;
     {
@@ -1044,6 +1246,7 @@ static void serveConnection(const std::shared_ptr<Server::Impl>& impl, HANDLE pi
 Server::Server(QObject* parent)
     : QObject(parent)
     , m_Impl(std::make_shared<Impl>())
+    , m_Early(std::make_shared<std::atomic<bool>>(false))
 {
     m_Impl->context = this;
 }
@@ -1070,6 +1273,7 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error, Au
     m_Impl->path = endpoint.toStdWString();
     m_Impl->handler = std::move(handler);
     m_Impl->service = audience == Audience::SignedIn;
+    m_Impl->early = m_Early;
 
     // Who may open it: pipeAccessList().
     const std::wstring self = ownSid();
@@ -1090,7 +1294,7 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error, Au
         // when the name exists already.
         return fail(
             code == ERROR_ACCESS_DENIED
-                ? QStringLiteral("the channel's name is already held by another program")
+                ? QLatin1String(kNameHeld)
                 : QStringLiteral("the channel cannot be opened (%1)").arg(lastErrorText(code)));
     }
     m_Impl->stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -1110,6 +1314,7 @@ bool Server::listen(const QString& endpoint, Handler handler, QString* error, Au
 
 void Server::close()
 {
+    stopRetrying();
     if (!m_Impl->listening) return;
     {
         std::lock_guard<std::mutex> lock(m_Impl->dispatch);
@@ -1142,9 +1347,13 @@ QString Server::endpoint() const
 namespace {
 
 Reply ask(const QString& endpoint, const Request& request, int timeoutMs, HANDLE* serverProcess,
-          QString* error)
+          QString* error, ProbeStage* stage = nullptr, bool* service = nullptr)
 {
     if (serverProcess) *serverProcess = nullptr;
+    auto at = [stage](ProbeStage reached) {
+        if (stage) *stage = reached;
+    };
+    at(ProbeStage::NotOpened);
     auto fail = [error, serverProcess](const QString& why) {
         if (error) *error = why;
         if (serverProcess && *serverProcess) {
@@ -1166,7 +1375,10 @@ Reply ask(const QString& endpoint, const Request& request, int timeoutMs, HANDLE
             FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION, nullptr);
         if (pipe != INVALID_HANDLE_VALUE) break;
         const DWORD code = ::GetLastError();
-        if (code == ERROR_FILE_NOT_FOUND) return fail(QStringLiteral("nothing listens"));
+        if (code == ERROR_FILE_NOT_FOUND) {
+            at(ProbeStage::NothingListens);
+            return fail(QStringLiteral("nothing listens"));
+        }
         if (code != ERROR_PIPE_BUSY)
             return fail(
                 QStringLiteral("the channel cannot be opened (%1)").arg(lastErrorText(code)));
@@ -1176,10 +1388,14 @@ Reply ask(const QString& endpoint, const Request& request, int timeoutMs, HANDLE
     }
 
     QString why;
-    if (!serverIsOurs(pipe, &why)) {
+    if (!serverIsOurs(pipe, &why, service)) {
         ::CloseHandle(pipe);
+        at(ProbeStage::NotOurs);
         return fail(why);
     }
+    // From here on, the server is this install's: whatever follows, no second
+    // one is started beside it.
+    at(ProbeStage::NoAnswer);
     // The process to wait for, from the pipe and before the request: a PID
     // read once the server is gone could be another process's.
     if (serverProcess) {
@@ -1215,6 +1431,7 @@ Reply ask(const QString& endpoint, const Request& request, int timeoutMs, HANDLE
 
     const std::optional<Reply> reply = decodeReply(reader.payload());
     if (!reply) return fail(QStringLiteral("the answer is not one of this channel's"));
+    at(ProbeStage::Answered);
     return *reply;
 }
 
@@ -1224,6 +1441,17 @@ Reply request(const QString& endpoint, const Request& request, int timeoutMs, QS
 {
     return ask(endpoint, request, timeoutMs, nullptr, error);
 }
+
+namespace {
+
+/// One request, and how far it went (ProbeStage).
+Reply askStaged(const QString& endpoint, const Request& request, int timeoutMs, QString* error,
+                ProbeStage* stage, bool* service = nullptr)
+{
+    return ask(endpoint, request, timeoutMs, nullptr, error, stage, service);
+}
+
+} // namespace
 
 Reply requestHoldingServer(const QString& endpoint, const Request& request, int timeoutMs,
                            void** serverProcess, QString* error)
@@ -1309,188 +1537,151 @@ bool folderIsOursAlone(const QString& dir, QString* why)
     return true;
 }
 
-} // namespace
-
-RequestGuard::LocalVerdict verdictOf(const LocalCaller& caller, bool service)
+/// Whether every folder from / down to @p dir is root's, the last one root's
+/// or anybody's (@p lastOwner gets it), and none of them a link or writable
+/// by group or others: a folder only root can have made, and nobody else
+/// change. A machine socket lives in nothing else.
+bool folderChainLocked(const QString& dir, qint64* lastOwner)
 {
-    // The kernel's word on the peer was taken when it connected: this
-    // account or root, nobody else (accountAllowed).
-    Q_UNUSED(caller);
-    Q_UNUSED(service);
-    return RequestGuard::LocalVerdict::Admit;
+    *lastOwner = -1;
+    if (!dir.startsWith(QLatin1Char('/'))) return false;
+    const QStringList parts = dir.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    QString at = QStringLiteral("/");
+    for (int i = -1; i < parts.size(); ++i) {
+        if (i >= 0) at += (i == 0 ? QString() : QStringLiteral("/")) + parts[i];
+        struct stat info = {};
+        if (::lstat(at.toLocal8Bit().constData(), &info) != 0 || !S_ISDIR(info.st_mode) ||
+            (info.st_mode & 022) != 0)
+            return false;
+        const bool last = i == parts.size() - 1;
+        if (!last && info.st_uid != 0) return false;
+        if (last) *lastOwner = static_cast<qint64>(info.st_uid);
+    }
+    return *lastOwner >= 0;
 }
 
-struct Server::Impl
+/// The server's end of a connected socket: its process number from the
+/// kernel, -1 when it cannot be read.
+qint64 peerPid(qintptr fd)
 {
-    QLocalServer* server = nullptr;
-    QString endpoint;
-    Handler handler;
-};
-
-Server::Server(QObject* parent)
-    : QObject(parent)
-    , m_Impl(std::make_shared<Impl>())
-{}
-
-Server::~Server()
-{
-    close();
+#if defined(Q_OS_LINUX)
+    struct ucred cred = {};
+    socklen_t size = sizeof(cred);
+    if (::getsockopt(static_cast<int>(fd), SOL_SOCKET, SO_PEERCRED, &cred, &size) != 0) return -1;
+    return static_cast<qint64>(cred.pid);
+#elif defined(Q_OS_MACOS)
+    pid_t pid = 0;
+    socklen_t size = sizeof(pid);
+    if (::getsockopt(static_cast<int>(fd), SOL_LOCAL, LOCAL_PEERPID, &pid, &size) != 0) return -1;
+    return static_cast<qint64>(pid);
+#else
+    Q_UNUSED(fd);
+    return -1;
+#endif
 }
 
-bool Server::listen(const QString& endpoint, Handler handler, QString* error, Audience audience)
+/// The executable of process @p pid, links resolved; empty when it cannot be
+/// read (another account's process, on Linux, is not this one's to read).
+QString exeOf(qint64 pid)
 {
-    // The socket is this account's alone whoever the audience: see the header.
-    Q_UNUSED(audience);
-    auto fail = [error](const QString& why) {
-        if (error) *error = why;
-        return false;
+    if (pid <= 0) return {};
+#if defined(Q_OS_LINUX)
+    char buffer[4096];
+    const QByteArray link = QByteArray("/proc/") + QByteArray::number(pid) + "/exe";
+    const ssize_t size = ::readlink(link.constData(), buffer, sizeof(buffer) - 1);
+    if (size <= 0) return {};
+    return QString::fromLocal8Bit(buffer, static_cast<int>(size));
+#elif defined(Q_OS_MACOS)
+    char buffer[PROC_PIDPATHINFO_MAXSIZE];
+    const int size = ::proc_pidpath(static_cast<int>(pid), buffer, sizeof(buffer));
+    if (size <= 0) return {};
+    const QString path = QString::fromLocal8Bit(buffer, size);
+    const QString resolved = QFileInfo(path).canonicalFilePath();
+    return resolved.isEmpty() ? path : resolved;
+#else
+    return {};
+#endif
+}
+
+/// This program's executable, the way exeOf() reads the server's.
+QString ownExe()
+{
+    static const QString own = exeOf(static_cast<qint64>(::getpid()));
+    return own;
+}
+
+/// One request, and how far it went (ProbeStage). The socket file, its folder
+/// and the server at the other end are judged (unixServerVerdict) before
+/// anything is written to whatever listens there.
+Reply askStaged(const QString& endpoint, const Request& request, int timeoutMs, QString* error,
+                ProbeStage* stage, bool* service = nullptr)
+{
+    if (service) *service = !endpoint.isEmpty() && endpoint.startsWith(QLatin1String("/run/"));
+    auto at = [stage](ProbeStage reached) {
+        if (stage) *stage = reached;
     };
-    if (m_Impl->server) return fail(QStringLiteral("already listening"));
-    if (!handler) return fail(QStringLiteral("no handler"));
-    if (!QFileInfo(endpoint).isAbsolute())
-        return fail(QStringLiteral("the channel needs a full path"));
-
-    QString why;
-    if (!folderIsOursAlone(QFileInfo(endpoint).absolutePath(), &why)) return fail(why);
-
-    // A socket file left by a run that ended badly is removed, if it is this
-    // account's; one that a program still answers on is somebody's, and is left
-    // alone, as is anything there that is not a socket of ours.
-    struct stat left = {};
-    if (::lstat(endpoint.toLocal8Bit().constData(), &left) == 0) {
-        if (!S_ISSOCK(left.st_mode) || left.st_uid != ::geteuid())
-            return fail(QStringLiteral("the channel's name is held by something that is not "
-                                       "this account's socket"));
-        QLocalSocket probe;
-        probe.connectToServer(endpoint);
-        if (probe.waitForConnected(500))
-            return fail(QStringLiteral("the channel's name is already held by another program"));
-        QLocalServer::removeServer(endpoint);
-    }
-
-    auto* server = new QLocalServer(this);
-    // The server's account alone (0600).
-    server->setSocketOptions(QLocalServer::UserAccessOption);
-    if (!server->listen(endpoint)) {
-        const QString why = server->errorString();
-        delete server;
-        return fail(QStringLiteral("the channel cannot be opened (%1)").arg(why));
-    }
-    m_Impl->server = server;
-    m_Impl->endpoint = endpoint;
-    m_Impl->handler = std::move(handler);
-
-    connect(server, &QLocalServer::newConnection, this, [this]() {
-        while (QLocalSocket* socket = m_Impl->server->nextPendingConnection()) {
-            const qint64 uid = peerUid(socket->socketDescriptor());
-            if (!accountAllowed(uid)) {
-                const QString line = refusals().note(uid < 0 ? RefusalLog::Kind::Unreadable
-                                                             : RefusalLog::Kind::OtherAccount);
-                if (!line.isEmpty()) Logger::info(line);
-                socket->abort();
-                socket->deleteLater();
-                continue;
-            }
-            connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
-
-            auto reader = std::make_shared<FrameReader>(true, kMaxRequestBytes);
-            auto asked = std::make_shared<bool>(false);
-            // A caller that connects and says nothing does not keep its place.
-            QTimer::singleShot(kRequestReadMs, socket, [socket, asked]() {
-                if (!*asked) socket->abort();
-            });
-            connect(socket, &QLocalSocket::readyRead, this, [this, socket, reader, asked]() {
-                const QByteArray bytes = socket->readAll();
-                if (*asked) {
-                    // One request, one answer.
-                    socket->abort();
-                    return;
-                }
-                const FrameReader::State state = reader->feed(bytes);
-                if (state == FrameReader::State::NeedMore) return;
-                if (state == FrameReader::State::Bad) {
-                    Logger::warning(
-                        QStringLiteral("[LocalChannel] a caller refused: %1").arg(reader->error()));
-                    socket->abort();
-                    return;
-                }
-                *asked = true;
-                const QPointer<QLocalSocket> to(socket);
-                auto answered = std::make_shared<bool>(false);
-                auto respond = [to, answered](const Reply& reply) {
-                    if (*answered || !to) return;
-                    *answered = true;
-                    to->write(replyFrame(reply));
-                    to->flush();
-                    to->disconnectFromServer();
-                };
-                const std::optional<Request> request = decodeRequest(reader->payload());
-                if (!request) {
-                    Logger::warning(
-                        QStringLiteral("[LocalChannel] a caller refused: not a request"));
-                    respond(refusal(400, "bad_request"));
-                    return;
-                }
-                // Its account was judged when it connected (accountAllowed).
-                Request asked = *request;
-                asked.caller.uid = peerUid(socket->socketDescriptor());
-                asked.callerLabel = callerOf(socket->socketDescriptor());
-                QTimer::singleShot(kHandlerMs, socket,
-                                   [respond]() { respond(refusal(504, "no_answer_in_time")); });
-                m_Impl->handler(asked, respond);
-            });
-        }
-    });
-    return true;
-}
-
-void Server::close()
-{
-    if (!m_Impl->server) return;
-    m_Impl->server->close();
-    delete m_Impl->server;
-    m_Impl->server = nullptr;
-}
-
-bool Server::isListening() const
-{
-    return m_Impl->server != nullptr;
-}
-
-QString Server::endpoint() const
-{
-    return m_Impl->endpoint;
-}
-
-Reply request(const QString& endpoint, const Request& request, int timeoutMs, QString* error)
-{
     auto fail = [error](const QString& why) {
         if (error) *error = why;
         return Reply{};
     };
-    // The socket file and the folder it is in must be this account's, or
-    // root's, and the folder closed to everyone else's writes, before anything
-    // is sent to whatever listens there.
+    at(ProbeStage::NotOpened);
+
+    RequestGuard::UnixServerFacts facts;
+    facts.machine = !endpoint.isEmpty() && endpoint.startsWith(QLatin1String("/run/"));
+    facts.ownUid = static_cast<qint64>(::geteuid());
     struct stat info = {};
-    if (::lstat(endpoint.toLocal8Bit().constData(), &info) != 0)
+    if (::lstat(endpoint.toLocal8Bit().constData(), &info) != 0) {
+        if (errno == ENOENT) at(ProbeStage::NothingListens);
         return fail(QStringLiteral("nothing listens"));
-    if (!S_ISSOCK(info.st_mode) || !accountAllowed(static_cast<qint64>(info.st_uid)))
-        return fail(QLatin1String(kOtherAccount));
-    struct stat folder = {};
-    if (::lstat(QFileInfo(endpoint).absolutePath().toLocal8Bit().constData(), &folder) != 0 ||
-        !S_ISDIR(folder.st_mode) || !accountAllowed(static_cast<qint64>(folder.st_uid)) ||
-        (folder.st_mode & 022) != 0)
-        return fail(QStringLiteral("the channel's folder belongs to another account"));
+    }
+    if (S_ISSOCK(info.st_mode)) facts.socketOwner = static_cast<qint64>(info.st_uid);
+    const QString dir = QFileInfo(endpoint).absolutePath();
+    if (facts.machine) {
+        facts.folderLocked = folderChainLocked(dir, &facts.folderOwner);
+    } else {
+        struct stat folder = {};
+        if (::lstat(dir.toLocal8Bit().constData(), &folder) == 0 && S_ISDIR(folder.st_mode)) {
+            facts.folderOwner = static_cast<qint64>(folder.st_uid);
+            facts.folderLocked = accountAllowed(facts.folderOwner) && (folder.st_mode & 022) == 0;
+        }
+    }
+    // What can be judged before connecting is judged first: nothing is opened
+    // to a socket that is not where it should be.
+    RequestGuard::UnixServerFacts before = facts;
+    before.peerUid = facts.machine ? facts.folderOwner : facts.ownUid;
+    before.peerExe = before.ownExe = QStringLiteral("-");
+    RequestGuard::ServerVerdict verdict = RequestGuard::unixServerVerdict(before);
+    if (verdict != RequestGuard::ServerVerdict::Ours) {
+        at(ProbeStage::NotOurs);
+        return fail(RequestGuard::serverVerdictText(verdict));
+    }
 
     QElapsedTimer clock;
     clock.start();
     QLocalSocket socket;
     socket.connectToServer(endpoint);
-    if (!socket.waitForConnected(timeoutMs)) return fail(QStringLiteral("nothing listens"));
-    if (!accountAllowed(peerUid(socket.socketDescriptor()))) {
-        socket.abort();
-        return fail(QLatin1String(kOtherAccount));
+    if (!socket.waitForConnected(timeoutMs)) {
+        // A socket file in a folder judged above, that nobody listens on: what a
+        // server that ended badly leaves, and the next one removes. Nobody else
+        // can have put it there, so it is nobody.
+        if (socket.error() == QLocalSocket::ConnectionRefusedError ||
+            socket.error() == QLocalSocket::ServerNotFoundError)
+            at(ProbeStage::NothingListens);
+        return fail(QStringLiteral("nothing listens"));
     }
+    facts.peerUid = peerUid(socket.socketDescriptor());
+    if (!facts.machine) {
+        facts.peerExe = exeOf(peerPid(socket.socketDescriptor()));
+        facts.ownExe = ownExe();
+    }
+    verdict = RequestGuard::unixServerVerdict(facts);
+    if (verdict != RequestGuard::ServerVerdict::Ours) {
+        socket.abort();
+        at(ProbeStage::NotOurs);
+        return fail(RequestGuard::serverVerdictText(verdict));
+    }
+    // From here on, the server is this install's.
+    at(ProbeStage::NoAnswer);
 
     const QByteArray payload = encodeRequest(request);
     if (static_cast<quint32>(payload.size()) > kMaxRequestBytes)
@@ -1520,9 +1711,390 @@ Reply request(const QString& endpoint, const Request& request, int timeoutMs, QS
 
     const std::optional<Reply> reply = decodeReply(reader.payload());
     if (!reply) return fail(QStringLiteral("the answer is not one of this channel's"));
+    at(ProbeStage::Answered);
     return *reply;
 }
 
+} // namespace
+
+RequestGuard::LocalVerdict verdictOf(const LocalCaller& caller, bool service)
+{
+    // This account's socket: the kernel's word on the peer was taken when it
+    // connected, this account or root, nobody else (accountAllowed).
+    if (!service) return RequestGuard::LocalVerdict::Admit;
+    // The machine's socket of a service, which anybody may reach: the same
+    // two accounts are let in, from the kernel's word, and nobody else.
+    if (caller.uid < 0) return RequestGuard::LocalVerdict::Unreadable;
+    return accountAllowed(caller.uid) ? RequestGuard::LocalVerdict::Admit
+                                      : RequestGuard::LocalVerdict::StandardAccount;
+}
+
+struct Server::Impl
+{
+    /// The channel's own thread: its listener, its sockets and their timers
+    /// live there, so that a caller is read, judged and, while the server
+    /// starts, answered even when the thread the Server lives on is busy.
+    QThread* thread = nullptr;
+    /// Lives on that thread; the listener and the sockets hang from it. Gone
+    /// with the last holder of this state (a caller's answer still on its way).
+    QObject* anchor = nullptr;
+    QLocalServer* server = nullptr;
+    QString endpoint;
+    Handler handler;
+    /// The Server, on its own thread: where the handler runs.
+    QObject* context = nullptr;
+    /// Set while the server it belongs to starts (Server::holdUntilRouted).
+    std::shared_ptr<std::atomic<bool>> early;
+    /// The machine's socket (Audience::SignedIn): anybody connects, the gate
+    /// of the routes judges.
+    bool machine = false;
+
+    ~Impl() { delete anchor; }
+};
+
+Server::Server(QObject* parent)
+    : QObject(parent)
+    , m_Impl(std::make_shared<Impl>())
+    , m_Early(std::make_shared<std::atomic<bool>>(false))
+{}
+
+Server::~Server()
+{
+    close();
+}
+
+namespace {
+
+/// One connection, on the channel's thread: read, judged, and answered there
+/// while the server starts; handed to the server's thread once it runs.
+void serveSocket(const std::shared_ptr<Server::Impl>& impl, QLocalSocket* socket)
+{
+    const qint64 uid = peerUid(socket->socketDescriptor());
+    // On the machine's socket, anybody whose account the kernel tells goes on
+    // to the gate (verdictOf), which answers 403 to the others.
+    if (impl->machine ? uid < 0 : !accountAllowed(uid)) {
+        const QString line = refusals().note(uid < 0 ? RefusalLog::Kind::Unreadable
+                                                     : RefusalLog::Kind::OtherAccount);
+        if (!line.isEmpty()) Logger::info(line);
+        socket->abort();
+        socket->deleteLater();
+        return;
+    }
+    QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+
+    auto reader = std::make_shared<FrameReader>(true, kMaxRequestBytes);
+    auto asked = std::make_shared<bool>(false);
+    // A caller that connects and says nothing does not keep its place.
+    QTimer::singleShot(kRequestReadMs, socket, [socket, asked]() {
+        if (!*asked) socket->abort();
+    });
+    QObject::connect(socket, &QLocalSocket::readyRead, socket, [impl, socket, reader, asked]() {
+        const QByteArray bytes = socket->readAll();
+        if (*asked) {
+            // One request, one answer.
+            socket->abort();
+            return;
+        }
+        const FrameReader::State state = reader->feed(bytes);
+        if (state == FrameReader::State::NeedMore) return;
+        if (state == FrameReader::State::Bad) {
+            Logger::warning(
+                QStringLiteral("[LocalChannel] a caller refused: %1").arg(reader->error()));
+            socket->abort();
+            return;
+        }
+        *asked = true;
+        const QPointer<QLocalSocket> to(socket);
+        auto answered = std::make_shared<bool>(false);
+        // On the channel's thread, whichever thread answers: the state it
+        // holds keeps the anchor that takes the answer there.
+        auto respond = [impl, to, answered](const Reply& reply) {
+            QMetaObject::invokeMethod(
+                impl->anchor,
+                [to, answered, reply]() {
+                    if (*answered || !to) return;
+                    *answered = true;
+                    to->write(replyFrame(reply));
+                    to->flush();
+                    to->disconnectFromServer();
+                },
+                Qt::QueuedConnection);
+        };
+        const std::optional<Request> request = decodeRequest(reader->payload());
+        if (!request) {
+            Logger::warning(QStringLiteral("[LocalChannel] a caller refused: not a request"));
+            respond(refusal(400, "bad_request"));
+            return;
+        }
+        // This account's socket: its account was judged when it connected
+        // (accountAllowed). The machine's: by the gate.
+        Request ask = *request;
+        ask.caller.uid = peerUid(socket->socketDescriptor());
+        ask.service = impl->machine;
+        ask.callerLabel = callerOf(socket->socketDescriptor());
+        if (impl->early && impl->early->load()) {
+            respond(earlyReply(ask));
+            return;
+        }
+        QTimer::singleShot(kHandlerMs, socket,
+                           [respond]() { respond(refusal(504, "no_answer_in_time")); });
+        const Server::Handler handler = impl->handler;
+        QMetaObject::invokeMethod(
+            impl->context, [handler, ask, respond]() { handler(ask, respond); },
+            Qt::QueuedConnection);
+    });
+}
+
+} // namespace
+
+bool Server::listen(const QString& endpoint, Handler handler, QString* error, Audience audience)
+{
+    // This account's socket is its alone (Audience::OwnAccount). The machine's
+    // (Audience::SignedIn, a service's machineEndpoint) is open to anybody,
+    // in a folder only root can have made, and its gate judges who asks.
+    const bool machine = audience == Audience::SignedIn;
+    auto fail = [error](const QString& why) {
+        if (error) *error = why;
+        return false;
+    };
+    if (m_Impl->server) return fail(QStringLiteral("already listening"));
+    if (!handler) return fail(QStringLiteral("no handler"));
+    if (!QFileInfo(endpoint).isAbsolute())
+        return fail(QStringLiteral("the channel needs a full path"));
+
+    QString why;
+    if (machine) {
+        qint64 owner = -1;
+        if (!folderChainLocked(QFileInfo(endpoint).absolutePath(), &owner) ||
+            owner != static_cast<qint64>(::geteuid()) || owner < 0)
+            return fail(QStringLiteral("the machine's channel folder is not this service's alone"));
+    } else if (!folderIsOursAlone(QFileInfo(endpoint).absolutePath(), &why)) {
+        return fail(why);
+    }
+
+    // A socket file left by a run that ended badly is removed, if it is this
+    // account's; one that a program still answers on is somebody's, and is left
+    // alone, as is anything there that is not a socket of ours.
+    struct stat left = {};
+    if (::lstat(endpoint.toLocal8Bit().constData(), &left) == 0) {
+        if (!S_ISSOCK(left.st_mode) || left.st_uid != ::geteuid())
+            return fail(QStringLiteral("the channel's name is held by something that is not "
+                                       "this account's socket"));
+        QLocalSocket probe;
+        probe.connectToServer(endpoint);
+        if (probe.waitForConnected(500)) return fail(QLatin1String(kNameHeld));
+        QLocalServer::removeServer(endpoint);
+    }
+
+    // A fresh state per listen(): a caller's answer of an earlier one may
+    // still hold the old.
+    auto impl = std::make_shared<Impl>();
+    impl->endpoint = endpoint;
+    impl->handler = std::move(handler);
+    impl->context = this;
+    impl->early = m_Early;
+    impl->machine = machine;
+    impl->thread = new QThread();
+    impl->thread->setObjectName(QStringLiteral("LocalChannel"));
+    impl->anchor = new QObject();
+    impl->anchor->moveToThread(impl->thread);
+    impl->thread->start();
+
+    bool open = false;
+    QString cause;
+    QMetaObject::invokeMethod(
+        impl->anchor,
+        [impl, machine, &open, &cause]() {
+            auto* server = new QLocalServer(impl->anchor);
+            // The server's account alone (0600); the machine's, anybody (0666).
+            server->setSocketOptions(machine ? QLocalServer::WorldAccessOption
+                                             : QLocalServer::UserAccessOption);
+            if (!server->listen(impl->endpoint)) {
+                cause = server->errorString();
+                delete server;
+                return;
+            }
+            impl->server = server;
+            // The state, not the Server: what the thread holds outlives neither.
+            std::weak_ptr<Impl> weak = impl;
+            QObject::connect(server, &QLocalServer::newConnection, server, [weak, server]() {
+                const std::shared_ptr<Impl> held = weak.lock();
+                if (!held) return;
+                while (QLocalSocket* socket = server->nextPendingConnection())
+                    serveSocket(held, socket);
+            });
+            open = true;
+        },
+        Qt::BlockingQueuedConnection);
+    if (!open) {
+        impl->thread->quit();
+        impl->thread->wait();
+        delete impl->thread;
+        impl->thread = nullptr;
+        return fail(QStringLiteral("the channel cannot be opened (%1)").arg(cause));
+    }
+    m_Impl = impl;
+    return true;
+}
+
+void Server::close()
+{
+    stopRetrying();
+    const std::shared_ptr<Impl> impl = m_Impl;
+    if (!impl->server) return;
+    // On its thread: the listener goes, and the sockets hanging from it.
+    QMetaObject::invokeMethod(
+        impl->anchor,
+        [impl]() {
+            impl->server->close();
+            delete impl->server;
+            impl->server = nullptr;
+        },
+        Qt::BlockingQueuedConnection);
+    impl->thread->quit();
+    impl->thread->wait();
+    delete impl->thread;
+    impl->thread = nullptr;
+    m_Impl = std::make_shared<Impl>();
+    m_Impl->endpoint = impl->endpoint;
+}
+
+bool Server::isListening() const
+{
+    return m_Impl->server != nullptr;
+}
+
+QString Server::endpoint() const
+{
+    return m_Impl->endpoint;
+}
+
+Reply request(const QString& endpoint, const Request& request, int timeoutMs, QString* error)
+{
+    return askStaged(endpoint, request, timeoutMs, error, nullptr);
+}
+
 #endif // Q_OS_WIN
+
+// ── Both ends, on every platform ────────────────────────────────────────────
+
+QString machineEndpoint(bool devBuild, bool devFlag)
+{
+#ifdef Q_OS_WIN
+    Q_UNUSED(devBuild);
+    Q_UNUSED(devFlag);
+    return QString();
+#else
+    // The folder is the unit's RuntimeDirectory=, named as its package is.
+    if (devFlag) return QString();
+    return devBuild ? QStringLiteral("/run/moonlightweb-dev/local.sock")
+                    : QStringLiteral("/run/moonlightweb/local.sock");
+#endif
+}
+
+QStringList callerEndpoints(const QString& accountEndpoint, bool devBuild, bool devFlag)
+{
+    QStringList out{accountEndpoint};
+    const QString machine = machineEndpoint(devBuild, devFlag);
+    if (!machine.isEmpty() && machine != accountEndpoint) out.append(machine);
+    return out;
+}
+
+namespace {
+
+/// The first of @p endpoints where something listens, on one clock of
+/// @p timeoutMs: how far the request went there, in @p stage.
+Reply askFirst(const QStringList& endpoints, const Request& request, int timeoutMs, QString* error,
+               ProbeStage* stage, bool* service = nullptr)
+{
+    QElapsedTimer clock;
+    clock.start();
+    *stage = ProbeStage::NothingListens;
+    Reply reply;
+    QString why = QStringLiteral("nothing listens");
+    for (const QString& endpoint : endpoints) {
+        const qint64 left = timeoutMs - clock.elapsed();
+        if (left <= 0) {
+            *stage = ProbeStage::NotOpened;
+            why = QStringLiteral("timed out");
+            break;
+        }
+        why.clear();
+        reply = askStaged(endpoint, request, static_cast<int>(left), &why, stage, service);
+        if (*stage != ProbeStage::NothingListens) break;
+    }
+    if (error && *stage != ProbeStage::Answered) *error = why;
+    return reply;
+}
+
+} // namespace
+
+Reply requestFirst(const QStringList& endpoints, const Request& request, int timeoutMs,
+                   QString* error)
+{
+    ProbeStage stage = ProbeStage::NothingListens;
+    return askFirst(endpoints, request, timeoutMs, error, &stage);
+}
+
+Probe probe(const QStringList& endpoints, int budgetMs)
+{
+    Probe out;
+    const Reply reply =
+        askFirst(endpoints, healthRequest(), budgetMs, &out.why, &out.stage, &out.service);
+    out.outcome = probeOutcome(out.stage);
+    if (out.stage == ProbeStage::Answered) out.status = reply.status;
+    return out;
+}
+
+bool Server::listenKeepTrying(const QString& endpoint, Handler handler, QString* error,
+                              Audience audience, int retryMs)
+{
+    stopRetrying();
+    QString why;
+    if (listen(endpoint, handler, &why, audience)) return true;
+    if (error) *error = why;
+    if (why != QLatin1String(kNameHeld)) return false;
+    Logger::warning(QStringLiteral("[LocalChannel] the channel's name is held by another "
+                                   "program: retrying every %1 s")
+                        .arg(retryMs / 1000.0, 0, 'g', 3));
+    m_Retry = new QTimer(this);
+    m_Retry->setInterval(retryMs);
+    connect(m_Retry, &QTimer::timeout, this, [this, endpoint, handler, audience]() {
+        QString again;
+        if (!listen(endpoint, handler, &again, audience)) return;
+        stopRetrying();
+        Logger::info(QStringLiteral("[LocalChannel] open, once its name was let go"));
+    });
+    m_Retry->start();
+    return false;
+}
+
+bool Server::isRetrying() const
+{
+    return m_Retry != nullptr;
+}
+
+void Server::holdUntilRouted()
+{
+    m_Early->store(true);
+}
+
+void Server::route()
+{
+    m_Early->store(false);
+}
+
+bool Server::isHeld() const
+{
+    return m_Early->load();
+}
+
+void Server::stopRetrying()
+{
+    if (!m_Retry) return;
+    m_Retry->stop();
+    m_Retry->deleteLater();
+    m_Retry = nullptr;
+}
 
 } // namespace mw::localchannel
