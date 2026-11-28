@@ -230,13 +230,6 @@ Sunshine is no longer installed (since September 2026); an existing Sunshine is 
 **Updates:** rerun the installer or use the in‑app button (no UAC prompt); settings and pairings are kept.\
 **Service (optional):** `backend/packaging/windows/install-service.bat` installs a session‑0 service via NSSM.
 
-#### Remote Desktop
-
-Closing a Remote Desktop window leaves your Windows session running **with no screen at all**, not even a virtual one, so the PC's card has nothing to stream. Two ways back:
-
-- **From MoonlightWeb:** open **This PC's sign-in screen** on the card and sign in through the stream; your session comes back to the PC's screen, and the stream ends: open the PC's screen as usual. Admin only, and never while somebody is signed in on the PC.
-- **When you leave Remote Desktop:** instead of closing the window, run `tscon %SESSIONNAME% /dest:console` from an administrator Command Prompt inside the session. The session returns to the PC's screen **unlocked**: lock it right away from the stream (Windows key + L).
-
 ### macOS (Apple Silicon)
 
 **`moonlightweb-<version>-macos-arm64.pkg`** — installs to `/Applications` with an optional **start at login**.
@@ -312,7 +305,7 @@ caveats).
 
 | | |
 |---|---|
-| **Tags** | `latest` · `0.4.1` · `0.4` · `sha-<commit>`. Release tags only — no `edge`, no nightly, so `latest` can never be work in progress. |
+| **Tags** | `latest` · `0.5.0` · `0.5` · `sha-<commit>`. Release tags only — no `edge`, no nightly, so `latest` can never be work in progress. |
 | **Ports to open** | **443/tcp** (web UI + signalling) and **80/tcp** (HTTP→HTTPS redirect). WebRTC media takes **48550‑48573/udp** (every stream shares one port of it, plus a conferencing port with Internet Access), with or without UPnP. A GameStream host is reached *outbound* on 47989/47984/47990 tcp, 47998‑48000 udp, 48010 tcp/udp. |
 | **Volume** | `/data` — settings, TLS material, paired hosts and the **client identity**. Losing it un‑pairs every host. |
 | **Env** | `MW_HTTPS_PORT` · `MW_HTTP_PORT` · `MW_UPNP` · `TZ` |
@@ -341,7 +334,7 @@ Prefer to build it yourself? See [Fork & build](#fork--build).
 
 Browser‑side image enhancement on the GPU (WebGL2, or WebGPU in HDR and on iPhone): **MoonlightWeb's own upscaler**, FSR1's sharpness for less than SGSRv1's cost, its sharpening following the scale, to gain sharpness when the stream resolution differs from the display resolution.
 
-The upscaler, **MWSR**, is under the MIT License and packaged for other programs in [`mwsr/`](mwsr/README.md): its WebGPU, WebGL2 and Direct3D shaders, a C++ header, their parameters and examples. Compare it with FSR1, NIS and SGSR1 on your own GPU: [moonlightweb.top/mwsr](https://moonlightweb.top/mwsr/).
+The upscaler, **MWSR**, is under the MIT License and packaged for other programs in [`mwsr/`](mwsr/README.md): its WebGPU, WebGL2, Direct3D and Metal shaders, a libplacebo hook for mpv, a C++ header, their parameters and examples. It comes in two modes, as in MoonlightWeb: Performance by default, and Quality, a sharpening pass after the upscale, to turn on. Compare it with FSR1, NIS and SGSR1 on your own GPU: [moonlightweb.top/mwsr](https://moonlightweb.top/mwsr/).
 
 <div align="center">
 

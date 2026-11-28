@@ -124,7 +124,7 @@
         {
           "@type": "Question",
           "name": "What happens on strict firewalls or hotel Wi-Fi?",
-          "acceptedAnswer": {"@type": "Answer", "text": "UDP first, for the lowest latency. On a network that blocks UDP, the stream falls back to TCP on its own, still a direct connection, never through a relay. A network that only lets web ports out (80 and 443) can still block it: the host's direct address is then the way."}
+          "acceptedAnswer": {"@type": "Answer", "text": "UDP first, for the lowest latency. On a network that blocks UDP, the stream falls back to TCP on its own, still a direct connection, never through a relay. A network that only lets web ports out (80 and 443) can still block it: with Internet Access on, the host then asks your router for TCP 443 while such a browser needs it, and gives it back afterwards; otherwise the host's direct address is the way."}
         },
         {
           "@type": "Question",
@@ -255,7 +255,8 @@
     <summary data-i18n="q11.s">What happens on strict firewalls or hotel Wi-Fi?</summary>
     <div class="a" data-i18n-html="q11.a"><p>UDP first, for the lowest latency. On a network that blocks UDP, the stream falls back to TCP on its own,
       still a direct connection, never through a relay. A network that only lets web ports out (80 and 443)
-      can still block it: the host's direct address is then the way.</p></div>
+      can still block it: with Internet Access on, the host then asks your router for TCP 443 while such a browser
+      needs it, and gives it back afterwards; otherwise the host's direct address is the way.</p></div>
   </details>
 
   <h2 data-i18n="h2.internet">Internet play &amp; security</h2>

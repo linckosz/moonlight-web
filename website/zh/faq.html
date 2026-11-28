@@ -125,7 +125,7 @@
         {
           "@type": "Question",
           "name": "What happens on strict firewalls or hotel Wi-Fi?",
-          "acceptedAnswer": {"@type": "Answer", "text": "UDP first, for the lowest latency. On a network that blocks UDP, the stream falls back to TCP on its own, still a direct connection, never through a relay. A network that only lets web ports out (80 and 443) can still block it: the host's direct address is then the way."}
+          "acceptedAnswer": {"@type": "Answer", "text": "UDP first, for the lowest latency. On a network that blocks UDP, the stream falls back to TCP on its own, still a direct connection, never through a relay. A network that only lets web ports out (80 and 443) can still block it: with Internet Access on, the host then asks your router for TCP 443 while such a browser needs it, and gives it back afterwards; otherwise the host's direct address is the way."}
         },
         {
           "@type": "Question",
@@ -215,7 +215,7 @@
   </details>
   <details>
     <summary data-i18n="q11.s">遇到严格防火墙或酒店 Wi-Fi 会怎样？</summary>
-    <div class="a" data-i18n-html="q11.a"><p>先用 UDP 以获得最低延迟。在屏蔽 UDP 的网络上，串流会自动回退到 TCP，仍是直连，从不经过中继。只放行网页端口（80 和 443）的网络仍可能阻断它：这时请使用主机的直连地址。</p></div>
+    <div class="a" data-i18n-html="q11.a"><p>先用 UDP 以获得最低延迟。在屏蔽 UDP 的网络上，串流会自动回退到 TCP，仍是直连，从不经过中继。只放行网页端口（80 和 443）的网络仍可能阻断它：开启互联网访问后，主机会在此类浏览器需要时向你的路由器申请 TCP 443，用完即归还；否则请使用主机的直连地址。</p></div>
   </details>
 
   <h2 data-i18n="h2.internet">互联网远程游玩与安全</h2>

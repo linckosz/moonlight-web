@@ -125,7 +125,7 @@
         {
           "@type": "Question",
           "name": "What happens on strict firewalls or hotel Wi-Fi?",
-          "acceptedAnswer": {"@type": "Answer", "text": "UDP first, for the lowest latency. On a network that blocks UDP, the stream falls back to TCP on its own, still a direct connection, never through a relay. A network that only lets web ports out (80 and 443) can still block it: the host's direct address is then the way."}
+          "acceptedAnswer": {"@type": "Answer", "text": "UDP first, for the lowest latency. On a network that blocks UDP, the stream falls back to TCP on its own, still a direct connection, never through a relay. A network that only lets web ports out (80 and 443) can still block it: with Internet Access on, the host then asks your router for TCP 443 while such a browser needs it, and gives it back afterwards; otherwise the host's direct address is the way."}
         },
         {
           "@type": "Question",
@@ -215,7 +215,7 @@
   </details>
   <details>
     <summary data-i18n="q11.s">Was passiert bei strengen Firewalls oder Hotel-WLAN?</summary>
-    <div class="a" data-i18n-html="q11.a"><p>Zuerst UDP für die geringste Latenz. In einem Netzwerk, das UDP blockiert, weicht der Stream von selbst auf TCP aus, weiterhin als direkte Verbindung, nie über ein Relay. Ein Netzwerk, das nur Web-Ports (80 und 443) nach außen lässt, kann ihn trotzdem blockieren: Dann führt der Weg über die direkte Adresse des Hosts.</p></div>
+    <div class="a" data-i18n-html="q11.a"><p>Zuerst UDP für die geringste Latenz. In einem Netzwerk, das UDP blockiert, weicht der Stream von selbst auf TCP aus, weiterhin als direkte Verbindung, nie über ein Relay. Ein Netzwerk, das nur Web-Ports (80 und 443) nach außen lässt, kann ihn trotzdem blockieren: Mit aktiviertem Internetzugang bittet der Host deinen Router dann um TCP 443, solange ein solcher Browser es braucht, und gibt es danach wieder frei; sonst führt der Weg über die direkte Adresse des Hosts.</p></div>
   </details>
 
   <h2 data-i18n="h2.internet">Spielen übers Internet &amp; Sicherheit</h2>

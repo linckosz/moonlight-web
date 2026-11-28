@@ -70,7 +70,7 @@ The client requires no install: any modern browser (Chrome, Edge, Safari, Firefo
 - Compared with Parsec and Steam Remote Play: https://moonlightweb.top/browser-game-streaming.html
 - MWSR (MoonlightWeb Super Resolution), its open-source real-time upscaler, next to FSR1, NIS and SGSR1
   on your own GPU: https://moonlightweb.top/mwsr/
-- MWSR's source, under the MIT License (WGSL, GLSL, HLSL, C++): https://github.com/linckosz/moonlight-web/tree/main/mwsr
+- MWSR's source, under the MIT License (WGSL, GLSL, HLSL, Metal, a libplacebo hook, C++): https://github.com/linckosz/moonlight-web/tree/main/mwsr
 - Connect to a host by its code: https://moonlightweb.top/server-access/
 - Source code & downloads: https://github.com/linckosz/moonlight-web
 - Latest releases: https://github.com/linckosz/moonlight-web/releases
