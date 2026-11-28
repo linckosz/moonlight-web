@@ -439,7 +439,6 @@ add_executable(mw-server
     src/network/SelfUpdater.cpp
     src/network/UpdateApply.cpp
     src/network/UpdateApplyRules.cpp
-    src/network/Authenticode.cpp
     src/network/MdnsAdvertiser.cpp
     src/TrayManager.cpp
     src/ViewerNotices.cpp
@@ -762,6 +761,8 @@ if(WIN32)
                                             # version: the apps' names in Stream audio from
                                             # (AudioApps.cpp, GetFileVersionInfo).
                                             version)
+    # The update installer's Authenticode reads (WinVerifyTrust): Windows only.
+    target_sources(mw-server PRIVATE src/network/Authenticode.cpp)
     # OpenSSL is linked dynamically (import libs) — ship the DLLs next to the exe.
     file(GLOB _mw_ssl_dlls "${_mw_ssl}/lib/${_mw_ssl_arch}/*-3-${_mw_ssl_arch}.dll")
     foreach(_dll ${_mw_ssl_dlls})
