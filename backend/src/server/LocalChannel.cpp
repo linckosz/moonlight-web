@@ -1777,6 +1777,9 @@ struct Server::Impl
     /// of the routes judges.
     bool machine = false;
 
+    Impl() = default;
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
     ~Impl() { delete anchor; }
 };
 
