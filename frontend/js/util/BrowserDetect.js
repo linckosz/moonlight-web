@@ -29,6 +29,12 @@
 export function detectPlatform() {
     const ua = navigator.userAgent || '';
     const low = ua.toLowerCase();
+    const uad = /** @type {any} */ (navigator).userAgentData;
+    const uadAndroid = !!(
+        uad &&
+        typeof uad.platform === 'string' &&
+        /^android$/i.test(uad.platform)
+    );
 
     // --- Tablet detection (must come before mobile) ---
 
@@ -48,8 +54,25 @@ export function detectPlatform() {
         /ipad/i.test(ua) ||
         (!isIphone && /mac/i.test(ua) && 'ontouchend' in document && navigator.maxTouchPoints > 1);
 
-    // Android tablet: "Android" + no "Mobile" in UA
-    const isAndroidTablet = /android/.test(low) && !/mobile/.test(low);
+    // Large Android tablets in Chrome send a Linux desktop UA by default; Client Hints or
+    // coarse-only touch pointer media queries distinguish them from real Linux laptops.
+    const isLinuxDesktopUa = /linux/.test(low) && !/android/.test(low) && !/cros/.test(low);
+    let isCoarseTouchLinuxTablet = false;
+    if (isLinuxDesktopUa && navigator.maxTouchPoints > 1) {
+        try {
+            if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+                isCoarseTouchLinuxTablet =
+                    window.matchMedia('(pointer: coarse)').matches &&
+                    !window.matchMedia('(hover: hover)').matches;
+            }
+        } catch (e) {}
+    }
+
+    // Android tablet: "Android" + no "Mobile" in UA, Client Hints Android non-mobile, or desktop-UA tablet
+    const isAndroidTablet =
+        (/android/.test(low) && !/mobile/.test(low)) ||
+        (uadAndroid && uad.mobile === false) ||
+        isCoarseTouchLinuxTablet;
 
     // Kindle Fire / Silk tablet
     const isKindle = /kindle|silk/i.test(ua);
@@ -66,7 +89,8 @@ export function detectPlatform() {
 
     // --- Mobile detection ---
 
-    const isAndroidPhone = /android/.test(low) && /mobile/.test(low);
+    const isAndroidPhone =
+        (/android/.test(low) && /mobile/.test(low)) || (uadAndroid && uad.mobile === true);
     const isWindowsPhone = /windows phone|iemobile/i.test(ua);
     const isBlackberry = /blackberry|bb10/i.test(ua);
 
